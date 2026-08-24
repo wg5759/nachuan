@@ -20,6 +20,12 @@ import {
 } from './python-release-policy.mjs'
 
 const projectRoot = resolve(process.cwd(), '..')
+const projectDocument = readFileSync(resolve(projectRoot, 'pyproject.toml'), 'utf8')
+const projectVersionMatch = /^version\s*=\s*"([^"]+)"$/mu.exec(
+  projectDocument.slice(projectDocument.indexOf('[project]'))
+)
+if (!projectVersionMatch) throw new Error('project version is missing from pyproject.toml')
+const projectVersion = projectVersionMatch[1]
 
 describe('release-selected Python policy', () => {
   it('delegates wildcard and platform marker semantics to packaging.markers', () => {
@@ -90,7 +96,7 @@ dependencies = [
     const lock = readFileSync(resolve(projectRoot, 'uv.lock'), 'utf8')
     const expected = selectedPythonPackagesFromUvLock(lock, { projectRoot })
     expect(installed.filter(({ name }) => name !== 'llm-aggregator')).toEqual(expected)
-    expect(installed).toContainEqual({ name: 'llm-aggregator', version: '0.1.0' })
+    expect(installed).toContainEqual({ name: 'llm-aggregator', version: projectVersion })
     expect(installed.map(({ name }) => name)).toEqual(
       expect.arrayContaining(['build', 'pyproject-hooks'])
     )

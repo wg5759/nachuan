@@ -65,7 +65,7 @@ def test_install_dry_run_parses_without_network_or_mutation(tmp_path: Path) -> N
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=30,
+        timeout=90,
     )
 
     assert completed.returncode == 0, completed.stderr

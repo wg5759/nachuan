@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260825-32",
+  "candidate_id": "nachuan-source-alpha-20260825-33",
   "file_count": 851,
   "files": [
     {
@@ -564,8 +564,8 @@
     },
     {
       "path": "desktop/scripts/python-release-policy.test.mjs",
-      "sha256": "91429ef6f8ce2a6421a41e60896b5d211086adb68be33c0682553b78ca5dbd47",
-      "size": 10296
+      "sha256": "b93d9c987531ec681472b93585404b4f2cf5d6db1941242760f36fcd0cd885bc",
+      "size": 10654
     },
     {
       "path": "desktop/scripts/release-candidate-archive.mjs",
@@ -3234,7 +3234,7 @@
     },
     {
       "path": "tests/test_community_installer.py",
-      "sha256": "8db411355e8061e487dcb73dcd0b4f4938582b2454f66b8572f5feaaa8e40e8f",
+      "sha256": "3a721f9c654a0beb539064088fc9218be3064ff590218f699ae224bcc132075a",
       "size": 2487
     },
     {
