@@ -1,6 +1,6 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260825-27",
-  "file_count": 837,
+  "candidate_id": "nachuan-source-alpha-20260825-28",
+  "file_count": 850,
   "files": [
     {
       "path": ".claude/commands/xreview.md",
@@ -89,13 +89,13 @@
     },
     {
       "path": "PACKAGING.md",
-      "sha256": "5cd42ffe9a7c202f7437c70898b12edd1fee29a177215f893adc75bbac189714",
-      "size": 28693
+      "sha256": "b8a1d72bbfa1c9ce12c627a4d58a9ee91b1ae45b344e99ea614d3aa32118dc69",
+      "size": 28789
     },
     {
       "path": "README.md",
-      "sha256": "f2acc238e16b9f2ec8244fc7fbf1d5025dbec977e8228c2608654a75f9b3a8c4",
-      "size": 2905
+      "sha256": "f9d9c3cb505b699252baeef4b6effb7381d69cca20b1142121b9b30d724fb72e",
+      "size": 4335
     },
     {
       "path": "SECURITY.md",
@@ -188,14 +188,19 @@
       "size": 301
     },
     {
+      "path": "config/distribution-channels.v1.json",
+      "sha256": "6d9614f7c8d1da60de3d1be1a559d8c29f4e397e3dc04ace650538b1c58e5a87",
+      "size": 1678
+    },
+    {
       "path": "config/models.yaml",
       "sha256": "b408b027ff0c06121399e981bdb2e3b72ef184b395e7cb9be8e2b137a4598445",
       "size": 1472
     },
     {
       "path": "config/open-source-manifest.v1.json",
-      "sha256": "828216a75e87e790e4d6594e009f0bd6a8055fd020b57d8e0aa2eeedf7e1f509",
-      "size": 2759
+      "sha256": "dd4f7026b412fe2f5d3231cc92b91093976bbd6f1fe82906967a58e9984da9a2",
+      "size": 3101
     },
     {
       "path": "config/store-runtime-profile.v1.json",
@@ -1838,6 +1843,11 @@
       "size": 1476
     },
     {
+      "path": "docs/CODE_SIGNING_POLICY.md",
+      "sha256": "81e6f6ca8794f4d9963d4a0874aa76a6c217b53f0f78902d5dba2a2ca21f986e",
+      "size": 3125
+    },
+    {
       "path": "docs/ENTERPRISE_RAG_AUTHORIZATION_ARCHITECTURE.md",
       "sha256": "aba919b43d52c6c43d40d86987cb5b6438c4365d9c69e35b8482941c92920e25",
       "size": 18701
@@ -1849,8 +1859,8 @@
     },
     {
       "path": "docs/OPEN_SOURCE_STRATEGY_OPENCLAW_COMPARISON.md",
-      "sha256": "e53f825ead8a64cb6c0521cf3c1fdc09bc4b7d3df6e48c7d9d366499d1b433f5",
-      "size": 13997
+      "sha256": "429c5195d825e36a0b5319e5d515b12ae61314850443226d29179b5850e2ccfe",
+      "size": 13994
     },
     {
       "path": "docs/PRIVACY_DATA_LIFECYCLE_AND_INCIDENT_RESPONSE.md",
@@ -1933,6 +1943,11 @@
       "size": 6752
     },
     {
+      "path": "docs/adr/0015-shared-core-multi-edition-distribution.md",
+      "sha256": "cbc3b279b747ccc475db446f082c2972d4eeab6d8ec40c1bce162b44d84994b4",
+      "size": 1962
+    },
+    {
       "path": "docs/data-lifecycle.v1.json",
       "sha256": "bdc9cfdcc5c83d24463a74937e604eb6df3fb55127f7d1c921abf0760ef3aa85",
       "size": 17839
@@ -1954,7 +1969,7 @@
     },
     {
       "path": "gateway/__init__.py",
-      "sha256": "1db00154f9afc15d4488fcdf8cbcd54dfd1d036789f4ee8c074610ad9a0469ed",
+      "sha256": "f922a4278bf42389e3f4ac0bf6a988c99cc8e9d0b5b3365632e329cf709d126d",
       "size": 89
     },
     {
@@ -1974,7 +1989,7 @@
     },
     {
       "path": "gateway/app.py",
-      "sha256": "2d1be68d8be31cd4a2b77920999f0abf94819afe88bb501efc3e8ae6d99d1555",
+      "sha256": "d458af99eeffb853ab32c4b7b40a2b0e5e975abd1257048d7a99d4b937dedbd1",
       "size": 422858
     },
     {
@@ -2468,6 +2483,11 @@
       "size": 43129
     },
     {
+      "path": "install.ps1",
+      "sha256": "01d9450c6baa096417dafb2d4c730f07629ef9a720e532904fc774a2446f1b71",
+      "size": 21211
+    },
+    {
       "path": "node-runtime-lock.json",
       "sha256": "2e27e6357787433d604daeea942e4dec1d00c3f643df4a7dad02082e5686ab07",
       "size": 1200
@@ -2729,7 +2749,7 @@
     },
     {
       "path": "pyproject.toml",
-      "sha256": "0a87084b6a32b2d3315cdbc65ab1f7e0de22b2461dd7af8b761b08ae0cc44bdd",
+      "sha256": "8a91721956db3fcf5b85552f70aef2a4d3fb7201045a3ae6d0755dfbc7fd5993",
       "size": 4379
     },
     {
@@ -2926,6 +2946,11 @@
       "path": "scripts/start_zero_network_web_e2e.py",
       "sha256": "354ce3ba4990a914ac98613f70d77a1687d631532761eb045f92b5d73d279e06",
       "size": 8942
+    },
+    {
+      "path": "scripts/verify_distribution_contract.py",
+      "sha256": "7b9606305ef740185f3a3e82516b4dd38c5ef81bb7d425ab0db9f408670e9b87",
+      "size": 6366
     },
     {
       "path": "scripts/watch_updates.py",
@@ -3208,6 +3233,11 @@
       "size": 12943
     },
     {
+      "path": "tests/test_community_installer.py",
+      "sha256": "61b2677ee68f92f271b498563574aac386c0583011cc1eb56ef48bf4caf28641",
+      "size": 2040
+    },
+    {
       "path": "tests/test_compress.py",
       "sha256": "5f8bc03a18237fd86ed8df51c387e8c12a742f69f6c8e9fb3885a24b52ebe923",
       "size": 5699
@@ -3281,6 +3311,11 @@
       "path": "tests/test_direct_provider_deadlines.py",
       "sha256": "25616ecf234a76800f776b6ea0ea8c2256af2dc6d7fcd75961c134b06b831229",
       "size": 4442
+    },
+    {
+      "path": "tests/test_distribution_contract.py",
+      "sha256": "c207fb29cb769680ca834a8dadfe932c4db87193a6400f0f5c36bec16189435e",
+      "size": 1988
     },
     {
       "path": "tests/test_durable_media_requests.py",
@@ -3654,8 +3689,8 @@
     },
     {
       "path": "tests/test_open_source_snapshot.py",
-      "sha256": "c498723fe087149f004bd106fc8c04be1262eddf2f1bb4f26c3a920cf5c44900",
-      "size": 5162
+      "sha256": "9e72cfdb5c4e7b1399c83fab4e12cf529f08f6071d170ccb7812baa52ed430dc",
+      "size": 5680
     },
     {
       "path": "tests/test_openai_compat_probe_safety.py",
@@ -4134,13 +4169,13 @@
     },
     {
       "path": "uv.lock",
-      "sha256": "6bdf5a3e6347cd9556eeaf7eec3636d206105ff38e6465d209df0426df3f541c",
+      "sha256": "3987ae4f128b98a3053f4c451894f8d5d7bd08be7a1a70a4cccd41e41dcdc66f",
       "size": 586370
     },
     {
       "path": "安装与维护/README.md",
-      "sha256": "0b6b7378be9cecbf24a8fb52697e183278c91ae249565a80575491363b72429b",
-      "size": 9386
+      "sha256": "1e42385b97b5ac1a874dbae6461856e3260d3fa54484f82fc762fd5bebb021da",
+      "size": 10628
     },
     {
       "path": "安装与维护/supabase-kb_docs-补status列-20260813.sql",
@@ -4163,6 +4198,16 @@
       "size": 27560
     },
     {
+      "path": "安装与维护/卸载开源版.cmd",
+      "sha256": "63f752dca58f4852142f10ab544b34becf03d47783508437a818240c4bbdc921",
+      "size": 138
+    },
+    {
+      "path": "安装与维护/安装开源版.cmd",
+      "sha256": "b5f10816fc9478a456d93731339bb5ebec595b55e7fcdf6a7bc9820073a5db4d",
+      "size": 152
+    },
+    {
       "path": "安装与维护/开发模式启动桌面端.cmd",
       "sha256": "9dd65746873c08ed94d069645708900a9142798a4668f8fed51fea12ea494224",
       "size": 648
@@ -4178,14 +4223,34 @@
       "size": 700
     },
     {
+      "path": "安装与维护/更新开源版.cmd",
+      "sha256": "be7a91d18b51259daebb1c4b1e0875311f0376dd4dd01b5a814e3c5023e2f3b0",
+      "size": 151
+    },
+    {
       "path": "安装与维护/构建本地安装包-精简版.cmd",
       "sha256": "e32752039a4f357a0081ac0172726c04bbf3035e96f5575f07b22f9f0a3d36b9",
       "size": 238
     },
     {
+      "path": "安装与维护/查看免费签名与交付状态.cmd",
+      "sha256": "0c1d779cf12b3a6b8bac96479a44230bf8d48222d267283e8056bf8c00c047f2",
+      "size": 75
+    },
+    {
       "path": "安装与维护/查看运行状态.cmd",
       "sha256": "6bd496cbce148d9c0db4f4da8799f57d717aa7b74a9fbd5cde580bf5df245875",
       "size": 262
+    },
+    {
+      "path": "安装与维护/检查三版本同步状态.cmd",
+      "sha256": "3e0510d1f5f2585b5f835164170195c156c13caa08eb8f17138823573161d1a3",
+      "size": 311
+    },
+    {
+      "path": "安装与维护/诊断开源版.cmd",
+      "sha256": "d092d7bf4c059a2b54938c1d249a68265cd05c58acc4fbd5cad3b7fe7a0a8789",
+      "size": 135
     }
   ],
   "history_included": false,

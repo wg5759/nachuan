@@ -137,5 +137,13 @@ def test_real_manifest_keeps_the_human_facing_chinese_maintenance_entry() -> Non
     public_files = set(manifest["files"])
 
     assert "安装与维护/README.md" in public_files
+    assert "install.ps1" in public_files
+    assert "docs/CODE_SIGNING_POLICY.md" in public_files
+    assert "安装与维护/安装开源版.cmd" in public_files
+    assert "安装与维护/更新开源版.cmd" in public_files
+    assert "安装与维护/诊断开源版.cmd" in public_files
+    assert "安装与维护/卸载开源版.cmd" in public_files
+    assert "安装与维护/检查三版本同步状态.cmd" in public_files
+    assert "安装与维护/查看免费签名与交付状态.cmd" in public_files
     assert "安装与维护/恢复并启动纳川.cmd" in public_files
     assert "安装与维护/准备FFmpeg构建输入.ps1" in public_files

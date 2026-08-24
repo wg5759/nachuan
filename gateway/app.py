@@ -1743,7 +1743,7 @@ async def lifespan(app: FastAPI):
         raise
 
 
-app = FastAPI(title="大模型聚合器网关", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="大模型聚合器网关", version="0.2.0", lifespan=lifespan)
 
 _REQUEST_LOG = logging.getLogger("nachuan.requests")
 _USAGE_LOG = logging.getLogger("nachuan.usage")

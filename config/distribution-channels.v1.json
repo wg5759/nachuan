@@ -1,0 +1,52 @@
+{
+  "schema": "nachuan.distribution-channels.v1",
+  "core_version": "0.2.0",
+  "source_repository": "wg5759/nachuan",
+  "editions": {
+    "community": {
+      "display_name": "纳川开源版",
+      "delivery": "verified-source",
+      "channel": "community-source-alpha",
+      "core_source": "shared",
+      "update_entry": "nachuan update",
+      "requires_authenticode": false,
+      "client_ready": false,
+      "readiness_reason": "source-alpha; requires real clean-host install, update and soak evidence"
+    },
+    "desktop": {
+      "display_name": "纳川桌面版",
+      "delivery": "windows-installer",
+      "channel": "stable-desktop-win-x64",
+      "core_source": "shared",
+      "update_entry": "in-app signed updater",
+      "requires_authenticode": true,
+      "client_ready": false,
+      "readiness_reason": "official installer remains blocked until trusted signing and clean-host release gates pass"
+    },
+    "enterprise": {
+      "display_name": "纳川企业商用版",
+      "delivery": "managed-windows-installer",
+      "channel": "enterprise-stable-win-x64",
+      "core_source": "shared",
+      "update_entry": "managed signed updater",
+      "requires_authenticode": true,
+      "client_ready": false,
+      "readiness_reason": "enterprise tenant, authorization, deployment and SLA acceptance remain fail-closed"
+    }
+  },
+  "synchronization": {
+    "rule": "one-core-version-per-release",
+    "required_editions": [
+      "community",
+      "desktop",
+      "enterprise"
+    ],
+    "promotion_order": [
+      "community",
+      "desktop",
+      "enterprise"
+    ],
+    "independent_rollout": true,
+    "no_cross_channel_downgrade": true
+  }
+}

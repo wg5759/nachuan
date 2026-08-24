@@ -29,26 +29,44 @@
 能力存在于源码不等于对应真实账号、供应商、安装态或生产环境已经验收。请查看
 相关设计文档和测试，而不要依据一个进程、页面或历史截图判断就绪状态。
 
-## 快速开始（源码）
+## 快速开始（Windows 开源版）
 
-要求 Python 3.11+、Node.js 24.14.0 和 npm 11.12.1。
+推荐入口会下载官方安装脚本到临时目录，再执行本地文件；不会把网络响应直接管道给 PowerShell：
 
 ```powershell
-git clone https://github.com/wg5759/nachuan.git
-cd nachuan
-uv sync --locked
-npm --prefix desktop ci --ignore-scripts
-npm --prefix desktop run build:web
-.\.venv\Scripts\python.exe -m cli start
+$installer = Join-Path $env:TEMP 'nachuan-install.ps1'; Invoke-WebRequest https://raw.githubusercontent.com/wg5759/nachuan/main/install.ps1 -OutFile $installer; & $installer -Action Install
+```
+
+安装器不要求管理员权限；它把官方仓库引用先解析为不可变 commit，再逐项核对
+`OPEN_SOURCE_SNAPSHOT.json`，并下载固定版本、固定大小和固定 SHA-256 的 `uv` 与 Python 3.12.9。
+
+```powershell
+nachuan start       # 启动本地 Web
+nachuan update      # 安装新 commit，旧版本保留为回退证据
+nachuan doctor      # 离线检查源码闭包、运行时哈希与三版本同步契约
+nachuan uninstall   # 默认保留用户数据
 ```
 
 默认仅监听 `127.0.0.1`。首次启动生成的本地运行凭证不得提交到仓库、日志或问题单。
+当前仍是 source alpha，适合技术用户自托管试用，不等同于已签名普通客户桌面版。
+
+从源码参与开发仍要求 Node.js 24.14.0 和 npm 11.12.1；见 `CONTRIBUTING.md`。
+
+## 三版本同步
+
+开源版、普通用户桌面版和企业商用版共享 `0.2.0` 核心，但使用三个独立发布通道。安全和功能修复不再维护三份
+分叉源码；桌面版与企业版仍分别要求签名、更新、部署和真实业务验收。合同见
+`config/distribution-channels.v1.json` 与 `docs/adr/0015-shared-core-multi-edition-distribution.md`。
+
+Windows 免费开源签名不是自动权益。纳川将优先申请 SignPath Foundation，并评估 Microsoft Store MSIX 重签；
+批准前不发布未签名官方安装器。详见 `docs/CODE_SIGNING_POLICY.md`。
 
 ## 测试
 
 ```powershell
 .\.venv\Scripts\python.exe -X utf8 -m pytest -q
 npm --prefix desktop run typecheck
+uv run python scripts/verify_distribution_contract.py
 ```
 
 发布、渠道、插件、付费媒体、企业 RAG 和自动更新还有额外的真实环境门禁。

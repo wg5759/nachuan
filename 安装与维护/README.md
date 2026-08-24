@@ -4,7 +4,14 @@
 
 ## 当前可直接使用的入口
 
-- **pip 包 + CLI（ADR-0013 主分发形态）**：构建 `python -m build --wheel --no-isolation`（产物在 `dist\*.whl`），安装 `pip install dist\llm_aggregator-0.1.0-py3-none-any.whl`。装完：
+- **开源版用户入口**：双击 `安装开源版.cmd`，或在 PowerShell 运行项目根目录 `install.ps1`。安装后统一使用
+  `nachuan start|update|doctor|uninstall`；四个中文双击入口分别是安装、更新、诊断和卸载。它是用户级源码安装，
+  会解析不可变 GitHub commit、验证公开源码闭包，并使用固定 SHA-256 的 uv 与受管 Python，不需要管理员权限。
+  当前状态仍是 source alpha，不是已签名普通客户桌面版。
+- `检查三版本同步状态.cmd`：核对 Python 网关、桌面端以及开源/桌面/企业发布合同是否仍为同一个核心版本。
+- `查看免费签名与交付状态.cmd`：打开免费开源签名路线、当前批准状态和客户交付边界；不把“已开源”误报成
+  “已获 Windows 证书”。
+- **pip 包 + CLI（ADR-0013 主分发形态）**：构建 `python -m build --wheel --no-isolation`（产物在 `dist\*.whl`），安装 `pip install dist\llm_aggregator-0.2.0-py3-none-any.whl`。装完：
   - `nachuan start`：一命令启动本地引擎 + Web 界面（仅绑 127.0.0.1，首次原子生成 runtime/approval 两枚随机 Key 并以当前用户 DPAPI+ACL 保护，自动打开浏览器；Key 只显示在 owner 当前终端，不进 argv/URL/日志）。`--no-open` 只起服务，`--port` 换端口。
   - `nachuan status|models|chat "消息"|ui`：健康、模型目录、单条聊天、打印 Web 地址。
   - `nachuan codex bind|status|logout|unbind`、`nachuan kimi bind|login|status|logout|unbind`：用户自有订阅连接的绑定/登录/状态/退出/解绑（只驱动官方 CLI，不抓 Cookie）。
@@ -52,7 +59,9 @@
 
 ## 安装与卸载
 
-当前没有可交付的正式生产安装包，也没有应当自动执行的生产卸载器。历史 `0.1.0` 未签名安装器已经作废，禁止重新安装或交付。
+开源源码版现已有用户级安装、更新、诊断和卸载入口；它不向 `Program Files` 写文件，卸载默认保留
+`%LOCALAPPDATA%\Nachuan\data`。当前仍没有可交付的正式签名桌面/企业生产安装包。历史 `0.1.0` 未签名安装器
+已经作废，禁止重新安装或交付。
 
 未来正式安装器产生后：
 
@@ -95,6 +104,9 @@ safeStorage/Vault inventory、跨组件 writer fence、可信签发和全组件 
 受支持干净 Windows 构建、真实微信/飞书闭环、安装/升级/自动更新/卸载 smoke 和长期 soak。代码签名证书按用户决定
 暂缓购买；这不阻塞明确标注且不冒充正式版的内部/Early Access 验证，但 Stable/Public 仍必须通过有效签名和时间戳门禁。
 门禁未满足前，正式发布构建失败是正确行为。
+
+免费路径已冻结在 `..\docs\CODE_SIGNING_POLICY.md`：优先 SignPath Foundation，备选 Microsoft Store MSIX 重签。
+开源许可证不会自动发证；外部批准前不得配置 SignPath secret，也不得用 GitHub artifact attestation 冒充 Authenticode。
 
 项目根目录的 `build\`、`dist\`、`node_modules\`、`desktop\node_modules\` 和 `.venv\` 都是可重建的开发/构建缓存，
 不是安装入口。尤其 `dist\engine.exe` 与 `dist\llama-cpu\` 中的 EXE/DLL 未形成最终签名、双引擎扫描和安装闭包证据，
