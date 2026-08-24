@@ -18,7 +18,7 @@ dependencies = [
     "python-dotenv>=1.0",
     # Weixin iLink media encryption (AES-128-ECB + PKCS7).  This is a runtime
     # dependency, not an optional ASR/model dependency.
-    "cryptography>=49.0.0",
+    "cryptography>=50.0.0",
     "lark-oapi>=1.6.8",
     "zhconv>=1.4.3",
     "yt-dlp>=2026.6.9",
