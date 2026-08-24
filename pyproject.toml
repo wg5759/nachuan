@@ -21,7 +21,7 @@ dependencies = [
     "cryptography>=49.0.0",
     "lark-oapi>=1.6.8",
     "zhconv>=1.4.3",
-    "yt-dlp>=2026.6.9",
+    "yt-dlp>=2026.7.4",
     "qrcode>=8.2",
 ]
 
