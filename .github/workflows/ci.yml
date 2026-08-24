@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24.14.0'
+  NPM_VERSION: '11.12.1'
+  UV_VERSION: '0.11.3'
+  PYTHON_VERSION: '3.12.9'
+  UV_PYTHON: '3.12.9'
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+  NODE_OPTIONS: ''
+  NODE_PATH: ''
+  NODE_EXTRA_CA_CERTS: ''
+  NODE_TLS_REJECT_UNAUTHORIZED: ''
+  ELECTRON_RUN_AS_NODE: ''
+  ELECTRON_MIRROR: ''
+  ELECTRON_BUILDER_BINARIES_MIRROR: ''
+  ELECTRON_CUSTOM_DIR: ''
+  ELECTRON_CUSTOM_FILENAME: ''
+  ELECTRON_CUSTOM_VERSION: ''
+  ELECTRON_OVERRIDE_DIST_PATH: ''
+  ESBUILD_BINARY_PATH: ''
+  npm_config_electron_mirror: ''
+  npm_config_electron_builder_binaries_mirror: ''
+  npm_config_electron_custom_dir: ''
+  npm_config_electron_custom_filename: ''
+  npm_config_electron_custom_version: ''
+  npm_config_electron_override_dist_path: ''
+  npm_config_esbuild_binary_path: ''
+  npm_config_node_options: ''
+  npm_config_script_shell: ''
+  NPM_CONFIG_STRICT_SSL: 'true'
+  PYTHONHOME: ''
+  PYTHONPATH: ''
+  PYTHONSTARTUP: ''
+  PYTHONUSERBASE: ''
+
+jobs:
+  frontend:
+    name: desktop-typecheck-and-tests
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Pin and verify Node/npm
+        shell: pwsh
+        run: |
+          $uvVersion = ((uv --version).Trim() -split '\s+')[1]
+          if ($uvVersion -cne $env:UV_VERSION) { throw "Unexpected uv version $uvVersion" }
+          if ((node --version).Trim() -cne "v$env:NODE_VERSION") { throw 'Unexpected Node.js version' }
+          npm install --global "npm@$env:NPM_VERSION" --ignore-scripts --registry "$env:NPM_CONFIG_REGISTRY"
+          if ((npm --version).Trim() -cne $env:NPM_VERSION) { throw 'Unexpected npm version' }
+          uv python install $env:PYTHON_VERSION
+      - run: npm ci --ignore-scripts
+      - name: Sync and attest locked Python runtime for desktop policy tests
+        run: |
+          node scripts/python-release-policy.mjs sync
+          node scripts/python-release-policy.mjs attest
+      - name: Prepare checksum-pinned Electron runtime
+        run: node scripts/electron-runtime-policy.mjs prepare
+      - name: Prepare checksum-pinned Node runtime
+        run: node scripts/node-runtime-policy.mjs prepare
+      - run: npm run typecheck
+      - run: npm test
+      - name: Release evidence contracts
+        run: >-
+          npm exec --offline -- vitest run
+          scripts/release-evidence.test.mjs
+          scripts/early-access-workflow-contract.test.mjs
+          --no-file-parallelism --testTimeout=30000
+      - run: npm exec --offline -- vitest run scripts/release-security.test.mjs src/main/security.test.ts
+
+  backend:
+    name: backend-pytest
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Pin and verify uv/Python
+        shell: pwsh
+        run: |
+          $uvVersion = ((uv --version).Trim() -split '\s+')[1]
+          if ($uvVersion -cne $env:UV_VERSION) { throw "Unexpected uv version $uvVersion" }
+          if ((node --version).Trim() -cne "v$env:NODE_VERSION") { throw 'Unexpected Node.js version' }
+          npm install --global "npm@$env:NPM_VERSION" --ignore-scripts --registry "$env:NPM_CONFIG_REGISTRY"
+          if ((npm --version).Trim() -cne $env:NPM_VERSION) { throw 'Unexpected npm version' }
+          uv python install $env:PYTHON_VERSION
+      - name: Install lifecycle-disabled desktop dependencies for policy modules
+        run: npm --prefix desktop ci --ignore-scripts
+      - name: Sync and attest locked Python runtime
+        shell: pwsh
+        run: |
+          node desktop/scripts/python-release-policy.mjs sync
+          node desktop/scripts/python-release-policy.mjs attest
+      - name: Prepare owned workspace backend test temp
+        shell: pwsh
+        run: |
+          $testTemp = Join-Path $env:GITHUB_WORKSPACE 'build\ci-python-temp'
+          New-Item -ItemType Directory -Force -Path $testTemp | Out-Null
+      - name: Backend tests through isolated policy
+        env:
+          TEMP: ${{ github.workspace }}\build\ci-python-temp
+          TMP: ${{ github.workspace }}\build\ci-python-temp
+        run: node desktop/scripts/python-release-policy.mjs test

@@ -1,0 +1,42 @@
+# 模型路由表：虚拟模型名 -> provider + 上游模型 + 成本分层
+# 客户端调用时用左边的「虚拟名」，网关据此路由到对应 provider 与上游模型。
+
+providers:
+  echo:
+    type: echo
+  volcano:
+    type: volcano
+    base_url_env: VOLCANO_BASE_URL
+    api_key_env: VOLCANO_API_KEY
+  # ── Phase 2 占位（适配器实现后取消注释启用）──
+  # codex:
+  #   type: codex
+
+models:
+  echo:
+    provider: echo
+    tier: free
+    description: 本地回显，用于联通性测试（无需任何密钥）
+
+  # ── 火山方舟 Coding Plan（先在控制台启用这三款；ModelId 从「模型广场」复制）──
+  # 这些是默认清单，真实连接由桌面「连接中心」管理（可改 id / 启停）。
+  glm:
+    provider: volcano
+    upstream_model: glm-latest        # GLM-5.2，可用别名 glm-latest
+    tier: cheap
+    description: 智谱 GLM-5.2（1M 上下文，长程任务强）
+  kimi:
+    provider: volcano
+    upstream_model: kimi-k2.7-code    # 占位：以火山「模型广场」实际 ModelId 为准
+    tier: cheap
+    description: Kimi-K2.7-Code（编程/Agent，多模态输入）
+  minimax:
+    provider: volcano
+    upstream_model: minimax-m3        # 占位：以火山「模型广场」实际 ModelId 为准
+    tier: cheap
+    description: MiniMax-M3（编码与智能体顶尖，工具调用）
+
+  # ── Phase 2 占位 ──
+  # codex:
+  #   provider: codex
+  #   tier: premium

@@ -1,0 +1,5 @@
+# 跨平台统一换行为 LF，避免 Win/Mac/Linux 之间产生无谓 diff
+* text=auto eol=lf
+# 例外：Windows 批处理必须 CRLF，否则 cmd 解析多行块会闪退（启动引擎.bat 踩过）
+*.bat text eol=crlf
+*.cmd text eol=crlf

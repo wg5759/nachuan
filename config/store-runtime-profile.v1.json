@@ -1,0 +1,33 @@
+{
+  "capabilities": [
+    "http-model-provider",
+    "packaged-local-model-program",
+    "packaged-media-program"
+  ],
+  "connectionTypes": [
+    "openai_compat",
+    "perplexity",
+    "volcano"
+  ],
+  "externalProgramAuthorities": [
+    "final-payload-manifest"
+  ],
+  "externalProgramRoles": [
+    "ffmpeg",
+    "ffprobe",
+    "llama-server"
+  ],
+  "frozenPythonExcludes": [
+    "gateway.providers.claude_code",
+    "gateway.providers.codex",
+    "yt_dlp"
+  ],
+  "name": "store",
+  "providerTypes": [
+    "echo",
+    "openai_compat",
+    "perplexity",
+    "volcano"
+  ],
+  "schema": "nachuan.runtime-profile/v1"
+}

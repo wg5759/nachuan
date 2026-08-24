@@ -1,0 +1,83 @@
+{
+  "arch": "x64",
+  "archive": {
+    "contentType": "application/executable",
+    "githubApiDigest": "sha256:b20d42da3afa228e9fa6174480de820282667e799440d655e308f700dfa0d0df",
+    "name": "PortableGit-2.55.0.2-64-bit.7z.exe",
+    "publishedAt": "2026-07-02T13:38:39Z",
+    "releaseUrl": "https://github.com/git-for-windows/git/releases/tag/v2.55.0.windows.2",
+    "sha256": "b20d42da3afa228e9fa6174480de820282667e799440d655e308f700dfa0d0df",
+    "size": 59005448,
+    "url": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.2/PortableGit-2.55.0.2-64-bit.7z.exe"
+  },
+  "authenticode": {
+    "issuer": "CN=Microsoft ID Verified CS AOC CA 04, O=Microsoft Corporation, C=US",
+    "notAfter": "2026-07-04T02:38:24.0000000Z",
+    "notBefore": "2026-07-01T02:38:24.0000000Z",
+    "serial": "330002AC5D2592E471687BB5BF00000002AC5D",
+    "status": "Valid",
+    "subject": "CN=Johannes Schindelin, O=Johannes Schindelin, L=Bruehl, C=DE",
+    "thumbprint": "336C3F70E00092A477DCF6D5F44CE5E31E044C20",
+    "timestampSubject": "CN=Microsoft Public RSA Time Stamping Authority, OU=nShield TSS ESN:A500-05E0-D947, OU=Microsoft America Operations, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+    "timestampThumbprint": "FF73F729152A9059805E5E0832449D996EF60411"
+  },
+  "builtins": [
+    "cat-file",
+    "diff",
+    "hash-object",
+    "ls-tree",
+    "rev-parse",
+    "status",
+    "tag"
+  ],
+  "platform": "win32",
+  "requiredFiles": [
+    {
+      "path": "cmd/git.exe",
+      "sha256": "22fead8244ef3a7225fb800099a4e43eca8bcec0466774917669599c2f19a05a",
+      "size": 46936
+    },
+    {
+      "path": "mingw64/bin/git.exe",
+      "sha256": "77965c1ffd7d5d0f7d55ddbec10ad540efa61e58f36eae565cde0f36fab8fe53",
+      "size": 4383064
+    },
+    {
+      "path": "mingw64/bin/libiconv-2.dll",
+      "sha256": "7a282a854e01be726c6cccfe46f548c716aa45b3014818468253aaa4efbcd067",
+      "size": 1143148
+    },
+    {
+      "path": "mingw64/bin/libintl-8.dll",
+      "sha256": "0537c3dd2378218508ebe3cc416d72a99ee2d24ae1c5525e23458f32544ef861",
+      "size": 298731
+    },
+    {
+      "path": "mingw64/bin/libpcre2-8-0.dll",
+      "sha256": "c135a87ed0f11eae8ffc4cb469671ff0b3f5d71fab5fb024e9b1e7241ca25b52",
+      "size": 717955
+    },
+    {
+      "path": "mingw64/bin/libwinpthread-1.dll",
+      "sha256": "3357473705d91b39f1e17201dc5f7a2638aa345f02e903f6c94f1d52c27f3a71",
+      "size": 66467
+    },
+    {
+      "path": "mingw64/bin/zlib1.dll",
+      "sha256": "93e9243a44c29200eeacaf9658efe2558581770e4b11ca4b500e18e424a6e3b5",
+      "size": 128488
+    },
+    {
+      "path": "mingw64/libexec/git-core/git.exe",
+      "sha256": "77965c1ffd7d5d0f7d55ddbec10ad540efa61e58f36eae565cde0f36fab8fe53",
+      "size": 4383064
+    }
+  ],
+  "runtime": {
+    "fileCount": 9565,
+    "totalBytes": 407888629,
+    "treeSha256": "b64f6a7935249555f494af1e1e9449a260897706d88cc27fce03804e370be548"
+  },
+  "schema": 1,
+  "version": "2.55.0.windows.2"
+}

@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "skills": [
+    {
+      "name": "Content Creator",
+      "path": "content-creator/SKILL.md",
+      "sha256": "26ddce44f057068a3935c13d53becd3c57385fb47fcdcfdd891b80269070b3d5"
+    },
+    {
+      "name": "MCP Builder",
+      "path": "mcp-builder/SKILL.md",
+      "sha256": "3880031674ae2458552ad3c4da99c122469e85351ed57969db7f6f767befd7cb"
+    },
+    {
+      "name": "Product Manager",
+      "path": "product-manager/SKILL.md",
+      "sha256": "4a3fe4661e72e5173877bcba7c362392181774b20efc27ac1789171e98676c9d"
+    },
+    {
+      "name": "Application Security Engineer",
+      "path": "security-appsec-engineer/SKILL.md",
+      "sha256": "f3ee22350c9e0e7289d2d4747e7c1a8fe196d70340feec7b176b13bacc3deb77"
+    },
+    {
+      "name": "Video Optimization Specialist",
+      "path": "video-optimization-specialist/SKILL.md",
+      "sha256": "9cf82969be8898c96192617becf5e38e8de6b79650c362d840c53d2c10f2e8b9"
+    },
+    {
+      "name": "Xiaohongshu Specialist",
+      "path": "xiaohongshu-specialist/SKILL.md",
+      "sha256": "c0afe07b77d7795ff6c5ea928360f0e545d51a6df231d42d6282168ace027154"
+    }
+  ]
+}

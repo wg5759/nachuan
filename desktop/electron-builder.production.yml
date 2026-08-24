@@ -1,0 +1,9 @@
+extends: ./electron-builder.yml
+
+# Stable/public CI publishes updater metadata through the same credential-free,
+# public HTTPS origin contract verified by the packaged client. Upload
+# credentials remain publisher-side and are never embedded in app-update.yml.
+publish:
+  - provider: generic
+    url: ${env.NACHUAN_UPDATE_BASE_URL}
+    channel: production-${env.DMX_VARIANT}

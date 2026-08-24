@@ -1,0 +1,126 @@
+[build-system]
+requires = ["setuptools>=83.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-aggregator"
+version = "0.1.0"
+description = "个人自托管的大模型聚合 + 多模型协作平台（多家 API + 本地执行适配）"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "httpx>=0.27",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    # Weixin iLink media encryption (AES-128-ECB + PKCS7).  This is a runtime
+    # dependency, not an optional ASR/model dependency.
+    "cryptography>=49.0.0",
+    "lark-oapi>=1.6.8",
+    "zhconv>=1.4.3",
+    "yt-dlp>=2026.6.9",
+    "qrcode>=8.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+]
+# 本地语音评估实验；不属于 lean/full 可分发闭包，也不得由发行 selector 选中。
+# 仅在本机完成来源、许可证和二进制闭包复核后使用：`uv sync --locked --extra voice-lab`。
+voice-lab = [
+    "faster-whisper>=1.2.1",
+]
+# 本地提示压缩实验（LLMLingua-2）；onnxruntime/tokenizers 的可分发许可证闭包未完成。
+# 不属于 lean/full 可分发闭包，也不得由发行 selector 选中。
+# 装：`uv sync --locked --extra compress`。模型不入包：放 models/llmlingua-2-bert-base-multilingual-cased-meetingbank/，
+# 需 tokenizer.json + onnx/model_quantized.onnx（~178MB）。本机有 safetensors 时可跑
+# scripts/_export_llmlingua2_onnx.py 一次性导出（仅导出需 torch；运行期不需要）。详见 compress.py 顶部。
+compress = [
+    "onnxruntime>=1.17",
+    "tokenizers>=0.15",
+]
+# 省 token·语义缓存（GPTCache）：相近问题直接命中缓存、不再调大模型。bge-small-zh 本地句向量。
+# 体积较大（含 torch/transformers），按需安装：`uv sync --locked --extra savers`
+# 模型权重不入包；须离线审计、记录 SHA-256 后放入 models/（见 semcache.py 顶部说明）。
+# 注：transformers/torch 供 semcache 与「一次性 onnx 导出脚本」用；compress 运行期已 torch-free、不需要。
+savers = [
+    "gptcache>=0.1.44",
+    "faiss-cpu>=1.7",
+    "transformers>=4.26",
+    "torch>=2.0",
+    "sqlalchemy>=2.0",  # GPTCache 的 SQLite 标量存储依赖
+]
+# 本地语音评估路径：SenseVoice-Small（FunASR runtime，CPU、离线、自带标点）。
+# FunASR 及其本机二进制/notice 闭包仍在许可审查；不属于 lean/full 可分发闭包。
+# 体积较大（torch + 936MB 权重），按需安装：`uv sync --locked --extra asr`
+# 模型须固定来源/revision/SHA-256 后放到 models/（见 gateway/asr_sensevoice.py 顶部说明）。
+# 不装不影响文字网关；语音端点明确返回 503，不会拖垮聊天、微信或飞书。
+asr = [
+    "funasr>=1.3",
+    "torch>=2.0",
+    "torchaudio>=2.0",
+]
+
+# 作为可构建 pip 包分发（ADR-0013）：console script nachuan + 引擎源码运行
+[tool.uv]
+package = true
+# Keep both resolved and isolated-build environments above the first release
+# that fixes GHSA-h35f-9h28-mq5c / PYSEC-2026-3447.
+constraint-dependencies = ["setuptools>=83.0.0"]
+build-constraint-dependencies = ["setuptools>=83.0.0"]
+
+[tool.setuptools]
+packages = [
+    "gateway",
+    "gateway.providers",
+    "gateway.web_ui",
+    "gateway.web_ui.assets",
+    "orchestrator",
+    "orchestrator.workflows",
+    "bridge",
+    "cli",
+    "scripts",
+    "config",
+    "skills",
+]
+py-modules = ["engine_main"]
+
+[tool.setuptools.cmdclass]
+build_py = "packaging_build.CleanBuildPy"
+
+# config 包的运行期数据文件随轮携带（setuptools 默认只收 .py）
+[tool.setuptools.package-data]
+config = ["*.yaml", "*.json"]
+gateway = ["web_ui/*", "web_ui/assets/*"]
+skills = [
+    "trusted-manifest.json",
+    "ATTRIBUTION.md",
+    "LICENSE.agency-agents",
+    "README.md",
+    "content-creator/SKILL.md",
+    "mcp-builder/SKILL.md",
+    "product-manager/SKILL.md",
+    "security-appsec-engineer/SKILL.md",
+    "video-optimization-specialist/SKILL.md",
+    "xiaohongshu-specialist/SKILL.md",
+]
+
+[project.scripts]
+nachuan = "cli.nachuan:main"
+nachuan-engine = "cli.engine_entrypoint:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "build>=1.5.0",
+    "pyinstaller>=6.21.0",
+]

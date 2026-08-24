@@ -1,0 +1,59 @@
+{
+  "components": [
+    {
+      "integrity": "sha512-KknJ50kTInJ7qIScF3jeaFRpMpE8/lfiTdzf/twXyPBLAGrLRTmkz3AdTnKeh40X8k9L2fdYwEp/42WGXIRGcg==",
+      "lockPath": "node_modules/html-parse-stringify",
+      "licenseSource": "metadata-reconstructed-reviewed",
+      "manualLegalReviewRequired": false,
+      "name": "html-parse-stringify",
+      "notice": {
+        "path": "third-party-notices/npm-html-parse-stringify-3.0.1-MIT.txt",
+        "sha256": "0f6bd5cb4cc28264e37f274267d5caff69b1cf38c50b7ea53be5aabd9d5532af",
+        "size": 1258
+      },
+      "packageJsonSha256": "40e04992e6d49282566cd9b2eb82747f15831f71c20a69ec791a502162d6818b",
+      "review": {
+        "decision": "approved-for-binary-distribution-notice",
+        "githubCommitUrl": "https://github.com/henrikjoreteg/html-parse-stringify/commit/ce46022f537ef9b050fac592f9fcc30bf838e5ba",
+        "npmVersionUrl": "https://registry.npmjs.org/html-parse-stringify/3.0.1",
+        "reviewedAt": "2026-08-24",
+        "reviewerRole": "project-engineering",
+        "scope": "exact-version-metadata-and-standard-mit-notice",
+        "upstreamLicenseFileCount": 0,
+        "upstreamPackageJsonSha256": "40e04992e6d49282566cd9b2eb82747f15831f71c20a69ec791a502162d6818b"
+      },
+      "sourceCommit": "ce46022f537ef9b050fac592f9fcc30bf838e5ba",
+      "sourceUrl": "https://github.com/henrikjoreteg/html-parse-stringify/tree/ce46022f537ef9b050fac592f9fcc30bf838e5ba",
+      "spdxExpression": "MIT",
+      "version": "3.0.1"
+    },
+    {
+      "integrity": "sha512-0/BnGCCfyUMkBpeDgWihanIAF9JmZhHBgUhEqzvf+adhNGLoP6TaiI5oF8oyb3I45P+PcnrqihSf01M0l0G5+Q==",
+      "lockPath": "node_modules/lazy-val",
+      "licenseSource": "metadata-reconstructed-reviewed",
+      "manualLegalReviewRequired": false,
+      "name": "lazy-val",
+      "notice": {
+        "path": "third-party-notices/npm-lazy-val-1.0.5-MIT.txt",
+        "sha256": "63094a488c42d7b626c7807270581a4247b8848384ffd7aa89762d173036b5c9",
+        "size": 1235
+      },
+      "packageJsonSha256": "a5096f95098452cf6fe5c8ac9be8f13f59ab7c9f605ba5ef92c91b2c505744f0",
+      "review": {
+        "decision": "approved-for-binary-distribution-notice",
+        "githubCommitUrl": "https://github.com/develar/lazy-val/commit/b69ad4119f1b19bdab13c61ee2fcc88d46b89071",
+        "npmVersionUrl": "https://registry.npmjs.org/lazy-val/1.0.5",
+        "reviewedAt": "2026-08-24",
+        "reviewerRole": "project-engineering",
+        "scope": "exact-version-metadata-and-standard-mit-notice",
+        "upstreamLicenseFileCount": 0,
+        "upstreamPackageJsonSha256": "a642078ae0684963e5747e9499487a4c649c150bbddbfdfd8eb357bfcbf9c1c2"
+      },
+      "sourceCommit": "b69ad4119f1b19bdab13c61ee2fcc88d46b89071",
+      "sourceUrl": "https://github.com/develar/lazy-val/tree/b69ad4119f1b19bdab13c61ee2fcc88d46b89071",
+      "spdxExpression": "MIT",
+      "version": "1.0.5"
+    }
+  ],
+  "schema": 2
+}

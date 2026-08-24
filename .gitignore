@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.uv/
+
+# 环境 / 密钥（务必不要提交真实密钥）
+.env
+.env.*
+!.env.example
+
+# 数据（SQLite 用量库等）
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# 本地模型权重（体积大、各机自行下载，不入库）：whisper / Nemotron ASR / sherpa 等
+models/
+
+# PyInstaller 打包产物（只忽略仓库根的 build/，别误伤 desktop/build/ 这种 buildResources）
+/build/
+dist/
+# engine.spec 是手写的打包配方（CI 依赖）→ 必须入库。
+# 注意：.gitignore 不支持行内注释，否定行 !engine.spec 必须独占一行，否则否定失效。
+*.spec
+!engine.spec
+
+# 桌面端依赖与构建产物
+desktop/node_modules/
+desktop/out/
+desktop/release/
+
+# 编排器的 git worktree 隔离目录
+worktrees/
+.worktrees/
+
+# OS / 编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# 日志
+*.log
+
+# 临时 / 本机文件（不入库）
+_claude_task.txt
+*.lnk
+
+# 整理出来的成品安装包目录（体积大，不入库）
+/满配（自用·纯云端）/
+/空版（商用·带本地模型）/
+.cbm/
+
+# Local audit / agent state and generated probe artifacts (never ship)
+/.codex/
+/.agent_runs/
+/.pytest_cache/
+/node_modules/
+/_probe*.py
+/_codex_video_*
+/episode_today.json
+/facts_today.json
+/desktop/electron.vite.config.*.mjs
+/workspaces/
+
+# 本机 story2video 遗留存档：不是纳川源码，不得进入任何正式包。
+/视频工作流/
+
+# Local security-recovery downloads and machine-specific receipts never ship.
+/安装与维护/安全修复/下载/
+/安装与维护/安全修复/records/
+/安装与维护/构建输入/下载/
+/安装与维护/构建输入/records/
+/安装与维护/构建输入/ffmpeg-8.0.1-essentials_build/

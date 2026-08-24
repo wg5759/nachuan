@@ -1,0 +1,808 @@
+name: build-and-release
+
+# 正式发布只能人工选择一个已经存在的版本 tag。项目内 secret/closure scan、SBOM 与许可证门禁已经实现，
+# 但绑定最终候选的独立恶意软件扫描、完整官方 schema、安装 smoke、真实微信和长稳 soak 机器证据仍缺；
+# 因此流程只保留验证构建，发布作业硬失败。
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 已存在且指向待发布提交的 tag（必须是 vX.Y.Z）
+        required: true
+        type: string
+      confirmation:
+        description: 输入 PUBLISH-NACHUAN-PRODUCTION 确认这是正式发布候选
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24.14.0'
+  NPM_VERSION: '11.12.1'
+  UV_VERSION: '0.11.3'
+  PYTHON_VERSION: '3.12.9'
+  UV_PYTHON: '3.12.9'
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+  # Release entrypoints must not inherit ambient startup hooks, alternate
+  # module roots, or Electron mirrors before their own attestations run.
+  NODE_OPTIONS: ''
+  NODE_PATH: ''
+  NODE_EXTRA_CA_CERTS: ''
+  NODE_TLS_REJECT_UNAUTHORIZED: ''
+  ELECTRON_RUN_AS_NODE: ''
+  ELECTRON_MIRROR: ''
+  ELECTRON_BUILDER_BINARIES_MIRROR: ''
+  ELECTRON_CUSTOM_DIR: ''
+  ELECTRON_CUSTOM_FILENAME: ''
+  ELECTRON_CUSTOM_VERSION: ''
+  ELECTRON_OVERRIDE_DIST_PATH: ''
+  ESBUILD_BINARY_PATH: ''
+  npm_config_electron_mirror: ''
+  npm_config_electron_builder_binaries_mirror: ''
+  npm_config_electron_custom_dir: ''
+  npm_config_electron_custom_filename: ''
+  npm_config_electron_custom_version: ''
+  npm_config_electron_override_dist_path: ''
+  npm_config_esbuild_binary_path: ''
+  npm_config_node_options: ''
+  npm_config_script_shell: 'C:\Windows\System32\cmd.exe'
+  NPM_CONFIG_STRICT_SSL: 'true'
+  PYTHONHOME: ''
+  PYTHONPATH: ''
+  PYTHONSTARTUP: ''
+  PYTHONUSERBASE: ''
+
+jobs:
+  verify:
+    name: release-gate
+    runs-on: windows-latest
+    outputs:
+      release_tag: ${{ steps.release_identity.outputs.release_tag }}
+      release_commit: ${{ steps.release_identity.outputs.release_commit }}
+      release_tree: ${{ steps.release_identity.outputs.release_tree }}
+      release_version: ${{ steps.release_identity.outputs.release_version }}
+    steps:
+      - name: Validate manual release intent
+        shell: pwsh
+        env:
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+          RELEASE_CONFIRMATION_INPUT: ${{ inputs.confirmation }}
+        run: |
+          if ($env:RELEASE_CONFIRMATION_INPUT -cne 'PUBLISH-NACHUAN-PRODUCTION') {
+            throw 'Explicit production confirmation is missing'
+          }
+          if ($env:RELEASE_TAG_INPUT -cnotmatch '^v\d+\.\d+\.\d+$') {
+            throw 'release_tag must be exactly vX.Y.Z'
+          }
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Pin and verify release toolchain
+        shell: pwsh
+        run: |
+          $uvVersion = ((uv --version).Trim() -split '\s+')[1]
+          if ($uvVersion -cne $env:UV_VERSION) { throw "Unexpected uv version $uvVersion" }
+          if ((node --version).Trim() -cne "v$env:NODE_VERSION") { throw 'Unexpected Node.js version' }
+          npm install --global "npm@$env:NPM_VERSION" --ignore-scripts --registry "$env:NPM_CONFIG_REGISTRY"
+          if ((npm --version).Trim() -cne $env:NPM_VERSION) { throw 'Unexpected npm version' }
+          uv python install $env:PYTHON_VERSION
+
+      - name: Prove tag, commit and desktop version identity
+        id: release_identity
+        shell: pwsh
+        env:
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+        run: |
+          $tag = $env:RELEASE_TAG_INPUT
+          $version = (& node -p "require('./desktop/package.json').version").Trim()
+          if ($version -cnotmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
+            throw "desktop/package.json version is not a canonical stable SemVer: $version"
+          }
+          if ($version -ceq '0.1.0') {
+            throw 'v0.1.0 is a retired historical build identity and cannot produce a release candidate'
+          }
+          if ($tag -cne "v$version") { throw "Tag $tag does not match desktop version $version" }
+          $tagCommit = (& git rev-parse "refs/tags/$tag^{commit}").Trim()
+          $headCommit = (& git rev-parse HEAD).Trim()
+          if ($tagCommit -cne $headCommit) { throw "Tag $tag does not resolve to checked-out HEAD" }
+          if (@(& git tag --points-at HEAD) -cnotcontains $tag) { throw "HEAD is not directly tagged $tag" }
+          $headTree = (& git rev-parse 'HEAD^{tree}').Trim().ToLowerInvariant()
+          if ($LASTEXITCODE -ne 0 -or $headTree -cnotmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$') {
+            throw 'Release tree identity is not a canonical full Git object ID'
+          }
+          "release_tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "release_commit=$headCommit" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "release_tree=$headTree" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "release_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Sync locked Python dependencies
+        run: node desktop/scripts/python-release-policy.mjs sync
+      - name: Verify exact Python runtime
+        run: node desktop/scripts/python-release-policy.mjs attest
+      - name: Backend tests
+        run: node desktop/scripts/python-release-policy.mjs test
+      - name: Sync locked desktop dependencies
+        working-directory: desktop
+        run: npm ci --ignore-scripts
+      - name: Desktop typecheck
+        working-directory: desktop
+        run: npm run typecheck
+      - name: Desktop tests
+        working-directory: desktop
+        run: npm test
+      - name: Release secret and Electron security tests
+        working-directory: desktop
+        run: npm exec --offline -- vitest run scripts/release-security.test.mjs src/main/security.test.ts
+
+  build:
+    name: build-windows-verified-artifact
+    needs: verify
+    runs-on: windows-latest
+    environment:
+      name: production-release
+    env:
+      GH_OWNER: ${{ github.repository_owner }}
+      GH_REPO: ${{ github.event.repository.name }}
+      RELEASE_TAG: ${{ needs.verify.outputs.release_tag }}
+      RELEASE_COMMIT: ${{ needs.verify.outputs.release_commit }}
+      RELEASE_TREE: ${{ needs.verify.outputs.release_tree }}
+      RELEASE_VERSION: ${{ needs.verify.outputs.release_version }}
+      NACHUAN_RELEASE_TAG: ${{ needs.verify.outputs.release_tag }}
+      NACHUAN_RELEASE_COMMIT: ${{ needs.verify.outputs.release_commit }}
+      NACHUAN_RELEASE_TREE: ${{ needs.verify.outputs.release_tree }}
+      NACHUAN_RELEASE_RUN_ID: ${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.verify.outputs.release_commit }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Re-prove immutable release identity after checkout
+        shell: pwsh
+        run: |
+          $headCommit = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $headCommit -cne $env:RELEASE_COMMIT) {
+            throw "Build checkout is not the verified immutable commit: expected=$env:RELEASE_COMMIT actual=$headCommit"
+          }
+          $version = (& node -p "require('./desktop/package.json').version").Trim()
+          if ($LASTEXITCODE -ne 0 -or $version -cne $env:RELEASE_VERSION) {
+            throw "Build checkout desktop version drifted: expected=$env:RELEASE_VERSION actual=$version"
+          }
+          $tagCommit = (& git rev-parse --verify "refs/tags/$env:RELEASE_TAG^{commit}").Trim()
+          if ($LASTEXITCODE -ne 0 -or $tagCommit -cne $env:RELEASE_COMMIT) {
+            throw "Release tag moved or disappeared after verification: $env:RELEASE_TAG"
+          }
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Pin and verify build toolchain
+        shell: pwsh
+        run: |
+          $uvVersion = ((uv --version).Trim() -split '\s+')[1]
+          if ($uvVersion -cne $env:UV_VERSION) { throw "Unexpected uv version $uvVersion" }
+          if ((node --version).Trim() -cne "v$env:NODE_VERSION") { throw 'Unexpected Node.js version' }
+          npm install --global "npm@$env:NPM_VERSION" --ignore-scripts --registry "$env:NPM_CONFIG_REGISTRY"
+          if ((npm --version).Trim() -cne $env:NPM_VERSION) { throw 'Unexpected npm version' }
+          uv python install $env:PYTHON_VERSION
+          node desktop/scripts/python-release-policy.mjs sync
+          if ($LASTEXITCODE -ne 0) { throw 'Release-selected Python synchronization failed' }
+          $pythonPath = [IO.Path]::GetFullPath((Join-Path $PWD '.venv/Scripts/python.exe'))
+          $python = (& $pythonPath -I -S -B -c "import platform; print(platform.python_version())").Trim()
+          if ($python -cne $env:PYTHON_VERSION) { throw "Unexpected Python version $python" }
+          $nodePath = (Get-Command node -CommandType Application).Source
+          $uvPath = (Get-Command uv -CommandType Application).Source
+          $npmRoot = (& npm root --global).Trim()
+          $npmCliPath = Join-Path $npmRoot 'npm/bin/npm-cli.js'
+          foreach ($toolPath in @($nodePath, $npmCliPath, $uvPath, $pythonPath)) {
+            if (-not [IO.Path]::IsPathFullyQualified($toolPath) -or -not (Test-Path -LiteralPath $toolPath -PathType Leaf)) {
+              throw "Pinned release tool path is not an absolute file: $toolPath"
+            }
+          }
+          "NACHUAN_RELEASE_NODE_PATH=$nodePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "NACHUAN_RELEASE_NPM_CLI_PATH=$npmCliPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "NACHUAN_RELEASE_UV_PATH=$uvPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "NACHUAN_RELEASE_PYTHON_PATH=$pythonPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Sync locked desktop dependencies
+        working-directory: desktop
+        run: npm ci --ignore-scripts
+
+      - name: Prepare checksum-pinned project-local Git runtime
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          node scripts/git-runtime-policy.mjs prepare
+          if ($LASTEXITCODE -ne 0) { throw 'Checksum-pinned Git runtime preparation failed' }
+          node scripts/git-runtime-policy.mjs verify
+          if ($LASTEXITCODE -ne 0) { throw 'Checksum-pinned Git runtime verification failed' }
+          $gitPath = [IO.Path]::GetFullPath((Join-Path $PWD '..\build\git-runtime\mingw64\bin\git.exe'))
+          if (-not (Test-Path -LiteralPath $gitPath -PathType Leaf)) {
+            throw 'Checksum-pinned project-local Git core is missing'
+          }
+          "NACHUAN_RELEASE_GIT_PATH=$gitPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Prepare checksum-pinned Electron runtime from an empty-safe project cache
+        working-directory: desktop
+        run: node scripts/electron-runtime-policy.mjs prepare
+
+      - name: Stage complete payload license evidence before packaging
+        working-directory: desktop
+        run: node scripts/license-stage.mjs prepare
+
+      - name: Build engine
+        run: node desktop/scripts/python-release-policy.mjs build-engine
+
+      - name: Materialize isolated production signing identity
+        id: signing_identity
+        shell: pwsh
+        env:
+          WINDOWS_CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CSC_LINK)) {
+            throw 'The Windows signing certificate is required for a production release candidate'
+          }
+          $encoded = $env:WINDOWS_CSC_LINK.Trim()
+          if ($encoded.StartsWith('base64:', [StringComparison]::OrdinalIgnoreCase)) {
+            $encoded = $encoded.Substring(7)
+          }
+          $bytes = $null
+          try {
+            try {
+              $bytes = [Convert]::FromBase64String(($encoded -replace '\s', ''))
+            } catch {
+              throw 'WINDOWS_CSC_LINK must be a base64-encoded PFX, optionally prefixed with base64:'
+            }
+            if ($bytes.Length -lt 256 -or $bytes.Length -gt 16MB) {
+              throw "Signing PFX has an implausible size: $($bytes.Length) bytes"
+            }
+            $certificateFile = Join-Path $env:RUNNER_TEMP 'nachuan-production-signing.pfx'
+            $stream = $null
+            try {
+              $stream = [IO.FileStream]::new(
+                $certificateFile,
+                [IO.FileMode]::CreateNew,
+                [IO.FileAccess]::Write,
+                [IO.FileShare]::None
+              )
+              $stream.Write($bytes, 0, $bytes.Length)
+              $stream.Flush($true)
+            } finally {
+              if ($null -ne $stream) { $stream.Dispose() }
+            }
+            "certificate_file=$certificateFile" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } finally {
+            if ($null -ne $bytes) { [Array]::Clear($bytes, 0, $bytes.Length) }
+          }
+
+      - name: Prepare reviewed lean runtime inputs before signing and digest binding
+        working-directory: desktop
+        run: node scripts/prepare-pack.mjs lean
+
+      - name: Sign release binaries before freezing their manifests and digests
+        working-directory: desktop
+        env:
+          DMX_VARIANT: lean
+          WINDOWS_CERTIFICATE_FILE: ${{ steps.signing_identity.outputs.certificate_file }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+        run: node scripts/sign-engine.mjs
+
+      - name: Verify the pre-digest engine signature and timestamp
+        id: signed_engine_identity
+        shell: pwsh
+        run: |
+          $path = 'dist/engine.exe'
+          $signature = Get-AuthenticodeSignature -LiteralPath $path
+          if ($signature.Status -ne 'Valid') {
+            throw "Invalid pre-digest engine signature: status=$($signature.Status)"
+          }
+          if (-not $signature.SignerCertificate -or
+              $signature.SignerCertificate.Subject -notmatch [regex]::Escape('杭州灵界科技有限公司')) {
+            throw 'Unexpected pre-digest engine publisher'
+          }
+          if (-not $signature.TimeStamperCertificate) {
+            throw 'The engine signature is missing a trusted timestamp'
+          }
+          $thumbprint = $signature.SignerCertificate.Thumbprint
+          if ([string]::IsNullOrWhiteSpace($thumbprint)) {
+            throw 'The engine signer certificate has no thumbprint'
+          }
+          "signer_thumbprint=$thumbprint" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Prepare production update root authorization and keyring floor
+        id: production_update_root
+        working-directory: desktop
+        env:
+          DMX_VARIANT: lean
+          NACHUAN_PRODUCTION_UPDATE_CHANNEL: production-lean-win-x64
+          NACHUAN_PRODUCTION_UPDATE_ROOT_AUTHORIZATION_BASE64: ${{ vars.NACHUAN_PRODUCTION_UPDATE_ROOT_AUTHORIZATION_BASE64 }}
+          NACHUAN_PRODUCTION_UPDATE_KEY_ID: ${{ vars.NACHUAN_PRODUCTION_UPDATE_KEY_ID }}
+          NACHUAN_PRODUCTION_UPDATE_PUBLIC_KEY_SPKI_BASE64: ${{ vars.NACHUAN_PRODUCTION_UPDATE_PUBLIC_KEY_SPKI_BASE64 }}
+        run: node scripts/production-update-envelope.mjs prepare-root lean
+
+      - name: Materialize generated release modules before source freeze
+        working-directory: desktop
+        env:
+          DMX_VARIANT: lean
+          NACHUAN_UPDATE_TIER: production
+          NACHUAN_UPDATE_CHANNEL: production-lean-win-x64
+          NACHUAN_UPDATE_KEY_ID: ${{ vars.NACHUAN_PRODUCTION_UPDATE_KEY_ID }}
+          NACHUAN_UPDATE_PUBLIC_KEY_SPKI_BASE64: ${{ vars.NACHUAN_PRODUCTION_UPDATE_PUBLIC_KEY_SPKI_BASE64 }}
+          NACHUAN_UPDATE_MANIFEST_URL: ${{ vars.NACHUAN_PRODUCTION_UPDATE_MANIFEST_URL }}
+          NACHUAN_UPDATE_SEQUENCE: ${{ vars.NACHUAN_PRODUCTION_UPDATE_SEQUENCE }}
+          NACHUAN_UPDATE_KEYRING_SEQUENCE: ${{ steps.production_update_root.outputs.keyring_sequence }}
+          NACHUAN_UPDATE_KEYRING_SHA256: ${{ steps.production_update_root.outputs.keyring_sha256 }}
+          NACHUAN_UPDATE_PUBLISHER_NAME: 杭州灵界科技有限公司
+          NACHUAN_UPDATE_SIGNER_THUMBPRINT: ${{ steps.signed_engine_identity.outputs.signer_thumbprint }}
+        run: |
+          node scripts/write-engine-digest.mjs
+          node scripts/write-update-trust.mjs
+
+      - name: Clean release output before the source freeze
+        run: node desktop/scripts/release-output.mjs clean
+
+      - name: Stabilize all excluded build roots before the source freeze
+        shell: pwsh
+        run: |
+          $excludedRoots = @(
+            'bridge/__pycache__',
+            'config/__pycache__',
+            'desktop/.vite',
+            'desktop/build/electron-runtime',
+            'desktop/build/license-evidence',
+            'desktop/coverage',
+            'desktop/node_modules',
+            'desktop/out',
+            'desktop/release',
+            'desktop/third-party-notices',
+            'gateway/__pycache__',
+            'gateway/providers/__pycache__',
+            'orchestrator/__pycache__',
+            'orchestrator/workflows/__pycache__',
+            'scripts/__pycache__',
+            'tests/__pycache__'
+          )
+          foreach ($relative in $excludedRoots) {
+            $path = [IO.Path]::GetFullPath((Join-Path $PWD $relative))
+            if (Test-Path -LiteralPath $path) {
+              $item = Get-Item -LiteralPath $path -Force
+              if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Excluded source root is not an ordinary directory: $relative"
+              }
+            } else {
+              New-Item -ItemType Directory -Path $path -ErrorAction Stop | Out-Null
+            }
+          }
+
+      - name: Freeze complete release source and Git execution closure before build
+        id: release_source_freeze
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
+            throw 'RUNNER_TEMP is required for the pre-build source freeze'
+          }
+          $freeze = Join-Path $env:RUNNER_TEMP 'nachuan-release-source-freeze.json'
+          if (Test-Path -LiteralPath $freeze) { throw 'Pre-build source freeze path already exists' }
+          node desktop/scripts/release-source-freeze.mjs write $freeze
+          if ($LASTEXITCODE -ne 0) { throw 'Complete pre-build release source freeze failed' }
+          $digest = (Get-FileHash -LiteralPath $freeze -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($digest -cnotmatch '^[0-9a-f]{64}$') { throw 'Pre-build source freeze digest is invalid' }
+          "source_freeze_path=$freeze" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "source_freeze_sha256=$digest" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Build desktop
+        working-directory: desktop
+        env:
+          DMX_VARIANT: lean
+          NACHUAN_UPDATE_TIER: production
+          NACHUAN_UPDATE_CHANNEL: production-lean-win-x64
+          NACHUAN_UPDATE_KEY_ID: ${{ vars.NACHUAN_PRODUCTION_UPDATE_KEY_ID }}
+          NACHUAN_UPDATE_PUBLIC_KEY_SPKI_BASE64: ${{ vars.NACHUAN_PRODUCTION_UPDATE_PUBLIC_KEY_SPKI_BASE64 }}
+          NACHUAN_UPDATE_MANIFEST_URL: ${{ vars.NACHUAN_PRODUCTION_UPDATE_MANIFEST_URL }}
+          NACHUAN_UPDATE_SEQUENCE: ${{ vars.NACHUAN_PRODUCTION_UPDATE_SEQUENCE }}
+          NACHUAN_UPDATE_KEYRING_SEQUENCE: ${{ steps.production_update_root.outputs.keyring_sequence }}
+          NACHUAN_UPDATE_KEYRING_SHA256: ${{ steps.production_update_root.outputs.keyring_sha256 }}
+          NACHUAN_UPDATE_PUBLISHER_NAME: 杭州灵界科技有限公司
+          NACHUAN_UPDATE_SIGNER_THUMBPRINT: ${{ steps.signed_engine_identity.outputs.signer_thumbprint }}
+        run: |
+          node scripts/write-engine-digest.mjs check
+          node scripts/write-update-trust.mjs check
+          npm exec --offline -- electron-vite build
+
+      - name: Package the digest-bound engine and sign desktop artifacts
+        working-directory: desktop
+        env:
+          DMX_VARIANT: lean
+          NACHUAN_UPDATE_BASE_URL: ${{ vars.NACHUAN_PRODUCTION_UPDATE_BASE_URL }}
+          CSC_LINK: ${{ steps.signing_identity.outputs.certificate_file }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+        run: npm exec --offline -- electron-builder --config electron-builder.production.yml --publish never
+
+      - name: Remove the materialized signing identity
+        if: always()
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
+            throw 'RUNNER_TEMP is required to clean the production signing certificate'
+          }
+          $runnerTemp = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $env:RUNNER_TEMP).Path).TrimEnd([char[]]'\/')
+          $certificateFile = Join-Path $runnerTemp 'nachuan-production-signing.pfx'
+          if (Test-Path -LiteralPath $certificateFile) {
+            $item = Get-Item -LiteralPath $certificateFile -Force
+            if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+              throw 'Refusing to clean a redirected or non-file production signing certificate'
+            }
+            Remove-Item -LiteralPath $certificateFile -Force -ErrorAction Stop
+          }
+          if (Test-Path -LiteralPath $certificateFile) {
+            throw 'Production signing certificate cleanup left a residual file'
+          }
+
+      - name: Verify packaged bytes after all signing transformations
+        working-directory: desktop
+        env:
+          DMX_VARIANT: lean
+          NACHUAN_UPDATE_TIER: production
+        run: |
+          node scripts/release-output.mjs prune lean
+          node scripts/_verify_pack.mjs lean
+
+      - name: Verify installer, desktop and packaged engine signatures
+        shell: pwsh
+        env:
+          EXPECTED_SIGNER_THUMBPRINT: ${{ steps.signed_engine_identity.outputs.signer_thumbprint }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:EXPECTED_SIGNER_THUMBPRINT)) {
+            throw 'The pre-digest engine signer identity is missing'
+          }
+          $version = (& node -p "require('./desktop/package.json').version").Trim()
+          $targets = @(
+            "desktop/release/nachuan-$version-lean-win.exe",
+            'desktop/release/win-unpacked/纳川.exe',
+            'desktop/release/win-unpacked/resources/engine/engine.exe'
+          )
+          foreach ($path in $targets) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Signed target missing: $path" }
+            $signature = Get-AuthenticodeSignature -LiteralPath $path
+            if ($signature.Status -ne 'Valid') {
+              throw "Invalid Authenticode signature: $path status=$($signature.Status)"
+            }
+            if (-not $signature.SignerCertificate -or
+                $signature.SignerCertificate.Subject -notmatch [regex]::Escape('杭州灵界科技有限公司')) {
+              throw "Unexpected Authenticode publisher: $path"
+            }
+            if ($signature.SignerCertificate.Thumbprint -cne $env:EXPECTED_SIGNER_THUMBPRINT) {
+              throw "Authenticode signer identity drifted after digest binding: $path"
+            }
+            if (-not $signature.TimeStamperCertificate) {
+              throw "Authenticode timestamp is missing: $path"
+            }
+          }
+
+      - name: Prove the NSIS installer embeds the exact verified unpacked payload
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          $installer = "release/nachuan-$env:RELEASE_VERSION-lean-win.exe"
+          node scripts/installer-closure.mjs install-verify `
+            $installer `
+            release/win-unpacked `
+            release/WIN_UNPACKED_MANIFEST.json `
+            $env:RELEASE_VERSION `
+            lean `
+            '纳川'
+
+      - name: Re-verify packaged bytes after installer closure evidence
+        working-directory: desktop
+        env:
+          DMX_VARIANT: lean
+          NACHUAN_UPDATE_TIER: production
+        run: node scripts/_verify_pack.mjs lean
+
+      - name: Scan the complete final release closure
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          $installer = "release/nachuan-$env:RELEASE_VERSION-lean-win.exe"
+          node scripts/release-security.mjs scan `
+            release/win-unpacked `
+            $installer `
+            "$installer.blockmap" `
+            release/lean.yml `
+            release/WIN_UNPACKED_MANIFEST.json
+
+      - name: Verify tag and update metadata agree
+        working-directory: desktop
+        run: node scripts/release-metadata.mjs lean $env:RELEASE_TAG
+
+      - name: Collect and freeze production release evidence before online signing
+        id: production_evidence
+        working-directory: desktop
+        shell: pwsh
+        env:
+          NACHUAN_UPDATE_TIER: production
+          NACHUAN_RELEASE_TAG: ${{ needs.verify.outputs.release_tag }}
+          NACHUAN_RELEASE_COMMIT: ${{ needs.verify.outputs.release_commit }}
+          NACHUAN_RELEASE_RUN_ID: ${{ github.run_id }}
+          NACHUAN_RELEASE_SOURCE_FREEZE_PATH: ${{ steps.release_source_freeze.outputs.source_freeze_path }}
+          NACHUAN_RELEASE_SOURCE_FREEZE_SHA256: ${{ steps.release_source_freeze.outputs.source_freeze_sha256 }}
+        run: |
+          $prepared = Join-Path $env:RUNNER_TEMP 'nachuan-production-release-evidence.json'
+          node scripts/release-evidence.mjs prepare lean $prepared
+          if ($LASTEXITCODE -ne 0) { throw 'Production release evidence collection failed' }
+          "prepared_evidence_file=$prepared" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Materialize production threshold leaf signing keys
+        id: production_update_leaves
+        working-directory: desktop
+        env:
+          DMX_VARIANT: lean
+          NACHUAN_PRODUCTION_UPDATE_CHANNEL: production-lean-win-x64
+          NACHUAN_PRODUCTION_UPDATE_KEY_ID: ${{ vars.NACHUAN_PRODUCTION_UPDATE_KEY_ID }}
+          NACHUAN_PRODUCTION_UPDATE_PUBLIC_KEY_SPKI_BASE64: ${{ vars.NACHUAN_PRODUCTION_UPDATE_PUBLIC_KEY_SPKI_BASE64 }}
+          NACHUAN_PRODUCTION_UPDATE_ROOT_AUTHORIZATION_FILE: ${{ steps.production_update_root.outputs.root_authorization_file }}
+          NACHUAN_PRODUCTION_UPDATE_LEAF_SIGNING_KEYS_BUNDLE_BASE64: ${{ secrets.NACHUAN_PRODUCTION_UPDATE_LEAF_SIGNING_KEYS_BUNDLE_BASE64 }}
+        run: node scripts/production-update-envelope.mjs materialize-leaves lean
+
+      - name: Generate schema2 production envelope and checksum closure
+        working-directory: desktop
+        env:
+          DMX_VARIANT: lean
+          NACHUAN_PRODUCTION_UPDATE_CHANNEL: production-lean-win-x64
+          NACHUAN_PRODUCTION_UPDATE_KEY_ID: ${{ vars.NACHUAN_PRODUCTION_UPDATE_KEY_ID }}
+          NACHUAN_PRODUCTION_UPDATE_PUBLIC_KEY_SPKI_BASE64: ${{ vars.NACHUAN_PRODUCTION_UPDATE_PUBLIC_KEY_SPKI_BASE64 }}
+          NACHUAN_PRODUCTION_UPDATE_SEQUENCE: ${{ vars.NACHUAN_PRODUCTION_UPDATE_SEQUENCE }}
+          NACHUAN_PRODUCTION_UPDATE_ROOT_AUTHORIZATION_FILE: ${{ steps.production_update_root.outputs.root_authorization_file }}
+          NACHUAN_PRODUCTION_UPDATE_LEAF_SIGNING_KEYS_FILE: ${{ steps.production_update_leaves.outputs.leaf_signing_keys_file }}
+          NACHUAN_PRODUCTION_UPDATE_LEAF_PRIVATE_KEY_PASSPHRASE: ${{ secrets.NACHUAN_PRODUCTION_UPDATE_LEAF_PRIVATE_KEY_PASSPHRASE }}
+          NACHUAN_RELEASE_TAG: ${{ needs.verify.outputs.release_tag }}
+        run: node scripts/production-update-envelope.mjs finalize lean
+
+      - name: Remove production update signing inputs
+        if: always()
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
+            throw 'RUNNER_TEMP is required to clean production update signing inputs'
+          }
+          $runnerTemp = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $env:RUNNER_TEMP).Path).TrimEnd([char[]]'\/')
+          $productionInputName = '^nachuan-production-(?:root-\d+-[0-9a-f]{12}\.json|leaf-\d+-\d+-[0-9a-f]{12}\.pem|leaves-\d+-[0-9a-f]{12}\.json)$'
+          $inputs = @(Get-ChildItem -LiteralPath $runnerTemp -Force | Where-Object { $_.Name -cmatch $productionInputName })
+          foreach ($inputFile in $inputs) {
+            if ($inputFile.PSIsContainer -or ($inputFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+              throw "Refusing to clean a redirected or non-file production signing input: $($inputFile.Name)"
+            }
+            $fullPath = [IO.Path]::GetFullPath($inputFile.FullName)
+            $parent = [IO.Path]::GetDirectoryName($fullPath).TrimEnd([char[]]'\/')
+            if (-not [string]::Equals($parent, $runnerTemp, [StringComparison]::OrdinalIgnoreCase)) {
+              throw "Production signing-input cleanup escaped RUNNER_TEMP: $fullPath"
+            }
+            Remove-Item -LiteralPath $fullPath -Force -ErrorAction Stop
+          }
+          $residual = @(Get-ChildItem -LiteralPath $runnerTemp -Force | Where-Object { $_.Name -cmatch $productionInputName })
+          if ($residual.Count -ne 0) {
+            throw "Production signing-input cleanup left $($residual.Count) residual file(s)"
+          }
+
+      - name: Finalize and re-verify production release evidence
+        working-directory: desktop
+        shell: pwsh
+        env:
+          NACHUAN_UPDATE_TIER: production
+          NACHUAN_RELEASE_TAG: ${{ needs.verify.outputs.release_tag }}
+          NACHUAN_RELEASE_COMMIT: ${{ needs.verify.outputs.release_commit }}
+          NACHUAN_RELEASE_RUN_ID: ${{ github.run_id }}
+          PREPARED_EVIDENCE_FILE: ${{ steps.production_evidence.outputs.prepared_evidence_file }}
+          NACHUAN_RELEASE_SOURCE_FREEZE_PATH: ${{ steps.release_source_freeze.outputs.source_freeze_path }}
+          NACHUAN_RELEASE_SOURCE_FREEZE_SHA256: ${{ steps.release_source_freeze.outputs.source_freeze_sha256 }}
+        run: |
+          node scripts/release-evidence.mjs finalize-prepared lean "$env:PREPARED_EVIDENCE_FILE"
+          if ($LASTEXITCODE -ne 0) { throw 'Production release evidence finalization failed' }
+          node scripts/release-evidence.mjs verify lean
+          if ($LASTEXITCODE -ne 0) { throw 'Finalized production release evidence verification failed' }
+
+      - name: Independently verify schema2 production closure
+        working-directory: desktop
+        shell: pwsh
+        env:
+          DMX_VARIANT: lean
+          NACHUAN_PRODUCTION_UPDATE_CHANNEL: production-lean-win-x64
+          NACHUAN_PRODUCTION_UPDATE_KEY_ID: ${{ vars.NACHUAN_PRODUCTION_UPDATE_KEY_ID }}
+          NACHUAN_PRODUCTION_UPDATE_PUBLIC_KEY_SPKI_BASE64: ${{ vars.NACHUAN_PRODUCTION_UPDATE_PUBLIC_KEY_SPKI_BASE64 }}
+          NACHUAN_UPDATE_TIER: production
+          NACHUAN_RELEASE_TAG: ${{ needs.verify.outputs.release_tag }}
+          NACHUAN_RELEASE_COMMIT: ${{ needs.verify.outputs.release_commit }}
+          NACHUAN_RELEASE_RUN_ID: ${{ github.run_id }}
+          NACHUAN_RELEASE_SOURCE_FREEZE_PATH: ${{ steps.release_source_freeze.outputs.source_freeze_path }}
+          NACHUAN_RELEASE_SOURCE_FREEZE_SHA256: ${{ steps.release_source_freeze.outputs.source_freeze_sha256 }}
+        run: |
+          node scripts/release-source-freeze.mjs verify "$env:NACHUAN_RELEASE_SOURCE_FREEZE_PATH"
+          if ($LASTEXITCODE -ne 0) { throw 'Final complete source and Git execution freeze verification failed' }
+          node scripts/release-evidence.mjs verify lean
+          if ($LASTEXITCODE -ne 0) { throw 'Final release evidence or source-lock verification failed' }
+          node scripts/production-update-envelope.mjs verify lean
+          if ($LASTEXITCODE -ne 0) { throw 'Final production envelope verification failed' }
+          node scripts/release-security.mjs scan release
+          if ($LASTEXITCODE -ne 0) { throw 'Final production release scan failed' }
+
+      - name: Create and verify content-addressed release candidate archive
+        id: candidate_archive
+        working-directory: desktop
+        shell: pwsh
+        env:
+          NACHUAN_RELEASE_TAG: ${{ needs.verify.outputs.release_tag }}
+          NACHUAN_RELEASE_COMMIT: ${{ needs.verify.outputs.release_commit }}
+          NACHUAN_RELEASE_TREE: ${{ needs.verify.outputs.release_tree }}
+          NACHUAN_RELEASE_REPOSITORY: ${{ github.repository }}
+          NACHUAN_RELEASE_WORKFLOW_REF: ${{ github.workflow_ref }}
+          NACHUAN_RELEASE_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          NACHUAN_RELEASE_RUN_ID: ${{ github.run_id }}
+          NACHUAN_RELEASE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          NACHUAN_RELEASE_JOB: ${{ github.job }}
+          NACHUAN_RELEASE_VARIANT: lean
+          NACHUAN_RELEASE_VERSION: ${{ needs.verify.outputs.release_version }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
+            throw 'RUNNER_TEMP is required for the content-addressed release candidate'
+          }
+          $candidateDirectory = Join-Path $env:RUNNER_TEMP "nachuan-candidate-$env:NACHUAN_RELEASE_RUN_ID-$env:NACHUAN_RELEASE_RUN_ATTEMPT"
+          if (Test-Path -LiteralPath $candidateDirectory) {
+            throw 'The content-addressed release candidate output already exists'
+          }
+          $identityArguments = @(
+            '--release-tag', $env:NACHUAN_RELEASE_TAG,
+            '--release-commit', $env:NACHUAN_RELEASE_COMMIT,
+            '--release-tree', $env:NACHUAN_RELEASE_TREE,
+            '--repository', $env:NACHUAN_RELEASE_REPOSITORY,
+            '--workflow-ref', $env:NACHUAN_RELEASE_WORKFLOW_REF,
+            '--workflow-sha', $env:NACHUAN_RELEASE_WORKFLOW_SHA,
+            '--run-id', $env:NACHUAN_RELEASE_RUN_ID,
+            '--run-attempt', $env:NACHUAN_RELEASE_RUN_ATTEMPT,
+            '--job', $env:NACHUAN_RELEASE_JOB,
+            '--variant', $env:NACHUAN_RELEASE_VARIANT,
+            '--version', $env:NACHUAN_RELEASE_VERSION
+          )
+          $createdJson = (& "$env:NACHUAN_RELEASE_NODE_PATH" scripts/release-candidate-archive.mjs create `
+            --release-root release `
+            --output-directory $candidateDirectory `
+            @identityArguments) -join "`n"
+          if ($LASTEXITCODE -ne 0) { throw 'Content-addressed release candidate creation failed' }
+          $created = $createdJson | ConvertFrom-Json -Depth 20
+          $verifiedJson = (& "$env:NACHUAN_RELEASE_NODE_PATH" scripts/release-candidate-archive.mjs verify `
+            --archive "$($created.archivePath)" `
+            --manifest "$($created.manifestPath)" `
+            @identityArguments) -join "`n"
+          if ($LASTEXITCODE -ne 0) { throw 'Content-addressed release candidate verification failed' }
+          $verified = $verifiedJson | ConvertFrom-Json -Depth 20
+          foreach ($field in @('archiveSha256', 'archiveSize', 'manifestSha256', 'targetCount')) {
+            if ($created.$field -cne $verified.$field) {
+              throw "Release candidate verification output mismatch: $field"
+            }
+          }
+          "archive_path=$($created.archivePath)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "archive_sha256=$($created.archiveSha256)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "archive_size=$($created.archiveSize)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "manifest_path=$($created.manifestPath)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "manifest_sha256=$($created.manifestSha256)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Validate candidate-bound Defender and ClamAV receipts
+        working-directory: desktop
+        shell: pwsh
+        env:
+          NACHUAN_RELEASE_TAG: ${{ needs.verify.outputs.release_tag }}
+          NACHUAN_RELEASE_COMMIT: ${{ needs.verify.outputs.release_commit }}
+          NACHUAN_RELEASE_TREE: ${{ needs.verify.outputs.release_tree }}
+          NACHUAN_RELEASE_REPOSITORY: ${{ github.repository }}
+          NACHUAN_RELEASE_WORKFLOW_REF: ${{ github.workflow_ref }}
+          NACHUAN_RELEASE_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          NACHUAN_RELEASE_RUN_ID: ${{ github.run_id }}
+          NACHUAN_RELEASE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          NACHUAN_RELEASE_BUILD_JOB: ${{ github.job }}
+          NACHUAN_RELEASE_VARIANT: lean
+          NACHUAN_RELEASE_VERSION: ${{ needs.verify.outputs.release_version }}
+          NACHUAN_CANDIDATE_ARCHIVE: ${{ steps.candidate_archive.outputs.archive_path }}
+          NACHUAN_CANDIDATE_MANIFEST: ${{ steps.candidate_archive.outputs.manifest_path }}
+          NACHUAN_DEFENDER_RECEIPT: ${{ runner.temp }}/nachuan-malware-defender.json
+          NACHUAN_CLAMAV_RECEIPT: ${{ runner.temp }}/nachuan-malware-clamav.json
+        run: |
+          & "$env:NACHUAN_RELEASE_NODE_PATH" scripts/release-malware-evidence.mjs verify `
+            --archive "$env:NACHUAN_CANDIDATE_ARCHIVE" `
+            --candidate-manifest "$env:NACHUAN_CANDIDATE_MANIFEST" `
+            --release-tag "$env:NACHUAN_RELEASE_TAG" `
+            --release-commit "$env:NACHUAN_RELEASE_COMMIT" `
+            --release-tree "$env:NACHUAN_RELEASE_TREE" `
+            --repository "$env:NACHUAN_RELEASE_REPOSITORY" `
+            --workflow-ref "$env:NACHUAN_RELEASE_WORKFLOW_REF" `
+            --workflow-sha "$env:NACHUAN_RELEASE_WORKFLOW_SHA" `
+            --run-id "$env:NACHUAN_RELEASE_RUN_ID" `
+            --run-attempt "$env:NACHUAN_RELEASE_RUN_ATTEMPT" `
+            --build-job "$env:NACHUAN_RELEASE_BUILD_JOB" `
+            --variant "$env:NACHUAN_RELEASE_VARIANT" `
+            --version "$env:NACHUAN_RELEASE_VERSION" `
+            --defender-receipt "$env:NACHUAN_DEFENDER_RECEIPT" `
+            --clamav-receipt "$env:NACHUAN_CLAMAV_RECEIPT"
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate malware claims were not backed by trusted scanner attestations' }
+
+      - name: Remove prepared production evidence and source freeze inputs
+        if: always()
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
+            throw 'RUNNER_TEMP is required to clean prepared production evidence and source freeze inputs'
+          }
+          $runnerTemp = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $env:RUNNER_TEMP).Path).TrimEnd([char[]]'\/')
+          foreach ($name in @('nachuan-production-release-evidence.json', 'nachuan-release-source-freeze.json')) {
+            $path = Join-Path $runnerTemp $name
+            if (Test-Path -LiteralPath $path) {
+              $item = Get-Item -LiteralPath $path -Force
+              if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Refusing to clean redirected or non-file release input: $name"
+              }
+              $fullPath = [IO.Path]::GetFullPath($item.FullName)
+              $parent = [IO.Path]::GetDirectoryName($fullPath).TrimEnd([char[]]'\/')
+              if (-not [string]::Equals($parent, $runnerTemp, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Release input cleanup escaped RUNNER_TEMP: $fullPath"
+              }
+              Remove-Item -LiteralPath $fullPath -Force -ErrorAction Stop
+            }
+            if (Test-Path -LiteralPath $path) { throw "Release input cleanup left a residual file: $name" }
+          }
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nachuan-windows-${{ needs.verify.outputs.release_tag }}-${{ steps.candidate_archive.outputs.archive_sha256 }}
+          path: |
+            ${{ steps.candidate_archive.outputs.archive_path }}
+            ${{ steps.candidate_archive.outputs.manifest_path }}
+          if-no-files-found: error
+          compression-level: 0
+          include-hidden-files: false
+          retention-days: 14
+
+  publish:
+    name: publish-blocked-until-machine-gates-exist
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: production-release
+    permissions:
+      contents: read
+    steps:
+      - name: Fail closed before GitHub Release creation
+        shell: bash
+        run: |
+          echo 'BLOCKED: no GitHub Release will be created.'
+          echo 'Required production gates are not yet satisfied:'
+          echo '1) independent anti-malware scan evidence bound to installer, unpacked desktop EXE and engine EXE'
+          echo '2) third-party license gate has unresolved manual-legal-review blockers'
+          echo '3) clean-VM install, launch, upgrade and uninstall smoke tests'
+          echo '4) real WeChat send/receive round-trip evidence'
+          echo '5) production-like soak/SLO evidence'
+          echo '6) trusted public activation, production signing-key isolation and candidate-bound machine evidence'
+          echo '7) signed production update envelope has no independently verified public readback and activation receipt'
+          exit 1

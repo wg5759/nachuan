@@ -1,0 +1,1407 @@
+@import "tailwindcss";
+
+/* ── 全局浅色主题（白底/黑字/灰字/红字）─────────────────────────────────
+   做法：反转 neutral 色阶，让满屏既有的 neutral-* 类天然翻译成浅色——
+   设计意图本就是「900=底、100=正文、500=次要」，翻转明度后正好变成
+   「白底、黑正文、中灰次要」，零组件改动、一处可维护（要调色/加深色开关只动这里）。
+   语义：黑字=正常主要内容 · 灰字=次要辅助(时间戳/用量/占位/禁用) · 红字=错误警告(red-* 不反转)。 */
+@theme {
+  --color-neutral-50: #0a0a0a;   /* 最强调：黑底强调按钮/最重文字 */
+  --color-neutral-100: #171717;  /* 正文/主要内容（黑字） */
+  --color-neutral-200: #262626;  /* 次强正文 */
+  --color-neutral-300: #404040;  /* 正文偏次 */
+  --color-neutral-400: #525252;  /* 次要文字（偏深灰） */
+  --color-neutral-500: #737373;  /* 次要/辅助（中灰字：时间戳/用量/元信息） */
+  --color-neutral-600: #a3a3a3;  /* 占位/禁用（浅灰） */
+  --color-neutral-700: #d4d4d4;  /* 边框（较明显） */
+  --color-neutral-800: #e5e5e5;  /* 边框/分隔/悬停底 */
+  --color-neutral-900: #f5f5f5;  /* 主背景（近白） */
+  --color-neutral-950: #ffffff;  /* 最高层背景：弹层/菜单（纯白） */
+}
+
+:root {
+  color-scheme: light;
+  --nc-canvas: #f6f7fb;
+  --nc-surface: #ffffff;
+  --nc-surface-soft: #f2f3f8;
+  --nc-surface-hover: #eceef5;
+  --nc-line: #e2e5ed;
+  --nc-line-strong: #d3d7e2;
+  --nc-ink: #171921;
+  --nc-ink-soft: #3d4150;
+  --nc-muted: #737887;
+  --nc-brand: #5557d9;
+  --nc-brand-strong: #4244c6;
+  --nc-brand-soft: #eeefff;
+  --nc-positive: #24865d;
+  --nc-warning: #b27417;
+  --nc-danger: #c84747;
+  --nc-radius-sm: 8px;
+  --nc-radius-md: 12px;
+  --nc-radius-lg: 18px;
+  --nc-shadow-sm: 0 1px 2px rgb(26 29 43 / 5%), 0 4px 14px rgb(26 29 43 / 4%);
+  --nc-shadow-lg: 0 18px 48px rgb(24 27 42 / 15%);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  background: var(--nc-canvas);
+  color: var(--nc-ink);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── Shared A-shell: Web and Electron render this exact hierarchy. ─────── */
+.nachuan-root {
+  min-width: 0;
+  overflow: hidden;
+  background: var(--nc-canvas);
+  color: var(--nc-ink);
+}
+
+.nachuan-header {
+  position: relative;
+  z-index: 60;
+  display: flex;
+  min-height: 62px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--nc-line);
+  background: rgb(255 255 255 / 92%);
+  box-shadow: 0 1px 10px rgb(31 35 52 / 3%);
+  backdrop-filter: blur(18px);
+  user-select: none;
+}
+
+.nachuan-header--electron {
+  padding-right: 148px;
+}
+
+.nachuan-header-brand,
+.nachuan-header-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.nachuan-header-brand {
+  gap: 11px;
+}
+
+.nachuan-header-actions {
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.nachuan-logo {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border-radius: 11px;
+  color: white;
+  background: linear-gradient(145deg, #6d70ef, #4547c5);
+  box-shadow: 0 7px 18px rgb(78 80 206 / 24%);
+  font-size: 15px;
+  font-weight: 750;
+  letter-spacing: -.04em;
+}
+
+.nachuan-brand-copy {
+  display: grid;
+  line-height: 1.12;
+}
+
+.nachuan-brand-copy strong {
+  color: var(--nc-ink);
+  font-size: 15px;
+  font-weight: 720;
+  letter-spacing: .02em;
+}
+
+.nachuan-brand-copy small {
+  margin-top: 4px;
+  color: var(--nc-muted);
+  font-size: 10px;
+  letter-spacing: .04em;
+}
+
+.nachuan-icon-button,
+.nachuan-creative-trigger {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--nc-ink-soft);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.nachuan-icon-button {
+  width: 34px;
+  padding: 0;
+}
+
+.nachuan-icon-button svg,
+.nachuan-creative-trigger svg {
+  width: 18px;
+  height: 18px;
+}
+
+.nachuan-icon-button:hover {
+  border-color: var(--nc-line);
+  background: var(--nc-surface-soft);
+}
+
+.nachuan-navigation-toggle {
+  margin-right: 1px;
+}
+
+.nachuan-creative-trigger {
+  gap: 7px;
+  padding: 0 12px;
+  border-color: var(--nc-line);
+  background: var(--nc-surface);
+  box-shadow: var(--nc-shadow-sm);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.nachuan-creative-trigger:hover,
+.nachuan-creative-trigger.is-active {
+  border-color: #cdd0ff;
+  color: var(--nc-brand-strong);
+  background: var(--nc-brand-soft);
+}
+
+.nachuan-model-control {
+  max-width: min(36vw, 460px);
+}
+
+.nachuan-engine-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: max-content;
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: var(--nc-muted);
+  background: var(--nc-surface-soft);
+  font-size: 11px;
+}
+
+.nachuan-engine-status > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--nc-danger);
+  box-shadow: 0 0 0 3px rgb(200 71 71 / 10%);
+}
+
+.nachuan-engine-status--online > span {
+  background: var(--nc-positive);
+  box-shadow: 0 0 0 3px rgb(36 134 93 / 11%);
+}
+
+.nachuan-engine-status--degraded > span,
+.nachuan-engine-status--starting > span {
+  background: var(--nc-warning);
+  box-shadow: 0 0 0 3px rgb(178 116 23 / 11%);
+}
+
+.nachuan-workspace {
+  min-height: 0;
+  background: var(--nc-canvas);
+}
+
+.nachuan-mobile-navigation {
+  display: none;
+}
+
+.nachuan-creative-pending {
+  position: fixed;
+  z-index: 68;
+  top: 72px;
+  left: 50%;
+  max-width: calc(100vw - 28px);
+  transform: translateX(-50%);
+  padding: 8px 12px;
+  border: 1px solid #cdd0ff;
+  border-radius: 999px;
+  color: var(--nc-brand-strong);
+  background: rgb(255 255 255 / 96%);
+  box-shadow: var(--nc-shadow-sm);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.nachuan-navigation-panel,
+.nachuan-browser-panel {
+  background: var(--nc-surface-soft);
+}
+
+.nachuan-navigation-panel {
+  border-right: 1px solid var(--nc-line);
+}
+
+.nachuan-browser-panel {
+  border-left: 1px solid var(--nc-line);
+}
+
+.nachuan-main-panel {
+  min-width: 0;
+  background: var(--nc-surface);
+}
+
+.nachuan-resize-handle {
+  position: relative;
+  z-index: 10;
+  width: 3px;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+.nachuan-resize-handle:hover,
+.nachuan-resize-handle[data-resize-handle-state="drag"] {
+  background: var(--nc-brand);
+}
+
+.nachuan-center-layout {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.nachuan-view-surface {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  background: var(--nc-surface);
+}
+
+.nachuan-creative-panel {
+  width: 336px;
+  min-width: 304px;
+  flex: 0 0 336px;
+  overflow: auto;
+  border-left: 1px solid var(--nc-line);
+  background: #fafaff;
+}
+
+.nachuan-restore-layout {
+  position: fixed;
+  z-index: 80;
+  top: 74px;
+  left: 12px;
+  padding: 7px 11px;
+  border: 1px solid var(--nc-line-strong);
+  border-radius: 10px;
+  color: var(--nc-ink-soft);
+  background: rgb(255 255 255 / 94%);
+  box-shadow: var(--nc-shadow-sm);
+  cursor: pointer;
+}
+
+/* ── B: compact conversation and workspace navigation. ────────────────── */
+.nachuan-left-pane {
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 10px 10px;
+  color: var(--nc-ink-soft);
+}
+
+.nachuan-primary-nav {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.nachuan-primary-nav-item {
+  display: grid;
+  min-width: 0;
+  min-height: 48px;
+  place-items: center;
+  align-content: center;
+  gap: 4px;
+  padding: 4px 2px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--nc-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: 130ms ease;
+}
+
+.nachuan-primary-nav-item svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.nachuan-primary-nav-item span {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 9px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nachuan-primary-nav-item:hover {
+  color: var(--nc-ink-soft);
+  background: var(--nc-surface-hover);
+}
+
+.nachuan-primary-nav-item[aria-current="page"] {
+  border-color: #d8dafe;
+  color: var(--nc-brand-strong);
+  background: var(--nc-brand-soft);
+}
+
+.nachuan-new-conversation {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px 34px;
+  gap: 5px;
+}
+
+.nachuan-new-conversation button {
+  display: inline-flex;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--nc-line);
+  border-radius: 10px;
+  color: var(--nc-ink-soft);
+  background: var(--nc-surface);
+  cursor: pointer;
+}
+
+.nachuan-new-conversation button:hover {
+  border-color: #ccd0f7;
+  background: var(--nc-brand-soft);
+}
+
+.nachuan-new-conversation button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.nachuan-new-conversation .nachuan-new-chat {
+  border-color: var(--nc-brand);
+  color: white;
+  background: var(--nc-brand);
+  box-shadow: 0 5px 13px rgb(78 80 206 / 16%);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.nachuan-new-conversation .nachuan-new-chat:hover {
+  border-color: var(--nc-brand-strong);
+  background: var(--nc-brand-strong);
+}
+
+.nachuan-conversation-search {
+  display: flex;
+  height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--nc-line);
+  border-radius: 10px;
+  color: var(--nc-muted);
+  background: rgb(255 255 255 / 72%);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.nachuan-conversation-search:focus-within {
+  border-color: #bfc2f3;
+  box-shadow: 0 0 0 3px rgb(85 87 217 / 8%);
+}
+
+.nachuan-conversation-search svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.nachuan-conversation-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--nc-ink-soft);
+  background: transparent;
+  font-size: 12px;
+}
+
+.nachuan-conversation-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+  color: var(--nc-muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .04em;
+}
+
+.nachuan-conversation-section-heading small {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--nc-surface-hover);
+  font-size: 9px;
+}
+
+.nachuan-conversation-list {
+  min-height: 72px;
+  flex: 1 1 auto;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #cfd2dc transparent;
+}
+
+.nachuan-conversation-empty {
+  padding: 18px 10px;
+  color: var(--nc-muted);
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.nachuan-conversation-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 3px;
+  padding: 8px 7px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--nc-ink-soft);
+  cursor: pointer;
+  outline: none;
+}
+
+.nachuan-conversation-row:hover,
+.nachuan-conversation-row:focus-visible {
+  background: var(--nc-surface-hover);
+}
+
+.nachuan-conversation-row.is-active {
+  border-color: #dfe0f7;
+  color: var(--nc-brand-strong);
+  background: var(--nc-surface);
+  box-shadow: var(--nc-shadow-sm);
+}
+
+.nachuan-conversation-kind {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--nc-muted);
+  background: var(--nc-surface);
+}
+
+.nachuan-conversation-kind svg {
+  width: 14px;
+  height: 14px;
+}
+
+.nachuan-conversation-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nachuan-conversation-rename {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 2px 5px;
+  border: 1px solid #bfc2f3;
+  border-radius: 6px;
+  outline: none;
+  color: var(--nc-ink);
+  background: white;
+  font-size: 12px;
+}
+
+.nachuan-conversation-actions {
+  display: flex;
+  flex: none;
+  gap: 1px;
+  opacity: 0;
+}
+
+.nachuan-conversation-row:hover .nachuan-conversation-actions,
+.nachuan-conversation-row:focus-within .nachuan-conversation-actions {
+  opacity: 1;
+}
+
+.nachuan-conversation-actions button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--nc-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.nachuan-conversation-actions button:hover {
+  color: var(--nc-ink);
+  background: white;
+}
+
+.nachuan-conversation-actions svg {
+  width: 13px;
+  height: 13px;
+}
+
+.nachuan-archive-toggle {
+  padding: 4px 7px;
+  border: 0;
+  color: var(--nc-muted);
+  background: transparent;
+  text-align: left;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.nachuan-workspace-menu {
+  border-top: 1px solid var(--nc-line);
+  padding-top: 7px;
+}
+
+.nachuan-workspace-menu summary {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 7px;
+  border-radius: 9px;
+  color: var(--nc-muted);
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.nachuan-workspace-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.nachuan-workspace-menu summary:hover {
+  background: var(--nc-surface-hover);
+}
+
+.nachuan-workspace-menu summary > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.nachuan-workspace-menu summary svg {
+  width: 15px;
+  height: 15px;
+}
+
+.nachuan-workspace-menu > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+  padding-top: 5px;
+}
+
+.nachuan-workspace-menu button {
+  min-width: 0;
+  padding: 6px 7px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 7px;
+  color: var(--nc-muted);
+  background: transparent;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.nachuan-workspace-menu button:hover,
+.nachuan-workspace-menu button[aria-current="page"] {
+  color: var(--nc-brand-strong);
+  background: var(--nc-brand-soft);
+}
+
+/* ── Conversation canvas: roomy body, anchored compact composer. ───────── */
+.nachuan-chat-pane {
+  background: var(--nc-surface);
+}
+
+.nachuan-message-canvas {
+  padding: 30px clamp(18px, 4vw, 64px) 24px !important;
+  scrollbar-width: thin;
+  scrollbar-color: #d3d6df transparent;
+}
+
+.nachuan-message-canvas > * {
+  width: min(100%, 920px);
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.nachuan-composer-region {
+  padding: 10px clamp(14px, 3vw, 42px) 14px;
+  border-top: 0;
+  background: linear-gradient(to bottom, rgb(255 255 255 / 0%), white 24%);
+}
+
+.nachuan-composer-card {
+  width: min(100%, 940px);
+  margin: 0 auto;
+  border-color: var(--nc-line-strong) !important;
+  border-radius: 18px !important;
+  background: white !important;
+  box-shadow: 0 7px 30px rgb(28 31 47 / 9%) !important;
+}
+
+/* ── C: contextual creation inspector; it never owns provider state. ───── */
+.nachuan-creative-drawer {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 20px;
+  color: var(--nc-ink-soft);
+}
+
+.nachuan-creative-drawer-header {
+  display: grid;
+  gap: 15px;
+}
+
+.nachuan-creative-drawer-header strong {
+  color: var(--nc-ink);
+  font-size: 17px;
+  font-weight: 720;
+}
+
+.nachuan-creative-drawer-header p {
+  margin: 5px 0 0;
+  color: var(--nc-muted);
+  font-size: 11px;
+}
+
+.nachuan-creative-drawer-header [role="group"] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--nc-surface-hover);
+}
+
+.nachuan-creative-drawer button,
+.nachuan-creative-drawer select,
+.nachuan-creative-drawer textarea {
+  border: 1px solid var(--nc-line);
+  outline: none;
+}
+
+.nachuan-creative-drawer-header button {
+  padding: 7px;
+  border-color: transparent;
+  border-radius: 8px;
+  color: var(--nc-muted);
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.nachuan-creative-drawer-header button[aria-pressed="true"] {
+  color: var(--nc-brand-strong);
+  background: white;
+  box-shadow: var(--nc-shadow-sm);
+  font-weight: 650;
+}
+
+.nachuan-creative-drawer > label {
+  display: grid;
+  gap: 7px;
+  color: var(--nc-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.nachuan-creative-drawer select,
+.nachuan-creative-drawer textarea {
+  width: 100%;
+  border-radius: 10px;
+  color: var(--nc-ink-soft);
+  background: white;
+  font-size: 12px;
+}
+
+.nachuan-creative-drawer select {
+  height: 38px;
+  padding: 0 10px;
+}
+
+.nachuan-creative-drawer textarea {
+  min-height: 140px;
+  resize: vertical;
+  padding: 11px;
+  line-height: 1.6;
+}
+
+.nachuan-creative-file-picker input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.nachuan-creative-file-action {
+  display: grid;
+  min-height: 70px;
+  place-items: center;
+  border: 1px dashed var(--nc-line-strong);
+  border-radius: 11px;
+  color: var(--nc-brand-strong);
+  background: rgb(255 255 255 / 72%);
+  cursor: pointer;
+  font-size: 11px;
+  transition: border-color 130ms ease, background-color 130ms ease;
+}
+
+.nachuan-creative-file-picker:hover .nachuan-creative-file-action,
+.nachuan-creative-file-picker:focus-within .nachuan-creative-file-action {
+  border-color: #bfc2f3;
+  background: var(--nc-brand-soft);
+}
+
+.nachuan-creative-drawer select:focus,
+.nachuan-creative-drawer textarea:focus {
+  border-color: #bfc2f3;
+  box-shadow: 0 0 0 3px rgb(85 87 217 / 8%);
+}
+
+.nachuan-creative-reference {
+  margin: 0;
+  padding: 9px;
+  border: 1px solid var(--nc-line);
+  border-radius: 12px;
+  background: white;
+}
+
+.nachuan-creative-reference img {
+  width: 100%;
+  max-height: 180px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.nachuan-creative-reference figcaption {
+  margin-top: 7px;
+  color: var(--nc-muted);
+  font-size: 10px;
+}
+
+.nachuan-creative-reference button {
+  margin-top: 7px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  color: var(--nc-danger);
+  background: white;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.nachuan-creative-drawer > [role="status"] {
+  margin: 0;
+  padding: 10px;
+  border-radius: 9px;
+  color: var(--nc-warning);
+  background: #fff8e9;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.nachuan-creative-drawer > button[type="submit"] {
+  min-height: 40px;
+  margin-top: auto;
+  border-color: var(--nc-brand);
+  border-radius: 11px;
+  color: white;
+  background: var(--nc-brand);
+  box-shadow: 0 7px 18px rgb(78 80 206 / 18%);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.nachuan-creative-drawer > button[type="submit"]:disabled {
+  border-color: var(--nc-line);
+  color: #a3a6b0;
+  background: #e7e9ef;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* ── Real settings only; no decorative placeholder controls. ───────────── */
+.nachuan-page {
+  height: 100%;
+  overflow: auto;
+  padding: clamp(28px, 5vw, 68px);
+  background: var(--nc-canvas);
+}
+
+.nachuan-settings {
+  color: var(--nc-ink-soft);
+}
+
+.nachuan-page-heading,
+.nachuan-settings-card {
+  width: min(100%, 760px);
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.nachuan-eyebrow {
+  color: var(--nc-brand);
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: .18em;
+}
+
+.nachuan-page-heading h1 {
+  margin: 8px 0 6px;
+  color: var(--nc-ink);
+  font-size: clamp(24px, 3vw, 34px);
+  font-weight: 720;
+  letter-spacing: -.03em;
+}
+
+.nachuan-page-heading p {
+  margin: 0 0 28px;
+  color: var(--nc-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.nachuan-settings-card {
+  margin-bottom: 14px;
+  overflow: hidden;
+  border: 1px solid var(--nc-line);
+  border-radius: 15px;
+  background: white;
+  box-shadow: var(--nc-shadow-sm);
+}
+
+.nachuan-setting-row,
+.nachuan-settings-link {
+  display: flex;
+  min-height: 76px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px 18px;
+}
+
+.nachuan-setting-row + .nachuan-setting-row,
+.nachuan-settings-link + .nachuan-settings-link {
+  border-top: 1px solid var(--nc-line);
+}
+
+.nachuan-setting-row h2 {
+  margin: 0 0 4px;
+  color: var(--nc-ink);
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.nachuan-setting-row p {
+  margin: 0;
+  color: var(--nc-muted);
+  font-size: 11px;
+}
+
+.nachuan-segmented {
+  display: flex;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--nc-surface-soft);
+}
+
+.nachuan-segmented button {
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--nc-muted);
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.nachuan-segmented button[aria-pressed="true"] {
+  color: var(--nc-brand-strong);
+  background: white;
+  box-shadow: var(--nc-shadow-sm);
+}
+
+.nachuan-switch {
+  width: 38px;
+  height: 22px;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: #cfd2dc;
+  cursor: pointer;
+  transition: background-color 130ms ease;
+}
+
+.nachuan-switch span {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: white;
+  box-shadow: 0 1px 5px rgb(25 28 42 / 22%);
+  transition: transform 130ms ease;
+}
+
+.nachuan-switch[aria-checked="true"] {
+  background: var(--nc-brand);
+}
+
+.nachuan-switch[aria-checked="true"] span {
+  transform: translateX(16px);
+}
+
+.nachuan-settings-link {
+  width: 100%;
+  border: 0;
+  color: var(--nc-ink-soft);
+  background: white;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nachuan-settings-link:hover {
+  background: #fafaff;
+}
+
+.nachuan-settings-link span:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.nachuan-settings-link strong {
+  color: var(--nc-ink);
+  font-size: 12px;
+}
+
+.nachuan-settings-link small {
+  color: var(--nc-muted);
+  font-size: 10px;
+}
+
+.nachuan-recovery {
+  padding: 18px;
+}
+
+.nachuan-recovery-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.nachuan-recovery h2 {
+  margin: 0 0 5px;
+  color: var(--nc-ink);
+  font-size: 14px;
+}
+
+.nachuan-recovery p {
+  margin: 0;
+  color: var(--nc-muted);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.nachuan-recovery-badge {
+  flex: none;
+  padding: 4px 7px;
+  border: 1px solid #f1c6c6;
+  border-radius: 999px;
+  color: #a03535;
+  background: #fff7f7;
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: .08em;
+}
+
+.nachuan-recovery-grid {
+  display: grid;
+  grid-template-columns: 130px 150px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.nachuan-recovery-grid label,
+.nachuan-recovery-reason {
+  display: grid;
+  gap: 5px;
+  color: var(--nc-muted);
+  font-size: 10px;
+}
+
+.nachuan-recovery-grid input,
+.nachuan-recovery-grid select,
+.nachuan-recovery-reason textarea {
+  width: 100%;
+  border: 1px solid var(--nc-line);
+  border-radius: 9px;
+  outline: none;
+  color: var(--nc-ink);
+  background: white;
+}
+
+.nachuan-recovery-grid input,
+.nachuan-recovery-grid select {
+  height: 34px;
+  padding: 0 9px;
+}
+
+.nachuan-recovery-grid input:focus,
+.nachuan-recovery-grid select:focus,
+.nachuan-recovery-reason textarea:focus {
+  border-color: #bfc2f3;
+  box-shadow: 0 0 0 3px rgb(85 87 217 / 8%);
+}
+
+.nachuan-recovery-action {
+  margin-top: 12px;
+  padding: 8px 13px;
+  border: 0;
+  border-radius: 9px;
+  color: white;
+  background: var(--nc-brand);
+  font-size: 11px;
+  font-weight: 680;
+  cursor: pointer;
+}
+
+.nachuan-recovery-action:disabled {
+  opacity: .48;
+  cursor: not-allowed;
+}
+
+.nachuan-recovery-danger {
+  background: #a63f3f;
+}
+
+.nachuan-recovery-proof,
+.nachuan-recovery-result {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 13px;
+  border: 1px solid var(--nc-line);
+  border-radius: 11px;
+  background: var(--nc-surface-soft);
+  font-size: 10px;
+}
+
+.nachuan-recovery-proof dl {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.nachuan-recovery-proof dl div {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.nachuan-recovery-proof dt {
+  color: var(--nc-muted);
+}
+
+.nachuan-recovery-proof dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--nc-ink-soft);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.nachuan-recovery-reason textarea {
+  min-height: 72px;
+  padding: 9px;
+  resize: vertical;
+}
+
+.nachuan-recovery-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--nc-ink-soft);
+  font-size: 11px;
+}
+
+.nachuan-recovery-check input {
+  margin: 2px 0 0;
+}
+
+.nachuan-recovery-result {
+  border-color: #b8dec9;
+  color: #225b3b;
+  background: #f4fbf7;
+  overflow-wrap: anywhere;
+}
+
+.nachuan-recovery-error {
+  margin-top: 12px !important;
+  color: #a03535 !important;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .nachuan-recovery-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .nachuan-recovery-target {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Concept-frame classes also serve SSR contracts and isolated previews. */
+.nachuan-app-shell {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.nachuan-app-shell-navigation,
+.nachuan-app-shell-creative,
+.nachuan-app-shell-conversation {
+  min-height: 0;
+  overflow: auto;
+}
+
+/* ── Responsive: compact rail, overlay inspector, usable 390px canvas. ─── */
+@media (max-width: 1120px) {
+  .nachuan-brand-copy small,
+  .nachuan-engine-status {
+    display: none;
+  }
+
+  .nachuan-creative-panel {
+    position: absolute;
+    z-index: 35;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(360px, 88%);
+    box-shadow: var(--nc-shadow-lg);
+  }
+
+  .nachuan-workspace-menu > div {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .nachuan-header {
+    min-height: 56px;
+    gap: 8px;
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .nachuan-header--electron {
+    padding-right: 140px;
+  }
+
+  .nachuan-logo {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
+    border-radius: 9px;
+  }
+
+  .nachuan-brand-copy,
+  .nachuan-model-control,
+  .nachuan-creative-trigger span,
+  .nachuan-browser-trigger {
+    display: none;
+  }
+
+  .nachuan-creative-trigger {
+    width: 34px;
+    padding: 0;
+  }
+
+  .nachuan-left-pane {
+    gap: 5px;
+    padding: 8px 5px;
+  }
+
+  .nachuan-navigation-panel,
+  .nachuan-navigation-panel + .nachuan-resize-handle {
+    display: none !important;
+  }
+
+  .nachuan-mobile-navigation.is-open {
+    position: fixed;
+    z-index: 58;
+    inset: 56px 0 0;
+    display: block;
+  }
+
+  .nachuan-mobile-navigation-backdrop {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: rgb(27 30 43 / 26%);
+    backdrop-filter: blur(2px);
+  }
+
+  .nachuan-mobile-navigation-drawer {
+    position: relative;
+    display: flex;
+    width: min(82vw, 310px);
+    height: 100%;
+    flex-direction: column;
+    border-right: 1px solid var(--nc-line);
+    background: var(--nc-surface);
+    box-shadow: var(--nc-shadow-lg);
+  }
+
+  .nachuan-mobile-model-control {
+    display: grid;
+    gap: 7px;
+    padding: 12px 10px 9px;
+    border-bottom: 1px solid var(--nc-line);
+    color: var(--nc-muted);
+    font-size: 11px;
+    font-weight: 650;
+  }
+
+  .nachuan-mobile-model-control > div,
+  .nachuan-mobile-model-control > div > div {
+    min-width: 0;
+  }
+
+  .nachuan-mobile-model-control button {
+    max-width: 100%;
+  }
+
+  .nachuan-mobile-navigation-drawer .nachuan-left-pane {
+    flex: 1 1 auto;
+    padding: 10px;
+  }
+
+  .nachuan-primary-nav {
+    grid-template-columns: 1fr;
+  }
+
+  .nachuan-primary-nav-item {
+    min-height: 42px;
+  }
+
+  .nachuan-message-canvas {
+    padding: 18px 12px !important;
+  }
+
+  .nachuan-composer-region {
+    padding: 8px;
+  }
+
+  .nachuan-creative-panel {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .nachuan-page {
+    padding: 22px 14px;
+  }
+
+  .nachuan-setting-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

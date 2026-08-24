@@ -1,0 +1,304 @@
+{
+  "components": [
+    {
+      "artifacts": [
+        "resources/engine/engine.exe"
+      ],
+      "id": "agency-agents-skills",
+      "name": "agency-agents built-in skill bundle",
+      "noticeFiles": [
+        {
+          "location": "project",
+          "path": "skills/ATTRIBUTION.md",
+          "sha256": "27a23fe169f58002434e2787920410eca97bb53aab25031824229a19885a7010"
+        },
+        {
+          "location": "project",
+          "path": "skills/LICENSE.agency-agents",
+          "sha256": "9a45258434d5cedf0af73c9ad4771373701225038d246c49219026c33677f66f"
+        }
+      ],
+      "sourceUrl": "https://github.com/msitarzewski/agency-agents/tree/00fb28a4cf60a719363dce0de67fafc6301857ce",
+      "spdxExpression": "MIT",
+      "version": "00fb28a4cf60a719363dce0de67fafc6301857ce",
+      "versionProof": {
+        "kind": "project-file",
+        "path": "skills/trusted-manifest.json",
+        "sha256": "b621b59d5bf8fe01cf07322eaca6b9973922fb92829462ae01b5da3d40de8b0e"
+      }
+    },
+    {
+      "artifacts": [
+        "chrome_100_percent.pak",
+        "chrome_200_percent.pak",
+        "d3dcompiler_47.dll",
+        "dxcompiler.dll",
+        "dxil.dll",
+        "ffmpeg.dll",
+        "icudtl.dat",
+        "libEGL.dll",
+        "libGLESv2.dll",
+        "locales/af.pak",
+        "locales/am.pak",
+        "locales/ar.pak",
+        "locales/bg.pak",
+        "locales/bn.pak",
+        "locales/ca.pak",
+        "locales/cs.pak",
+        "locales/da.pak",
+        "locales/de.pak",
+        "locales/el.pak",
+        "locales/en-GB.pak",
+        "locales/en-US.pak",
+        "locales/es-419.pak",
+        "locales/es.pak",
+        "locales/et.pak",
+        "locales/fa.pak",
+        "locales/fi.pak",
+        "locales/fil.pak",
+        "locales/fr.pak",
+        "locales/gu.pak",
+        "locales/he.pak",
+        "locales/hi.pak",
+        "locales/hr.pak",
+        "locales/hu.pak",
+        "locales/id.pak",
+        "locales/it.pak",
+        "locales/ja.pak",
+        "locales/kn.pak",
+        "locales/ko.pak",
+        "locales/lt.pak",
+        "locales/lv.pak",
+        "locales/ml.pak",
+        "locales/mr.pak",
+        "locales/ms.pak",
+        "locales/nb.pak",
+        "locales/nl.pak",
+        "locales/pl.pak",
+        "locales/pt-BR.pak",
+        "locales/pt-PT.pak",
+        "locales/ro.pak",
+        "locales/ru.pak",
+        "locales/sk.pak",
+        "locales/sl.pak",
+        "locales/sr.pak",
+        "locales/sv.pak",
+        "locales/sw.pak",
+        "locales/ta.pak",
+        "locales/te.pak",
+        "locales/th.pak",
+        "locales/tr.pak",
+        "locales/uk.pak",
+        "locales/ur.pak",
+        "locales/vi.pak",
+        "locales/zh-CN.pak",
+        "locales/zh-TW.pak",
+        "resources.pak",
+        "snapshot_blob.bin",
+        "v8_context_snapshot.bin",
+        "vk_swiftshader.dll",
+        "vulkan-1.dll",
+        "纳川.exe"
+      ],
+      "id": "chromium-third-party-bundle",
+      "name": "Chromium third-party bundle shipped by Electron",
+      "noticeFiles": [
+        {
+          "location": "packaged",
+          "path": "LICENSES.chromium.html",
+          "sha256": "f9c475876b01bb4d654b8f630f11219cc96198efe91d7f2602a97f0f3c86c3cb"
+        }
+      ],
+      "sourceUrl": "https://github.com/electron/electron/releases/tag/v39.8.10",
+      "spdxExpression": "LicenseRef-Chromium-Third-Party-Notices",
+      "version": "39.8.10",
+      "versionProof": {
+        "kind": "npm-lock",
+        "package": "electron"
+      }
+    },
+    {
+      "artifacts": [
+        "resources/engine/engine.exe"
+      ],
+      "id": "cpython-runtime",
+      "name": "CPython runtime",
+      "noticeFiles": [
+        {
+          "location": "python-runtime",
+          "path": "LICENSE.txt",
+          "sha256": "886a0ead2d89030ee62dbff52b04e47ab91998341295bb9c56fb952b4e081c7a"
+        }
+      ],
+      "sourceUrl": "https://github.com/astral-sh/python-build-standalone/releases/download/20250317/cpython-3.12.9%2B20250317-x86_64-pc-windows-msvc-install_only.tar.gz",
+      "spdxExpression": "Python-2.0",
+      "version": "3.12.9",
+      "versionProof": {
+        "kind": "python-runtime"
+      }
+    },
+    {
+      "artifacts": [
+        "resources/elevate.exe"
+      ],
+      "id": "electron-builder-helper",
+      "name": "electron-builder elevate helper",
+      "noticeFiles": [
+        {
+          "location": "npm-package",
+          "package": "electron-builder",
+          "path": "LICENSE",
+          "sha256": "bed8d0ab3e6031817f775a641ff37313b0f5591bc8ba0ed79b978dafbd4231ce"
+        }
+      ],
+      "sourceUrl": "https://github.com/electron-userland/electron-builder/releases/tag/v26.15.3",
+      "spdxExpression": "MIT",
+      "version": "26.15.3",
+      "versionProof": {
+        "kind": "npm-lock",
+        "package": "electron-builder"
+      }
+    },
+    {
+      "artifacts": [
+        "chrome_100_percent.pak",
+        "chrome_200_percent.pak",
+        "d3dcompiler_47.dll",
+        "dxcompiler.dll",
+        "dxil.dll",
+        "ffmpeg.dll",
+        "icudtl.dat",
+        "libEGL.dll",
+        "libGLESv2.dll",
+        "locales/af.pak",
+        "locales/am.pak",
+        "locales/ar.pak",
+        "locales/bg.pak",
+        "locales/bn.pak",
+        "locales/ca.pak",
+        "locales/cs.pak",
+        "locales/da.pak",
+        "locales/de.pak",
+        "locales/el.pak",
+        "locales/en-GB.pak",
+        "locales/en-US.pak",
+        "locales/es-419.pak",
+        "locales/es.pak",
+        "locales/et.pak",
+        "locales/fa.pak",
+        "locales/fi.pak",
+        "locales/fil.pak",
+        "locales/fr.pak",
+        "locales/gu.pak",
+        "locales/he.pak",
+        "locales/hi.pak",
+        "locales/hr.pak",
+        "locales/hu.pak",
+        "locales/id.pak",
+        "locales/it.pak",
+        "locales/ja.pak",
+        "locales/kn.pak",
+        "locales/ko.pak",
+        "locales/lt.pak",
+        "locales/lv.pak",
+        "locales/ml.pak",
+        "locales/mr.pak",
+        "locales/ms.pak",
+        "locales/nb.pak",
+        "locales/nl.pak",
+        "locales/pl.pak",
+        "locales/pt-BR.pak",
+        "locales/pt-PT.pak",
+        "locales/ro.pak",
+        "locales/ru.pak",
+        "locales/sk.pak",
+        "locales/sl.pak",
+        "locales/sr.pak",
+        "locales/sv.pak",
+        "locales/sw.pak",
+        "locales/ta.pak",
+        "locales/te.pak",
+        "locales/th.pak",
+        "locales/tr.pak",
+        "locales/uk.pak",
+        "locales/ur.pak",
+        "locales/vi.pak",
+        "locales/zh-CN.pak",
+        "locales/zh-TW.pak",
+        "resources.pak",
+        "snapshot_blob.bin",
+        "v8_context_snapshot.bin",
+        "vk_swiftshader.dll",
+        "vulkan-1.dll",
+        "纳川.exe"
+      ],
+      "id": "electron-runtime",
+      "name": "Electron runtime",
+      "noticeFiles": [
+        {
+          "location": "packaged",
+          "path": "LICENSE.electron.txt",
+          "sha256": "5154e165bd6c2cc0cfbcd8916498c7abab0497923bafcd5cb07673fe8480087d"
+        }
+      ],
+      "sourceUrl": "https://github.com/electron/electron/releases/tag/v39.8.10",
+      "spdxExpression": "MIT",
+      "version": "39.8.10",
+      "versionProof": {
+        "kind": "npm-lock",
+        "package": "electron"
+      }
+    },
+    {
+      "artifacts": [
+        "resources/media/ffmpeg.exe",
+        "resources/media/ffprobe.exe"
+      ],
+      "id": "ffmpeg-gyan-engineering-candidate",
+      "name": "FFmpeg Gyan essentials engineering candidate",
+      "noticeFiles": [
+        {
+          "location": "media-runtime",
+          "path": "LICENSE",
+          "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+        },
+        {
+          "location": "media-runtime",
+          "path": "README.txt",
+          "sha256": "a0e976df3cf1d781264c41db8ee3421978c1278be92ed00edbc96337529670be"
+        }
+      ],
+      "sourceUrl": "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.0.1-essentials_build.zip",
+      "spdxExpression": "GPL-3.0-or-later",
+      "version": "8.0.1-essentials_build-www.gyan.dev",
+      "versionProof": {
+        "kind": "project-file",
+        "path": "desktop/media-runtime-lock.json",
+        "sha256": "3f390dd3aff6816d215d86aa508eec43fac2d6331c2861a17d5204a8cd433c73"
+      }
+    },
+    {
+      "artifacts": [
+        "resources/engine/engine.exe"
+      ],
+      "id": "pyinstaller-bootloader",
+      "name": "PyInstaller bootloader",
+      "noticeFiles": [
+        {
+          "location": "python-distribution",
+          "package": "pyinstaller",
+          "path": "pyinstaller-6.21.0.dist-info/licenses/COPYING.txt",
+          "sha256": "dcf75fdb959db1e3b41c0f8505069d2ece781b5ec6b3d0a4d30975cfc6580245"
+        }
+      ],
+      "sourceUrl": "https://github.com/pyinstaller/pyinstaller/releases/tag/v6.21.0",
+      "spdxExpression": "LicenseRef-PyInstaller-GPL-2.0-or-later-with-Bootloader-Exception",
+      "version": "6.21.0",
+      "versionProof": {
+        "kind": "python-distribution",
+        "package": "pyinstaller"
+      }
+    }
+  ],
+  "schema": 1
+}

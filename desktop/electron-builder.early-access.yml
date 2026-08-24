@@ -1,0 +1,19 @@
+extends: ./electron-builder.yml
+
+# Explicitly separate the unsigned early-access line from production. The
+# independent Ed25519 envelope authenticates update bytes; this label does not
+# pretend to provide Windows publisher reputation or Authenticode.
+win:
+  artifactName: nachuan-${version}-${env.DMX_VARIANT}-early-access-unsigned-win.${ext}
+
+# Public, read-only static origin. Never embed one shared GitHub token in every
+# installed client. The client additionally fetches and verifies the separately
+# signed envelope embedded at build time as NACHUAN_UPDATE_MANIFEST_URL.
+# Keep this as an array.  electron-builder deep-merges object-valued child
+# configuration with the parent GitHub publisher; an array replaces it and
+# prevents GitHub-only owner/repo/private fields leaking into the generic
+# early-access provider.
+publish:
+  - provider: generic
+    url: ${env.NACHUAN_UPDATE_BASE_URL}
+    channel: early-access-${env.DMX_VARIANT}

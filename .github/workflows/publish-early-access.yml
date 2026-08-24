@@ -1,0 +1,328 @@
+name: publish-early-access-generic
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Immutable vX.Y.Z tag used by the finalized artifact run
+        required: true
+        type: string
+      release_run_id:
+        description: Successful Actions run containing the finalized early-access artifact
+        required: true
+        type: string
+      variant:
+        description: Early-access variant (full remains gated by a reviewed runtime manifest)
+        required: true
+        default: lean
+        type: choice
+        options:
+          - lean
+          - full
+      confirmation:
+        description: Type PUBLISH-NACHUAN-EARLY-ACCESS
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: early-access-${{ inputs.variant }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24.14.0'
+  NPM_VERSION: '11.12.1'
+  UV_VERSION: '0.11.3'
+  PYTHON_VERSION: '3.12.9'
+  MAX_FINALIZER_AGE_HOURS: '24'
+  UV_PYTHON: '3.12.9'
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+  NODE_OPTIONS: ''
+  NODE_PATH: ''
+  NODE_EXTRA_CA_CERTS: ''
+  NODE_TLS_REJECT_UNAUTHORIZED: ''
+  ELECTRON_RUN_AS_NODE: ''
+  ELECTRON_MIRROR: ''
+  ELECTRON_BUILDER_BINARIES_MIRROR: ''
+  ELECTRON_CUSTOM_DIR: ''
+  ELECTRON_CUSTOM_FILENAME: ''
+  ELECTRON_CUSTOM_VERSION: ''
+  ELECTRON_OVERRIDE_DIST_PATH: ''
+  ESBUILD_BINARY_PATH: ''
+  npm_config_electron_mirror: ''
+  npm_config_electron_builder_binaries_mirror: ''
+  npm_config_electron_custom_dir: ''
+  npm_config_electron_custom_filename: ''
+  npm_config_electron_custom_version: ''
+  npm_config_electron_override_dist_path: ''
+  npm_config_esbuild_binary_path: ''
+  npm_config_node_options: ''
+  npm_config_script_shell: 'C:\Windows\System32\cmd.exe'
+  NPM_CONFIG_STRICT_SSL: 'true'
+  PYTHONHOME: ''
+  PYTHONPATH: ''
+  PYTHONSTARTUP: ''
+  PYTHONUSERBASE: ''
+  NACHUAN_RELEASE_TAG: ${{ inputs.release_tag }}
+  NACHUAN_RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    environment: early-access-publisher
+    steps:
+      - name: Validate explicit early-access intent
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          if ($env:CONFIRMATION -cne 'PUBLISH-NACHUAN-EARLY-ACCESS') { throw 'Early-access confirmation is missing' }
+          if ($env:RELEASE_TAG -cnotmatch '^v\d+\.\d+\.\d+$') { throw 'release_tag must be vX.Y.Z' }
+          if ($env:RELEASE_RUN_ID -cnotmatch '^\d+$') { throw 'release_run_id must be numeric' }
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Verify immutable tag and source run identity
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: |
+          npm install --global "npm@$env:NPM_VERSION" --ignore-scripts --registry "$env:NPM_CONFIG_REGISTRY"
+          if ((npm --version).Trim() -cne $env:NPM_VERSION) { throw 'Unexpected npm version' }
+          if (((uv --version).Trim() -split '\s+')[1] -cne $env:UV_VERSION) { throw 'Unexpected uv version' }
+          uv python install $env:PYTHON_VERSION
+          $version = (& node -p "require('./desktop/package.json').version").Trim()
+          if ($env:RELEASE_TAG -cne "v$version" -or $version -ceq '0.1.0') { throw 'Tag/version identity is invalid or retired' }
+          $tagCommit = (& git rev-parse "refs/tags/$env:RELEASE_TAG^{commit}").Trim()
+          if ($tagCommit -cne (& git rev-parse HEAD).Trim()) { throw 'Tag does not resolve to checked-out HEAD' }
+          $headTree = (& git rev-parse 'HEAD^{tree}').Trim().ToLowerInvariant()
+          if ($LASTEXITCODE -ne 0 -or $headTree -cnotmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$') {
+            throw 'Publisher release tree is not a canonical full Git object ID'
+          }
+          $workflow = gh api "repos/${{ github.repository }}/actions/workflows/finalize-early-access.yml" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or
+              $workflow.path -cne '.github/workflows/finalize-early-access.yml' -or
+              $workflow.state -cne 'active') {
+            throw 'The unique active early-access finalizer workflow could not be resolved'
+          }
+          $run = gh api "repos/${{ github.repository }}/actions/runs/$env:RELEASE_RUN_ID" | ConvertFrom-Json
+          if ($run.status -cne 'completed' -or $run.conclusion -cne 'success') { throw 'Source artifact run is not successful' }
+          if ($env:MAX_FINALIZER_AGE_HOURS -cnotmatch '^\d+$' -or [int]$env:MAX_FINALIZER_AGE_HOURS -lt 1) {
+            throw 'MAX_FINALIZER_AGE_HOURS is invalid'
+          }
+          try {
+            $completedAt = [DateTimeOffset]::Parse(
+              [string]$run.updated_at,
+              [Globalization.CultureInfo]::InvariantCulture,
+              [Globalization.DateTimeStyles]::AssumeUniversal
+            ).ToUniversalTime()
+          } catch {
+            throw 'Finalizer completion time is missing or invalid'
+          }
+          $finalizerAge = [DateTimeOffset]::UtcNow - $completedAt
+          if ($finalizerAge.TotalMinutes -lt -5 -or $finalizerAge.TotalHours -gt [int]$env:MAX_FINALIZER_AGE_HOURS) {
+            throw "Finalizer run is too old or future-dated for fresh publisher evidence: age=$($finalizerAge.TotalHours)h"
+          }
+          if ($run.head_sha -cne $tagCommit) { throw 'Source artifact run commit does not match the immutable tag' }
+          if ($run.workflow_id -ne $workflow.id -or
+              $run.path -cne '.github/workflows/finalize-early-access.yml' -or
+              $run.event -cne 'workflow_dispatch') {
+            throw 'Source artifact run was not produced by the unique workflow_dispatch finalizer'
+          }
+          $artifactName = "nachuan-early-access-$version-${{ inputs.variant }}-final"
+          $artifacts = gh api "repos/${{ github.repository }}/actions/runs/$env:RELEASE_RUN_ID/artifacts?per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $artifacts.total_count -gt 100) {
+            throw 'Source artifact enumeration is incomplete or oversized'
+          }
+          $matches = @($artifacts.artifacts | Where-Object { $_.name -ceq $artifactName })
+          if ($matches.Count -ne 1) { throw 'The verified finalizer run must contain exactly one expected artifact' }
+          $artifact = $matches[0]
+          if ($artifact.expired -eq $true -or -not $artifact.id -or $artifact.size_in_bytes -le 0) {
+            throw 'The exact finalized artifact is expired or invalid'
+          }
+          $artifactDigest = [string]$artifact.digest
+          if ($artifactDigest -cnotmatch '^sha256:[0-9a-f]{64}$') {
+            throw 'The exact finalized artifact is missing its canonical SHA-256 digest'
+          }
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "NACHUAN_RELEASE_COMMIT=$tagCommit" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "NACHUAN_RELEASE_TREE=$headTree" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_ARTIFACT_ID=$($artifact.id)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_ARTIFACT_NAME=$artifactName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_ARTIFACT_SHA256=$($artifactDigest.Substring(7))" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $nodePath = (Get-Command node -CommandType Application).Source
+          $uvPath = (Get-Command uv -CommandType Application).Source
+          $pythonPath = (& uv python find $env:PYTHON_VERSION).Trim()
+          $npmRoot = (& npm root --global).Trim()
+          $npmCliPath = Join-Path $npmRoot 'npm/bin/npm-cli.js'
+          foreach ($toolPath in @($nodePath, $npmCliPath, $uvPath, $pythonPath)) {
+            if (-not [IO.Path]::IsPathFullyQualified($toolPath) -or -not (Test-Path -LiteralPath $toolPath -PathType Leaf)) {
+              throw "Pinned release tool path is not an absolute file: $toolPath"
+            }
+          }
+          "NACHUAN_RELEASE_NODE_PATH=$nodePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "NACHUAN_RELEASE_NPM_CLI_PATH=$npmCliPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "NACHUAN_RELEASE_UV_PATH=$uvPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "NACHUAN_RELEASE_PYTHON_PATH=$pythonPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install and test the locked publisher checkout
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          npm ci --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { throw 'Locked publisher dependency installation failed' }
+          node scripts/python-release-policy.mjs sync
+          if ($LASTEXITCODE -ne 0) { throw 'Release-selected Python synchronization failed' }
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Locked publisher tests failed' }
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'Locked publisher typecheck failed' }
+
+      - name: Prepare checksum-pinned project-local Git runtime
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          node scripts/git-runtime-policy.mjs prepare
+          if ($LASTEXITCODE -ne 0) { throw 'Checksum-pinned Git runtime preparation failed' }
+          node scripts/git-runtime-policy.mjs verify
+          if ($LASTEXITCODE -ne 0) { throw 'Checksum-pinned Git runtime verification failed' }
+          $gitPath = [IO.Path]::GetFullPath((Join-Path $PWD '..\build\git-runtime\mingw64\bin\git.exe'))
+          if (-not (Test-Path -LiteralPath $gitPath -PathType Leaf)) {
+            throw 'Checksum-pinned project-local Git core is missing'
+          }
+          "NACHUAN_RELEASE_GIT_PATH=$gitPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Download exact finalized artifact from the verified run
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          VARIANT: ${{ inputs.variant }}
+        run: |
+          $artifact = "nachuan-early-access-$env:RELEASE_VERSION-$env:VARIANT-final"
+          if ($artifact -cne $env:RELEASE_ARTIFACT_NAME) { throw 'Finalized artifact name drifted after verification' }
+          $archive = Join-Path $env:RUNNER_TEMP "nachuan-finalized-artifact-$env:RELEASE_ARTIFACT_ID.zip"
+          gh api "repos/${{ github.repository }}/actions/artifacts/$env:RELEASE_ARTIFACT_ID/zip" > $archive
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+            throw 'Exact finalized artifact download failed'
+          }
+          $archiveSha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($archiveSha256 -cne $env:RELEASE_ARTIFACT_SHA256) {
+            throw 'Downloaded finalized artifact digest does not match the verified API descriptor'
+          }
+          New-Item -ItemType Directory -Path desktop/release | Out-Null
+          Expand-Archive -LiteralPath $archive -DestinationPath desktop/release
+          Remove-Item -LiteralPath $archive -Force
+
+      - name: Materialize the producer source freeze for portable verification
+        id: producer_source_freeze
+        working-directory: desktop
+        shell: pwsh
+        env:
+          DMX_VARIANT: ${{ inputs.variant }}
+          NACHUAN_UPDATE_TIER: early-access
+          NACHUAN_RELEASE_TAG: ${{ inputs.release_tag }}
+          NACHUAN_RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
+            throw 'RUNNER_TEMP is required for portable source verification'
+          }
+          $freeze = Join-Path $env:RUNNER_TEMP 'nachuan-publisher-source-freeze.json'
+          if (Test-Path -LiteralPath $freeze) { throw 'Publisher source freeze path already exists' }
+          node scripts/release-evidence.mjs materialize-source-freeze $env:DMX_VARIANT $freeze
+          if ($LASTEXITCODE -ne 0) { throw 'Producer source freeze materialization failed' }
+          $digest = (Get-FileHash -LiteralPath $freeze -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($digest -cnotmatch '^[0-9a-f]{64}$') { throw 'Publisher source freeze digest is invalid' }
+          "source_freeze_path=$freeze" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "source_freeze_sha256=$digest" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Restore exact producer generated release modules from authenticated evidence
+        working-directory: desktop
+        shell: pwsh
+        env:
+          NACHUAN_RELEASE_SOURCE_FREEZE_PATH: ${{ steps.producer_source_freeze.outputs.source_freeze_path }}
+          NACHUAN_RELEASE_SOURCE_FREEZE_SHA256: ${{ steps.producer_source_freeze.outputs.source_freeze_sha256 }}
+        run: |
+          node scripts/release-source-freeze.mjs restore-generated "$env:NACHUAN_RELEASE_SOURCE_FREEZE_PATH"
+          if ($LASTEXITCODE -ne 0) { throw 'Exact producer generated source restoration failed' }
+
+      - name: Verify downloaded final closure and re-run current dependency security audits
+        working-directory: desktop
+        shell: pwsh
+        env:
+          DMX_VARIANT: ${{ inputs.variant }}
+          NACHUAN_UPDATE_TIER: early-access
+          NACHUAN_RELEASE_TAG: ${{ inputs.release_tag }}
+          NACHUAN_RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          NACHUAN_RELEASE_SOURCE_FREEZE_PATH: ${{ steps.producer_source_freeze.outputs.source_freeze_path }}
+          NACHUAN_RELEASE_SOURCE_FREEZE_SHA256: ${{ steps.producer_source_freeze.outputs.source_freeze_sha256 }}
+        run: |
+          node scripts/release-evidence.mjs verify-portable $env:DMX_VARIANT
+          if ($LASTEXITCODE -ne 0) { throw 'Portable release evidence verification failed' }
+          node scripts/release-evidence.mjs re-audit-portable $env:DMX_VARIANT
+          if ($LASTEXITCODE -ne 0) { throw 'Fresh publisher dependency security audit failed' }
+          node scripts/release-security.mjs scan release
+          if ($LASTEXITCODE -ne 0) { throw 'Downloaded release security scan failed' }
+
+      - name: Fail closed until release legal policy is approved
+        shell: pwsh
+        run: |
+          throw 'Early-access publishing is blocked: a versioned license allowlist, obligation policy, and external legal approval have not been established.'
+
+      - name: Publish immutable assets, verify public readback, then atomically activate envelope
+        working-directory: desktop
+        shell: pwsh
+        env:
+          DMX_VARIANT: ${{ inputs.variant }}
+          NACHUAN_UPDATE_PUBLIC_BASE_URL: ${{ vars.NACHUAN_UPDATE_PUBLIC_BASE_URL }}
+          NACHUAN_UPDATE_WRITE_BASE_URL: ${{ vars.NACHUAN_UPDATE_WRITE_BASE_URL }}
+          NACHUAN_UPDATE_PUBLIC_KEY_SPKI_BASE64: ${{ vars.NACHUAN_UPDATE_PUBLIC_KEY_SPKI_BASE64 }}
+          NACHUAN_UPDATE_KEY_ID: ${{ vars.NACHUAN_UPDATE_KEY_ID }}
+          NACHUAN_UPDATE_PUBLISH_BEARER_TOKEN: ${{ secrets.NACHUAN_UPDATE_PUBLISH_BEARER_TOKEN }}
+          NACHUAN_RELEASE_TAG: ${{ inputs.release_tag }}
+          NACHUAN_RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          NACHUAN_RELEASE_SOURCE_FREEZE_PATH: ${{ steps.producer_source_freeze.outputs.source_freeze_path }}
+          NACHUAN_RELEASE_SOURCE_FREEZE_SHA256: ${{ steps.producer_source_freeze.outputs.source_freeze_sha256 }}
+        run: node scripts/publish-early-access.mjs $env:DMX_VARIANT
+
+      - name: Remove publisher source freeze input
+        if: always()
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
+            throw 'RUNNER_TEMP is required to clean the publisher source freeze'
+          }
+          $runnerTemp = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $env:RUNNER_TEMP).Path).TrimEnd([char[]]'\/')
+          $freeze = Join-Path $runnerTemp 'nachuan-publisher-source-freeze.json'
+          if (Test-Path -LiteralPath $freeze) {
+            $item = Get-Item -LiteralPath $freeze -Force
+            if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+              throw 'Refusing to clean redirected or non-file publisher source freeze'
+            }
+            Remove-Item -LiteralPath $freeze -Force -ErrorAction Stop
+          }
+          if (Test-Path -LiteralPath $freeze) { throw 'Publisher source freeze cleanup left a residual file' }
+
+      # No client credential is produced or uploaded. The installed app receives
+      # only the public read URL and Ed25519 public key embedded in its ASAR.

@@ -1,0 +1,29 @@
+{
+  "entries": [
+    {
+      "metadataSha256": "3054c7b6ca96dfa8c968571921d169f91ac8ffa63686629d512dd50aa380bff1",
+      "name": "pycryptodome",
+      "spdxExpression": "BSD-2-Clause OR Unlicense",
+      "version": "3.23.0"
+    },
+    {
+      "metadataSha256": "ed6d46645fc409648ac6ed04d68b62cce72a6c9852c2ec6655d169f58a372954",
+      "name": "pyinstaller-hooks-contrib",
+      "spdxExpression": "GPL-2.0-or-later AND Apache-2.0",
+      "version": "2026.6"
+    },
+    {
+      "metadataSha256": "5acfe668c0d37ca97f3234f3f025ed24962f662221fec20d20c9166d154548e2",
+      "name": "pyinstaller",
+      "spdxExpression": "GPL-2.0-or-later",
+      "version": "6.21.0"
+    },
+    {
+      "metadataSha256": "3a8f1be6da9428b97806292d05e3148264b9053c22e79894918b670e930afc36",
+      "name": "qrcode",
+      "spdxExpression": "BSD-3-Clause AND MIT",
+      "version": "8.2"
+    }
+  ],
+  "schema": 3
+}

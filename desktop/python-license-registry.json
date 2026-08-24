@@ -1,0 +1,196 @@
+{
+  "entries": [
+    {
+      "lockedArtifact": {
+        "filename": "antlr4-python3-runtime-4.9.3.tar.gz",
+        "kind": "sdist",
+        "sha256": "f224469b4168294902bb1efa80a8bf7855f24c99aef99cbefc1bcd3cce77881b"
+      },
+      "metadataSha256": "d1de5c7416841a56a3d73795e7f30587c2b8f3ba01fbbff68c094e308c629e7d",
+      "name": "antlr4-python3-runtime",
+      "notice": {
+        "gitBlobSha1": "2042d1bda6c933e504d9dc2fe3197a6e42a71fe2",
+        "path": "third-party-notices/antlr4-python3-runtime-4.9.3-LICENSE.txt",
+        "sha256": "b1b379fcaf3219593a4c433feb1b35c780bed23fafaae440b1ae2771a9521e3a",
+        "sourceUrl": "https://raw.githubusercontent.com/antlr/antlr4/e4c1a74c66bd5290364ea2b36c97cd724b247357/LICENSE.txt"
+      },
+      "spdxExpression": "BSD-3-Clause",
+      "upstream": {
+        "commit": "e4c1a74c66bd5290364ea2b36c97cd724b247357",
+        "declaredLicense": "BSD",
+        "declaredName": "antlr4-python3-runtime",
+        "declaredVersion": "4.9.3",
+        "evidence": [
+          {
+            "gitBlobSha1": "ae7f48cce07bebc77f03a577278b95a45832fda0",
+            "path": "runtime/Python3/src/antlr4/Parser.py",
+            "role": "license-reference",
+            "sha256": "176436e73d3efff2877dadf9e0a4210eedd9395ccb15f6a0decda2c49e1d97fa"
+          },
+          {
+            "gitBlobSha1": "75d0dc5f55c117e03801da4fe0f8a6552ef3f62a",
+            "path": "runtime/Python3/setup.py",
+            "role": "package-metadata",
+            "sha256": "00ce3bb1670e8e4961d9ef2414dfa6ac467b52465382841b432578f91733ec67"
+          }
+        ],
+        "licensePath": "LICENSE.txt"
+      },
+      "version": "4.9.3"
+    },
+    {
+      "lockedArtifact": {
+        "filename": "ctranslate2-4.8.0-cp312-cp312-win_amd64.whl",
+        "kind": "wheel",
+        "sha256": "06feaafe134aafa8cb2fb1fdb82e36f050bb05929dfde1a95f4fe4d7881dfc76"
+      },
+      "metadataSha256": "74b5150f90a37e785a9de30674c54dad5d582f0b33b9fe077cebb5bed3e49179",
+      "name": "ctranslate2",
+      "notice": {
+        "gitBlobSha1": "aaa6a320e1facba1a794fdfe084ded21ee350c9b",
+        "path": "third-party-notices/ctranslate2-4.8.0-LICENSE",
+        "sha256": "54aa79d9fe3c09e67a16dcd95b9e88676405a6ec174efda31036983cf7672ecb",
+        "sourceUrl": "https://raw.githubusercontent.com/OpenNMT/CTranslate2/54a546cec4262f9770d4674a0bfb4ac3c4f05698/LICENSE"
+      },
+      "spdxExpression": "MIT",
+      "upstream": {
+        "commit": "54a546cec4262f9770d4674a0bfb4ac3c4f05698",
+        "declaredLicense": "MIT",
+        "declaredName": "ctranslate2",
+        "declaredVersion": "4.8.0",
+        "evidence": [
+          {
+            "gitBlobSha1": "d161d59daa8ed5cec5d87a9d530c2c6bbeaabef3",
+            "path": "python/setup.py",
+            "role": "package-metadata",
+            "sha256": "41cf929f92dd06af873a26be38a21a00bc7d1d5f75571f1495f6fae277709d71"
+          }
+        ],
+        "licensePath": "LICENSE"
+      },
+      "version": "4.8.0"
+    },
+    {
+      "lockedArtifact": {
+        "filename": "flatbuffers-25.12.19-py2.py3-none-any.whl",
+        "kind": "wheel",
+        "sha256": "7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4"
+      },
+      "metadataSha256": "9f38239f96faa21522a6aadab6912e1e560708bbe9c9f696a0679c9403fa089e",
+      "name": "flatbuffers",
+      "notice": {
+        "gitBlobSha1": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+        "path": "third-party-notices/Apache-2.0-google-LICENSE",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "sourceUrl": "https://raw.githubusercontent.com/google/flatbuffers/7e163021e59cca4f8e1e35a7c828b5c6b7915953/LICENSE"
+      },
+      "spdxExpression": "Apache-2.0",
+      "upstream": {
+        "commit": "7e163021e59cca4f8e1e35a7c828b5c6b7915953",
+        "declaredLicense": "Apache 2.0",
+        "declaredName": "flatbuffers",
+        "declaredVersion": "25.12.19",
+        "evidence": [
+          {
+            "gitBlobSha1": "8bea4c78be511dd2be46ce04ffe5ce8a4b1aacb1",
+            "path": "python/setup.py",
+            "role": "package-metadata",
+            "sha256": "39e0b4781d409533b84d93c33d88c7b95c4ea8ef3c1fdf196338e9b0075b641d"
+          }
+        ],
+        "licensePath": "LICENSE"
+      },
+      "version": "25.12.19"
+    },
+    {
+      "lockedArtifact": {
+        "filename": "jamo-0.4.1-py3-none-any.whl",
+        "kind": "wheel",
+        "sha256": "d4b94fd23324c606ed2fbc4037c603e2c3a7ae9390c05d3473aea1ccb6b1c3fb"
+      },
+      "metadataSha256": "2c64d6c2036ac57840c56c8b5ed121d62441c8efdf65adc84ee8a4c036a23f1e",
+      "name": "jamo",
+      "notice": {
+        "gitBlobSha1": "3437cbced5e5126e23d8d7cb7089d01d803d1bf8",
+        "path": "third-party-notices/jamo-0.4.1-LICENSE",
+        "sha256": "35a7d693b5dbc1cb2556f407e8c3baa14ef5e8ed94b85c0ceb1d89be6115807f",
+        "sourceUrl": "https://raw.githubusercontent.com/jdongian/python-jamo/d087a9f5f52f066fb933ad1da8e9915703374c9a/LICENSE"
+      },
+      "spdxExpression": "Apache-2.0",
+      "upstream": {
+        "commit": "d087a9f5f52f066fb933ad1da8e9915703374c9a",
+        "declaredLicense": "http://www.apache.org/licenses/LICENSE-2.0",
+        "declaredName": "jamo",
+        "declaredVersion": "0.4.1",
+        "evidence": [
+          {
+            "gitBlobSha1": "be591de49309b2cb74aa1118775a0b8cb9a141d6",
+            "path": "setup.py",
+            "role": "package-metadata",
+            "sha256": "49803355a0d809047539b065c8d854252adf204711bddbd6c4b66c6a78af9c72"
+          }
+        ],
+        "licensePath": "LICENSE"
+      },
+      "version": "0.4.1"
+    },
+    {
+      "lockedArtifact": {
+        "filename": "jieba-0.42.1.tar.gz",
+        "kind": "sdist",
+        "sha256": "055ca12f62674fafed09427f176506079bc135638a14e23e25be909131928db2"
+      },
+      "metadataSha256": "917764c81332eacc74ee18a14e0e4e44b082dd037622c35f640dcd292ac99d9d",
+      "name": "jieba",
+      "notice": {
+        "base64": "VGhlIE1JVCBMaWNlbnNlIChNSVQpCgpDb3B5cmlnaHQgKGMpIDIwMTMgU3VuIEp1bnlpCgpQZXJtaXNzaW9uIGlzIGhlcmVieSBncmFudGVkLCBmcmVlIG9mIGNoYXJnZSwgdG8gYW55IHBlcnNvbiBvYnRhaW5pbmcgYSBjb3B5IG9mCnRoaXMgc29mdHdhcmUgYW5kIGFzc29jaWF0ZWQgZG9jdW1lbnRhdGlvbiBmaWxlcyAodGhlICJTb2Z0d2FyZSIpLCB0byBkZWFsIGluCnRoZSBTb2Z0d2FyZSB3aXRob3V0IHJlc3RyaWN0aW9uLCBpbmNsdWRpbmcgd2l0aG91dCBsaW1pdGF0aW9uIHRoZSByaWdodHMgdG8KdXNlLCBjb3B5LCBtb2RpZnksIG1lcmdlLCBwdWJsaXNoLCBkaXN0cmlidXRlLCBzdWJsaWNlbnNlLCBhbmQvb3Igc2VsbCBjb3BpZXMgb2YKdGhlIFNvZnR3YXJlLCBhbmQgdG8gcGVybWl0IHBlcnNvbnMgdG8gd2hvbSB0aGUgU29mdHdhcmUgaXMgZnVybmlzaGVkIHRvIGRvIHNvLApzdWJqZWN0IHRvIHRoZSBmb2xsb3dpbmcgY29uZGl0aW9uczoKClRoZSBhYm92ZSBjb3B5cmlnaHQgbm90aWNlIGFuZCB0aGlzIHBlcm1pc3Npb24gbm90aWNlIHNoYWxsIGJlIGluY2x1ZGVkIGluIGFsbApjb3BpZXMgb3Igc3Vic3RhbnRpYWwgcG9ydGlvbnMgb2YgdGhlIFNvZnR3YXJlLgoKVEhFIFNPRlRXQVJFIElTIFBST1ZJREVEICJBUyBJUyIsIFdJVEhPVVQgV0FSUkFOVFkgT0YgQU5ZIEtJTkQsIEVYUFJFU1MgT1IKSU1QTElFRCwgSU5DTFVESU5HIEJVVCBOT1QgTElNSVRFRCBUTyBUSEUgV0FSUkFOVElFUyBPRiBNRVJDSEFOVEFCSUxJVFksIEZJVE5FU1MKRk9SIEEgUEFSVElDVUxBUiBQVVJQT1NFIEFORCBOT05JTkZSSU5HRU1FTlQuIElOIE5PIEVWRU5UIFNIQUxMIFRIRSBBVVRIT1JTIE9SCkNPUFlSSUdIVCBIT0xERVJTIEJFIExJQUJMRSBGT1IgQU5ZIENMQUlNLCBEQU1BR0VTIE9SIE9USEVSIExJQUJJTElUWSwgV0hFVEhFUgpJTiBBTiBBQ1RJT04gT0YgQ09OVFJBQ1QsIFRPUlQgT1IgT1RIRVJXSVNFLCBBUklTSU5HIEZST00sIE9VVCBPRiBPUiBJTgpDT05ORUNUSU9OIFdJVEggVEhFIFNPRlRXQVJFIE9SIFRIRSBVU0UgT1IgT1RIRVIgREVBTElOR1MgSU4gVEhFIFNPRlRXQVJFLg==",
+        "displayPath": "third-party-notices/jieba-0.42.1-LICENSE",
+        "gitBlobSha1": "9d7e66b431461c785329a1b52199d4207daefacc",
+        "sha256": "18ba0984839f85853b29fadaf992f7dba8fd0ca0fbeae34de2b8735222dc7a37",
+        "sourceUrl": "https://raw.githubusercontent.com/fxsjy/jieba/1e20c89b66f56c9301b0feed211733ffaa1bd72a/LICENSE"
+      },
+      "spdxExpression": "MIT",
+      "upstream": {
+        "commit": "1e20c89b66f56c9301b0feed211733ffaa1bd72a",
+        "declaredLicense": "MIT",
+        "declaredName": "jieba",
+        "declaredVersion": "0.42.1",
+        "evidence": [
+          {
+            "gitBlobSha1": "f23dd3238209923552b79f0678449fd7693f0c9c",
+            "path": "setup.py",
+            "role": "package-metadata",
+            "sha256": "47babfbd4fb1504e5871d95e31fe207203f1c23105781039d63ba3a6ccbdc74f"
+          }
+        ],
+        "licensePath": "LICENSE"
+      },
+      "version": "0.42.1"
+    },
+    {
+      "metadataSha256": "3054c7b6ca96dfa8c968571921d169f91ac8ffa63686629d512dd50aa380bff1",
+      "name": "pycryptodome",
+      "spdxExpression": "BSD-2-Clause OR Unlicense",
+      "version": "3.23.0"
+    },
+    {
+      "metadataSha256": "ed6d46645fc409648ac6ed04d68b62cce72a6c9852c2ec6655d169f58a372954",
+      "name": "pyinstaller-hooks-contrib",
+      "spdxExpression": "GPL-2.0-or-later AND Apache-2.0",
+      "version": "2026.6"
+    },
+    {
+      "metadataSha256": "5acfe668c0d37ca97f3234f3f025ed24962f662221fec20d20c9166d154548e2",
+      "name": "pyinstaller",
+      "spdxExpression": "GPL-2.0-or-later",
+      "version": "6.21.0"
+    },
+    {
+      "metadataSha256": "3a8f1be6da9428b97806292d05e3148264b9053c22e79894918b670e930afc36",
+      "name": "qrcode",
+      "spdxExpression": "BSD-3-Clause AND MIT",
+      "version": "8.2"
+    }
+  ],
+  "schema": 3
+}

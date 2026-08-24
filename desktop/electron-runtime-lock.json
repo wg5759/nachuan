@@ -1,0 +1,25 @@
+{
+  "arch": "x64",
+  "archive": "electron-v39.8.10-win32-x64.zip",
+  "archiveSha256": "4478410a35a8399b7745085096695a37877f176755182a71e27eddc245cd98d5",
+  "archiveSize": 136641055,
+  "electronNpmIntegrity": "sha512-zbYtGPYUI7PzqLAzkk21Rk6j67WN0hxn0Mq/njErZo1d0HSf33is4f8ICI5fMLy5vYe0JtCtM5sYunNOaochSQ==",
+  "electronNpmResolved": "https://registry.npmjs.org/electron/-/electron-39.8.10.tgz",
+  "licenseFiles": [
+    {
+      "path": "LICENSE",
+      "sha256": "5154e165bd6c2cc0cfbcd8916498c7abab0497923bafcd5cb07673fe8480087d",
+      "size": 1096
+    },
+    {
+      "path": "LICENSES.chromium.html",
+      "sha256": "f9c475876b01bb4d654b8f630f11219cc96198efe91d7f2602a97f0f3c86c3cb",
+      "size": 15104326
+    }
+  ],
+  "platform": "win32",
+  "schema": 1,
+  "shasumsUrl": "https://github.com/electron/electron/releases/download/v39.8.10/SHASUMS256.txt",
+  "sourceUrl": "https://github.com/electron/electron/releases/download/v39.8.10/electron-v39.8.10-win32-x64.zip",
+  "version": "39.8.10"
+}

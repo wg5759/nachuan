@@ -1,0 +1,117 @@
+appId: com.02602.nexus
+productName: 纳川
+copyright: © 2026 杭州灵界科技有限公司
+directories:
+  output: release
+  buildResources: build
+asar: true
+afterPack: scripts/after-pack.mjs
+electronDist: build/electron-runtime
+# These bits are flipped before Authenticode signing.  Together, embedded ASAR
+# integrity + onlyLoadAppFromAsar bind the JavaScript containing the engine hash
+# and prevent a writable sibling app/ directory from replacing it.
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  loadBrowserProcessSpecificV8Snapshot: false
+  grantFileProtocolExtraPrivileges: false
+files:
+  - out/**
+  - '!**/*.map'
+# 本地模型目录：full 在构建前从受审 MODELS_SRC 注入 GGUF；lean 明确不含本地模型，
+# 且两个变体都禁止把运行期下载当成发布机制。
+extraResources:
+  - from: build/license-evidence
+    to: licenses
+    filter:
+      - '**/*'
+  - from: ../dist/ENGINE_PYTHON_PAYLOAD.json
+    to: ENGINE_PYTHON_PAYLOAD.json
+  - from: ../config/store-runtime-profile.v1.json
+    to: store-runtime-profile.v1.json
+  - from: ../dist/models
+    to: models
+    filter:
+      - '**/*'
+  # LLMLingua ONNX/tokenizer 曾来自构建机未跟踪目录，既无固定下载来源也未进入
+  # release manifest。正式包故障关闭，不携带该浮动模型；未来只有加入来源、许可、
+  # SHA-256 清单及 fresh-checkout 复现后才能恢复。compress.py 缺模型会安全降级。
+  # 系统托盘图标（点关闭→最小化到托盘时用）
+  - from: build/icon.png
+    to: icon.png
+  # 连接配置种子始终为空；任何变体都由安装后的用户自行录入连接。
+  - from: ../dist/seed-connections.json
+    to: seed-connections.json
+  # 路径绑定的本地运行时清单；由 prepare-pack 逐文件计算 SHA-256，运行时以
+  # NACHUAN_LOCAL_RUNTIME_MANIFEST 指向 resources/local-runtime-manifest.json。
+  - from: ../dist/local-runtime-manifest.json
+    to: local-runtime-manifest.json
+  # Unsigned Gyan binaries are engineering candidates bound by ASAR hashes;
+  # provenance explicitly remains production NO-GO until legal source closure.
+  - from: ../dist/media-runtime-manifest.json
+    to: media-runtime-manifest.json
+  - from: ../dist/media-notices
+    to: media-notices
+    filter:
+      - '**/*'
+  # full 自带官方 llama.cpp 的 llama-server + 所有相邻动态库；lean 目录为空。
+  - from: ../dist/llama
+    to: llama
+    filter:
+      - '**/*'
+# 引擎（PyInstaller 独立二进制，免装 Python）：各平台各自构建，放进 resources/engine/。
+# write-engine-digest 在生产 CI 签名 engine.exe 之后冻结 engine.payload。Windows builder
+# 按源文件扩展名自动签名 extraResources；非 .exe 源名防止它再次改写已绑定字节，
+# 安装后的目标名仍为 engine.exe。发布 CI 必须另行验证目标 Authenticode。
+# 当前 lean/full 都是 text-first：语音/本地压缩闭包未获发行准入，缺失时端点 503/压缩保留原文。
+win:
+  # 正式 Windows 交付只产 NSIS。历史 zip 未被最终字节门禁解包验证，不得上传。
+  target:
+    - nsis
+  signtoolOptions:
+    publisherName: 杭州灵界科技有限公司
+  # GitHub/electron-builder only treats ASCII [0-9A-Za-z._-] names as safe.
+  # A Chinese artifact name is silently rewritten in update metadata to the
+  # package's generic safe name, which also drops the lean/full discriminator.
+  artifactName: nachuan-${version}-${env.DMX_VARIANT}-win.${ext}
+  extraResources:
+    - from: ../dist/engine.payload
+      to: engine/engine.exe
+    # Non-.exe sources prevent electron-builder from mutating/signing the
+    # digest-bound candidate a second time. Final installed bytes are rehashed.
+    - from: ../dist/media/ffmpeg.payload
+      to: media/ffmpeg.exe
+    - from: ../dist/media/ffprobe.payload
+      to: media/ffprobe.exe
+mac:
+  target: dmg
+  category: public.app-category.developer-tools
+  artifactName: nachuan-${version}-${env.DMX_VARIANT}-mac.${ext}
+  extraResources:
+    - from: ../dist/engine.payload
+      to: engine/engine
+linux:
+  target: AppImage
+  artifactName: nachuan-${version}-${env.DMX_VARIANT}-linux.${ext}
+  extraResources:
+    - from: ../dist/engine.payload
+      to: engine/engine
+nsis:
+  oneClick: false
+  # Installation Epoch Root lives in ProgramData and is created only by the
+  # elevated, signed installer hook. Runtime processes never create it.
+  perMachine: true
+  # The failure rollback removes the installer-owned application directory.
+  # Keeping the target fixed prevents a user-selected mixed-content directory
+  # from becoming rollback scope.
+  allowToChangeInstallationDirectory: false
+  include: build/installer.nsh
+  # Uninstall removes application binaries only. ProgramData authority is
+  # intentionally preserved across uninstall/reinstall and updater hand-off.
+  deleteAppDataOnUninstall: false
+# Base/default builds are update-disabled local candidates. They intentionally
+# have no publisher, owner/repo interpolation, or usable update feed.

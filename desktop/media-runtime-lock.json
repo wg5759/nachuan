@@ -1,0 +1,54 @@
+{
+  "archive": {
+    "sha256": "e2aaeaa0fdbc397d4794828086424d4aaa2102cef1fb6874f6ffd29c0b88b673",
+    "size": 106259850,
+    "url": "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.0.1-essentials_build.zip"
+  },
+  "artifacts": [
+    {
+      "installedPath": "media/ffmpeg.exe",
+      "role": "ffmpeg",
+      "sha256": "5af82a0d4fe2b9eae211b967332ea97edfc51c6b328ca35b827e73eac560dc0d",
+      "size": 99264000,
+      "sourcePath": "bin/ffmpeg.exe",
+      "stagedName": "ffmpeg.payload"
+    },
+    {
+      "installedPath": "media/ffprobe.exe",
+      "role": "ffprobe",
+      "sha256": "192a1d6899059765ac8c39764fc3148d4e6049955956dc2029f81f4bd6a8972d",
+      "size": 99066368,
+      "sourcePath": "bin/ffprobe.exe",
+      "stagedName": "ffprobe.payload"
+    }
+  ],
+  "authenticode": {
+    "signer": null,
+    "status": "NotSigned",
+    "timestamp": null
+  },
+  "license": {
+    "path": "LICENSE",
+    "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+    "size": 35147,
+    "spdx": "GPL-3.0-or-later"
+  },
+  "platform": "win32-x64",
+  "readme": {
+    "path": "README.txt",
+    "sha256": "a0e976df3cf1d781264c41db8ee3421978c1278be92ed00edbc96337529670be",
+    "size": 40985
+  },
+  "releaseAdmission": {
+    "legalClosure": "incomplete",
+    "production": "blocked",
+    "trustClass": "unsigned-fixed-hash-engineering-candidate"
+  },
+  "reviewedOn": "2026-07-16",
+  "schema": "nachuan.media-runtime-lock.v1",
+  "source": {
+    "commit": "894da5ca7d742e4429ffb2af534fcda0103ef593",
+    "url": "https://github.com/FFmpeg/FFmpeg/commit/894da5ca7d742e4429ffb2af534fcda0103ef593"
+  },
+  "version": "8.0.1-essentials_build-www.gyan.dev"
+}

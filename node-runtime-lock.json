@@ -1,0 +1,27 @@
+{
+  "arch": "x64",
+  "authenticode": {
+    "issuer": "CN=Microsoft ID Verified CS AOC CA 02, O=Microsoft Corporation, C=US",
+    "notAfter": "2026-02-26T22:18:42.0000000Z",
+    "notBefore": "2026-02-23T22:18:42.0000000Z",
+    "serial": "330007BFD31C1AFC02FEF36B2400000007BFD3",
+    "status": "Valid",
+    "subject": "CN=OpenJS Foundation, O=OpenJS Foundation, L=San Francisco, S=California, C=US",
+    "thumbprint": "1E5F84AB818EBC0E2ABD161659EF6DF5E9203773",
+    "timestampSubject": "CN=Microsoft Public RSA Time Stamping Authority, OU=nShield TSS ESN:A500-05E0-D947, OU=Microsoft America Operations, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+    "timestampThumbprint": "FF73F729152A9059805E5E0832449D996EF60411"
+  },
+  "binary": {
+    "name": "node.exe",
+    "sha256": "63c259c81e5d472b5f11c8d506070130cb04a1ecf84b80377a34ed6ec9048088",
+    "size": 91380224,
+    "sourceUrl": "https://nodejs.org/dist/v24.14.0/win-x64/node.exe"
+  },
+  "officialShasums": {
+    "line": "63c259c81e5d472b5f11c8d506070130cb04a1ecf84b80377a34ed6ec9048088  win-x64/node.exe",
+    "url": "https://nodejs.org/dist/v24.14.0/SHASUMS256.txt"
+  },
+  "platform": "win32",
+  "schema": 1,
+  "version": "24.14.0"
+}
