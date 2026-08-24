@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260825-29",
+  "candidate_id": "nachuan-source-alpha-20260825-30",
   "file_count": 851,
   "files": [
     {
@@ -874,8 +874,8 @@
     },
     {
       "path": "desktop/src/main/page-agent-real-electron-poc.test.ts",
-      "sha256": "32743f2e3950c54df1e086daef1e38e36f8de63bceedcc86ada5c367d259c47d",
-      "size": 20698
+      "sha256": "8f85c468acc18f1059d9e504338327ea16eddd6eb0a2d2e4c3d4962a9837c845",
+      "size": 20201
     },
     {
       "path": "desktop/src/main/paid-media-asset-client.test.ts",
@@ -1604,13 +1604,13 @@
     },
     {
       "path": "desktop/src/renderer/src/locales/en.json",
-      "sha256": "b98ce87e41be8391193ca8485f916cb31573fc742d8a2802c40b3ecb4570a47c",
-      "size": 32462
+      "sha256": "07af467c73df253df5a6badcc8083bb2dc3899105deab3bb708062ee4b2ce3dc",
+      "size": 32060
     },
     {
       "path": "desktop/src/renderer/src/locales/zh.json",
-      "sha256": "1ef0490d9dd0052563b2819a6105dfa898e5a1155ecc8508192da82f56221c1e",
-      "size": 31528
+      "sha256": "50eb96436de074cfc1ce9d901b58e1eaf4d02c155e53ec3ed1c7e8dccc77849f",
+      "size": 31127
     },
     {
       "path": "desktop/src/renderer/src/main.tsx",
@@ -1959,8 +1959,8 @@
     },
     {
       "path": "engine.spec",
-      "sha256": "62bdc935a6930fb296b100d2accbe2532e750f81d004510f9ea0203ec7682c44",
-      "size": 3629
+      "sha256": "3014cd149c436a541b4b719f05a78e70ea9edab2299c2ee0a8e5418b1263ca05",
+      "size": 3594
     },
     {
       "path": "engine_main.py",
@@ -2669,8 +2669,8 @@
     },
     {
       "path": "orchestrator/tool_agent.py",
-      "sha256": "5708f91c89f11c2042ad63525ce8398e96e3dea4428a034b5332c94f74cded46",
-      "size": 86418
+      "sha256": "8bb101bf8ae144b48b9db90d7489fb3e6869fb5138f048483f1449040b50591c",
+      "size": 85658
     },
     {
       "path": "orchestrator/translate.py",
@@ -2859,8 +2859,8 @@
     },
     {
       "path": "scripts/export_open_source_snapshot.py",
-      "sha256": "5a6ddbac3c043929f543e63d3623d7b47684c642c9aec4b85ae0777bed0af5d3",
-      "size": 13413
+      "sha256": "25fc332a6ba1655cab7667af9ad5a46fbad1f2dfeb3d7913c1d68db84ec25b5a",
+      "size": 14252
     },
     {
       "path": "scripts/export_python_licenses.py",
@@ -3389,8 +3389,8 @@
     },
     {
       "path": "tests/test_fleet_endpoint.py",
-      "sha256": "5f46d5b9440902a98462f9e8a53845df13c8fb13a33565e1135b8d8934b4eab2",
-      "size": 22320
+      "sha256": "9afd16fff360cb5f7b9d55f0dc768159f396963402e1895e6540bcb3e73ec6ce",
+      "size": 21978
     },
     {
       "path": "tests/test_followup_context.py",
@@ -3689,8 +3689,8 @@
     },
     {
       "path": "tests/test_open_source_snapshot.py",
-      "sha256": "9e72cfdb5c4e7b1399c83fab4e12cf529f08f6071d170ccb7812baa52ed430dc",
-      "size": 5680
+      "sha256": "a0dc097bc7de67d2fe88897c925d34a659314ab38f9c5b01fe591dd4332facc4",
+      "size": 6093
     },
     {
       "path": "tests/test_openai_compat_probe_safety.py",
@@ -3704,8 +3704,8 @@
     },
     {
       "path": "tests/test_orchestrated_agent.py",
-      "sha256": "e3c61a056a434df98a74d3000685482e264f3f70e6770cd53b415b8cfd7d4b6f",
-      "size": 55031
+      "sha256": "7f1a183fb41e8741aab3d35097fbb062565bfceb94cab554c5b55ecffb1c6daa",
+      "size": 54441
     },
     {
       "path": "tests/test_orchestration_capabilities.py",
@@ -4054,8 +4054,8 @@
     },
     {
       "path": "tests/test_trinity.py",
-      "sha256": "a0c9efa7d78cd2c1d20cd61570c06066e199fb892d6a4f4a2a3042adbbc8f0e8",
-      "size": 32978
+      "sha256": "b9772a78b5fd770180945af0f0600f51e33d57df491d7644505b438af8c168e9",
+      "size": 32473
     },
     {
       "path": "tests/test_trusted_media_probe.py",
@@ -4189,13 +4189,13 @@
     },
     {
       "path": "安装与维护/停止纳川.cmd",
-      "sha256": "566c794793f4344a0dd60d68347cf033dbdf8fba3f87d4f61a1747600ace698f",
-      "size": 260
+      "sha256": "794d5024bbffee9e3c0b3034f687175ea153ec6c7d1bbccadc5fa6a9028fbebc",
+      "size": 268
     },
     {
       "path": "安装与维护/准备FFmpeg构建输入.cmd",
-      "sha256": "1af1a0cc49a0deb09fe7fff4ad0cd74c214a0852de74290449db4c64ba29cbde",
-      "size": 515
+      "sha256": "d88ecf97577cf12073b8b247f61224bbf4d9e3b7dcd7133fcd9a86aad08288d7",
+      "size": 528
     },
     {
       "path": "安装与维护/准备FFmpeg构建输入.ps1",
@@ -4204,58 +4204,58 @@
     },
     {
       "path": "安装与维护/卸载开源版.cmd",
-      "sha256": "63f752dca58f4852142f10ab544b34becf03d47783508437a818240c4bbdc921",
-      "size": 138
+      "sha256": "3eef3b6b82455c1af344d236452c9cf0c5cc96fe76a2250de438ea5d2c48b245",
+      "size": 143
     },
     {
       "path": "安装与维护/安装开源版.cmd",
-      "sha256": "b5f10816fc9478a456d93731339bb5ebec595b55e7fcdf6a7bc9820073a5db4d",
-      "size": 152
+      "sha256": "7b77981ab5af3539f6c3644e20105967488121752673198c6360a66a342ea581",
+      "size": 157
     },
     {
       "path": "安装与维护/开发模式启动桌面端.cmd",
-      "sha256": "9dd65746873c08ed94d069645708900a9142798a4668f8fed51fea12ea494224",
-      "size": 648
+      "sha256": "cad1704cfdc90a76d15fcd154d371d086df42738e7a7ddf8fd376c6b29bdbbe8",
+      "size": 670
     },
     {
       "path": "安装与维护/恢复并启动纳川.cmd",
-      "sha256": "bb7c6edd05bdced661a0781c14b4cfe3115667d764d458af9ec2cebd5f19a848",
-      "size": 1055
+      "sha256": "f4f7c3353b8e5105d01abefcee1b9b8c02da72b5b02fd5a2f45b049deb6200e7",
+      "size": 1084
     },
     {
       "path": "安装与维护/手动检查上游更新.cmd",
-      "sha256": "4ce9b70940f164a2f6c566d80b78925cdb19eb591459c06a530922f5e4f888e5",
-      "size": 700
+      "sha256": "3b087c6cec9363a524c43b100e32d8cc5d89b22d129d352bbcd19d65a6ba0581",
+      "size": 729
     },
     {
       "path": "安装与维护/更新开源版.cmd",
-      "sha256": "be7a91d18b51259daebb1c4b1e0875311f0376dd4dd01b5a814e3c5023e2f3b0",
-      "size": 151
+      "sha256": "8081d01079544da8ecd8594e8704a3523e67974bb4d09889b91f0a1defa5d054",
+      "size": 156
     },
     {
       "path": "安装与维护/构建本地安装包-精简版.cmd",
-      "sha256": "e32752039a4f357a0081ac0172726c04bbf3035e96f5575f07b22f9f0a3d36b9",
-      "size": 238
+      "sha256": "7891c2d50e17b66e211bee1533b8a056cd904e48370a0f1a8ec765cafc3118a2",
+      "size": 246
     },
     {
       "path": "安装与维护/查看免费签名与交付状态.cmd",
-      "sha256": "0c1d779cf12b3a6b8bac96479a44230bf8d48222d267283e8056bf8c00c047f2",
-      "size": 75
+      "sha256": "972bd5eaa733809891c76cab4fb701e28698b42ee16246138b84ba12bdd697ec",
+      "size": 79
     },
     {
       "path": "安装与维护/查看运行状态.cmd",
-      "sha256": "6bd496cbce148d9c0db4f4da8799f57d717aa7b74a9fbd5cde580bf5df245875",
-      "size": 262
+      "sha256": "c0071853c8ab5ffbda5c831d13c90f735296ba9d5065a3a28495c536134baf55",
+      "size": 270
     },
     {
       "path": "安装与维护/检查三版本同步状态.cmd",
-      "sha256": "3e0510d1f5f2585b5f835164170195c156c13caa08eb8f17138823573161d1a3",
-      "size": 311
+      "sha256": "5efb139ded25285ef4327af5852071bea044b501b6f7ffb2494b314b92e0be7b",
+      "size": 321
     },
     {
       "path": "安装与维护/诊断开源版.cmd",
-      "sha256": "d092d7bf4c059a2b54938c1d249a68265cd05c58acc4fbd5cad3b7fe7a0a8789",
-      "size": 135
+      "sha256": "4841a0b6fd0cba46d4fdde7eb8b1f9c2ed0b4f114eb3c33c3a7f8dbdf6b96e44",
+      "size": 140
     }
   ],
   "history_included": false,

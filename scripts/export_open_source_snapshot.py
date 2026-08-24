@@ -194,6 +194,27 @@ def _validate_candidate_file(item: SnapshotFile, manifest: dict[str, Any]) -> by
     return data
 
 
+def normalize_publish_bytes(target: str, data: bytes) -> bytes:
+    """Match the repository's .gitattributes EOL policy before hashing.
+
+    The public repository enforces LF for text and CRLF for Windows batch files.
+    Hashing the private worktree bytes directly would make a GitHub source ZIP
+    fail its own receipt whenever a Windows checkout contained CRLF or mixed EOL.
+    Binary data is left byte-for-byte unchanged.
+    """
+
+    if b"\x00" in data:
+        return data
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    normalized = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    if Path(target).suffix.casefold() in {".bat", ".cmd"}:
+        return normalized.replace(b"\n", b"\r\n")
+    return normalized
+
+
 def audit_content(target: str, data: bytes) -> None:
     for label, pattern in _HIGH_CONFIDENCE_SECRETS:
         if pattern.search(data):
@@ -256,7 +277,9 @@ def export_snapshot(
     candidate.mkdir(parents=True, exist_ok=False)
     try:
         for item in files:
-            data = _validate_candidate_file(item, manifest)
+            data = normalize_publish_bytes(
+                item.target, _validate_candidate_file(item, manifest)
+            )
             audit_content(item.target, data)
             destination = candidate / Path(item.target)
             destination.parent.mkdir(parents=True, exist_ok=True)

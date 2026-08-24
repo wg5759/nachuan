@@ -9,6 +9,7 @@ from scripts.export_open_source_snapshot import (
     SnapshotError,
     audit_content,
     export_snapshot,
+    normalize_publish_bytes,
     verify_snapshot,
 )
 
@@ -147,3 +148,14 @@ def test_real_manifest_keeps_the_human_facing_chinese_maintenance_entry() -> Non
     assert "安装与维护/查看免费签名与交付状态.cmd" in public_files
     assert "安装与维护/恢复并启动纳川.cmd" in public_files
     assert "安装与维护/准备FFmpeg构建输入.ps1" in public_files
+
+
+def test_publish_bytes_match_git_eol_policy() -> None:
+    assert normalize_publish_bytes(
+        "src/mixed.py", b"one\r\ntwo\rthree\n"
+    ) == b"one\ntwo\nthree\n"
+    assert normalize_publish_bytes(
+        "安装与维护/start.cmd", b"one\ntwo\r\n"
+    ) == b"one\r\ntwo\r\n"
+    binary = b"\x89PNG\x00\r\n"
+    assert normalize_publish_bytes("asset.png", binary) == binary
