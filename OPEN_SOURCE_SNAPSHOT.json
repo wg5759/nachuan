@@ -1,6 +1,6 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260825-28",
-  "file_count": 850,
+  "candidate_id": "nachuan-source-alpha-20260825-29",
+  "file_count": 851,
   "files": [
     {
       "path": ".claude/commands/xreview.md",
@@ -1844,8 +1844,8 @@
     },
     {
       "path": "docs/CODE_SIGNING_POLICY.md",
-      "sha256": "81e6f6ca8794f4d9963d4a0874aa76a6c217b53f0f78902d5dba2a2ca21f986e",
-      "size": 3125
+      "sha256": "a56914f057afc5f46e3948bf14565869441e13f77c4a4486112c8881ae556754",
+      "size": 3519
     },
     {
       "path": "docs/ENTERPRISE_RAG_AUTHORIZATION_ARCHITECTURE.md",
@@ -2399,8 +2399,8 @@
     },
     {
       "path": "gateway/semcache.py",
-      "sha256": "652e15a4b4fddd7913088a730e5e9297d9f50dacb27760d121e42d025c5ec299",
-      "size": 9021
+      "sha256": "932a843c305d0b90cc31432fe07032821232b4aaa3834ba1cde064d29aed45a7",
+      "size": 9004
     },
     {
       "path": "gateway/streaming.py",
@@ -2749,8 +2749,8 @@
     },
     {
       "path": "pyproject.toml",
-      "sha256": "8a91721956db3fcf5b85552f70aef2a4d3fb7201045a3ae6d0755dfbc7fd5993",
-      "size": 4379
+      "sha256": "981c229fe435ce22c3b00112fc464d21a984c9cfc94fa1167418371353b14318",
+      "size": 4096
     },
     {
       "path": "scripts/__init__.py",
@@ -3943,6 +3943,11 @@
       "size": 12812
     },
     {
+      "path": "tests/test_semcache_supply_chain.py",
+      "sha256": "74a3f1f227b6f1e5fee30b03bd8a1591f9df4c9ffe28ce3f00dc108c80ffed65",
+      "size": 285
+    },
+    {
       "path": "tests/test_skills_trust.py",
       "sha256": "ae3305f06762376028da3c4f24c70195fc8f6e26151a1d3026a44a5763915229",
       "size": 4145
@@ -3994,8 +3999,8 @@
     },
     {
       "path": "tests/test_supply_chain_defaults.py",
-      "sha256": "b233cfba44bdf642b3b3eb11e108084a288f97780caffc5dd66d8c390bc52b15",
-      "size": 3296
+      "sha256": "093f03c386f07265ad10d62332c00671fc6c3127d6715b1012c245ae81b28a55",
+      "size": 3665
     },
     {
       "path": "tests/test_symbolic_memory.py",
@@ -4169,8 +4174,8 @@
     },
     {
       "path": "uv.lock",
-      "sha256": "3987ae4f128b98a3053f4c451894f8d5d7bd08be7a1a70a4cccd41e41dcdc66f",
-      "size": 586370
+      "sha256": "f977eb13033b6c5701d7c48473f710f3eb19ca7911da0397f1a736f3a9053bf7",
+      "size": 554079
     },
     {
       "path": "安装与维护/README.md",

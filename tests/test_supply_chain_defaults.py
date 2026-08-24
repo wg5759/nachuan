@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 
@@ -38,9 +39,18 @@ def test_windows_local_build_cannot_ignore_native_failures_or_missing_engine():
 
 def test_weixin_runtime_crypto_is_a_direct_locked_dependency():
     project = _text("pyproject.toml")
+    project_data = tomllib.loads(project)
     bridge = _text("scripts/run_weixin_ilink_bridge.py")
 
-    assert '"cryptography>=49.0.0"' in project
+    assert '"cryptography>=50.0.0"' in project
+    assert '"yt-dlp>=2026.7.4"' in project
+    assert '"hydra-core>=1.3.4"' in project
+    optional = project_data["project"]["optional-dependencies"]
+    assert all(
+        not dependency.lower().startswith("gptcache")
+        for dependencies in optional.values()
+        for dependency in dependencies
+    )
     assert "from cryptography.hazmat.primitives" in bridge
 
 

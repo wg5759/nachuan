@@ -18,10 +18,10 @@ dependencies = [
     "python-dotenv>=1.0",
     # Weixin iLink media encryption (AES-128-ECB + PKCS7).  This is a runtime
     # dependency, not an optional ASR/model dependency.
-    "cryptography>=49.0.0",
+    "cryptography>=50.0.0",
     "lark-oapi>=1.6.8",
     "zhconv>=1.4.3",
-    "yt-dlp>=2026.6.9",
+    "yt-dlp>=2026.7.4",
     "qrcode>=8.2",
 ]
 
@@ -45,16 +45,12 @@ compress = [
     "onnxruntime>=1.17",
     "tokenizers>=0.15",
 ]
-# 省 token·语义缓存（GPTCache）：相近问题直接命中缓存、不再调大模型。bge-small-zh 本地句向量。
-# 体积较大（含 torch/transformers），按需安装：`uv sync --locked --extra savers`
-# 模型权重不入包；须离线审计、记录 SHA-256 后放入 models/（见 semcache.py 顶部说明）。
-# 注：transformers/torch 供 semcache 与「一次性 onnx 导出脚本」用；compress 运行期已 torch-free、不需要。
+# 本地向量实验依赖。原 GPTCache 语义缓存因 GHSA-xfqj-4cr9-9gr5 无修复版，已从分发闭包移除并
+# 故障关闭；不能通过手工 pip 安装把它重新塞进客户环境。模型权重仍须离线审计并固定 SHA-256。
 savers = [
-    "gptcache>=0.1.44",
     "faiss-cpu>=1.7",
     "transformers>=4.26",
     "torch>=2.0",
-    "sqlalchemy>=2.0",  # GPTCache 的 SQLite 标量存储依赖
 ]
 # 本地语音评估路径：SenseVoice-Small（FunASR runtime，CPU、离线、自带标点）。
 # FunASR 及其本机二进制/notice 闭包仍在许可审查；不属于 lean/full 可分发闭包。
@@ -72,7 +68,7 @@ asr = [
 package = true
 # Keep both resolved and isolated-build environments above the first release
 # that fixes GHSA-h35f-9h28-mq5c / PYSEC-2026-3447.
-constraint-dependencies = ["setuptools>=83.0.0"]
+constraint-dependencies = ["setuptools>=83.0.0", "hydra-core>=1.3.4"]
 build-constraint-dependencies = ["setuptools>=83.0.0"]
 
 [tool.setuptools]

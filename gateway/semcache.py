@@ -1,10 +1,11 @@
-"""本地语义缓存（省 token / 省额度）：zilliztech GPTCache，纯本地、离线。
+"""已故障关闭的历史 GPTCache 语义缓存适配器。
 
 同一个/语义相近的问题再次问到时，直接返回上次缓存的答案，不再调用大模型——省钱省时。
 判“相近”靠**本地**句向量（bge-small-zh，~95MB，CPU），存储用**本地** SQLite + 本地 faiss。
 绝不用 OpenAI/云端 embedding（那会把你的提问发出去，违反“绝对安全”）。
 
-安全降级：未开启/没装包/模型缺失/任何异常 → 全部静默跳过，照常走正常 LLM 调用，绝不影响主流程。
+GPTCache 0.1.44 受 GHSA-xfqj-4cr9-9gr5 影响且上游暂无修复版，依赖已从可分发 extras 和锁文件移除。
+在经审计替代实现通过前，即使设置 SEMCACHE_ENABLED 也必须保持关闭，照常走正常 LLM 调用。
 
 embedding 模型放仓库内 `models/bge-small-zh-v1.5/`（.gitignore 已忽略 models/），
 模型必须由发布流水线或机主离线审计后放入目录，并记录 SHA-256；运行期不会自动下载。
@@ -38,8 +39,8 @@ _MAX_PROMPT = 4000
 
 
 def enabled() -> bool:
-    """语义缓存总开关（默认关；设 SEMCACHE_ENABLED=1/true 开启）。"""
-    return os.getenv("SEMCACHE_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+    """Fail closed while the unpatched GPTCache dependency is retired."""
+    return False
 
 
 class _SemCacheUnavailable(RuntimeError):
