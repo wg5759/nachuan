@@ -20,6 +20,11 @@ def test_installer_has_pinned_bootstrap_and_complete_lifecycle() -> None:
     assert "AE681C0AAEC7CC96AF184648CB88D73F8393ED60FA5880ABDD6BDB910F9B227C" in source
     assert "OPEN_SOURCE_SNAPSHOT.json" in source
     assert "Test-SnapshotClosure" in source
+    assert "Test-SnapshotClosure $sourceCandidates[0].FullName" in source
+    assert "Test-SnapshotClosure $versionRoot -AllowManagedRuntime" in source
+    assert "'sync', '--check', '--offline'" in source
+    assert "Remove-ManagedBuildResidue $versionRoot" in source
+    assert "@('build', 'llm_aggregator.egg-info', '__pycache__')" in source
     assert "distribution-channels.v1.json" in source
     for action in ("Install", "Update", "Doctor", "Start", "Uninstall"):
         assert f"'{action}'" in source

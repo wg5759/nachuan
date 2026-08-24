@@ -122,7 +122,10 @@ function Resolve-SourceCommit([string]$Repo, [string]$RequestedRef) {
   return $commit
 }
 
-function Test-SnapshotClosure([string]$SourceRoot) {
+function Test-SnapshotClosure(
+  [string]$SourceRoot,
+  [switch]$AllowManagedRuntime
+) {
   $sourceFull = Get-FullPath $SourceRoot
   $prefix = $sourceFull + [IO.Path]::DirectorySeparatorChar
   $receiptPath = Join-Path $sourceFull 'OPEN_SOURCE_SNAPSHOT.json'
@@ -170,13 +173,18 @@ function Test-SnapshotClosure([string]$SourceRoot) {
       throw "Source snapshot hash mismatch: $relative"
     }
   }
+  $managedRuntimePrefix = '.venv/'
   $actual = @(
     Get-ChildItem -LiteralPath $sourceFull -Recurse -Force | ForEach-Object {
+      $relative = $_.FullName.Substring($prefix.Length).Replace('\', '/')
+      $managedRuntime = $AllowManagedRuntime -and (
+        $relative -ceq '.venv' -or $relative.StartsWith($managedRuntimePrefix, [StringComparison]::Ordinal)
+      )
       if (($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw "Source snapshot contains a reparse point: $($_.FullName)"
       }
-      if (-not $_.PSIsContainer -and $_.FullName -cne $receiptPath) {
-        $_.FullName.Substring($prefix.Length).Replace('\', '/')
+      if (-not $managedRuntime -and -not $_.PSIsContainer -and $_.FullName -cne $receiptPath) {
+        $relative
       }
     }
   )
@@ -204,6 +212,37 @@ function Write-JsonAtomic([string]$Path, [object]$Value) {
     (New-Object Text.UTF8Encoding($false))
   )
   Move-Item -LiteralPath $temporary -Destination $Path -Force
+}
+
+function Remove-ManagedBuildResidue([string]$SourceRoot) {
+  $sourceFull = Get-FullPath $SourceRoot
+  $prefix = $sourceFull + [IO.Path]::DirectorySeparatorChar
+  if (-not (Test-Path -LiteralPath (Join-Path $sourceFull 'OPEN_SOURCE_SNAPSHOT.json') -PathType Leaf)) {
+    throw 'Refusing build cleanup outside a verified source root.'
+  }
+  foreach ($relative in @('build', 'llm_aggregator.egg-info', '__pycache__')) {
+    $target = Get-FullPath (Join-Path $sourceFull $relative)
+    if (-not $target.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+      throw 'Managed build cleanup escaped the source root.'
+    }
+    if (-not (Test-Path -LiteralPath $target)) { continue }
+    $item = Get-Item -LiteralPath $target -Force
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+      throw "Refusing redirected managed build cleanup: $relative"
+    }
+    $redirected = @(
+      Get-ChildItem -LiteralPath $target -Recurse -Force | Where-Object {
+        ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+      }
+    )
+    if ($redirected.Count -ne 0) {
+      throw "Refusing managed build cleanup containing a reparse point: $relative"
+    }
+    Remove-Item -LiteralPath $target -Recurse -Force
+    if (Test-Path -LiteralPath $target) {
+      throw "Managed build cleanup left a residual path: $relative"
+    }
+  }
 }
 
 function Read-InstallState([string]$Root) {
@@ -380,6 +419,7 @@ function Install-OrUpdate([string]$Root, [bool]$Updating) {
     'sync', '--directory', $versionRoot, '--frozen', '--no-dev', '--no-editable',
     '--managed-python', '--python', $PythonVersion, '--cache-dir', $cacheRoot
   )
+  Remove-ManagedBuildResidue $versionRoot
   $python = Join-Path $versionRoot '.venv\Scripts\python.exe'
   $actualPython = Get-CheckedNativeOutput 'community Python version' $python @(
     '-I', '-S', '-B', '-X', 'utf8', '-c', 'import platform; print(platform.python_version())'
@@ -420,8 +460,9 @@ function Invoke-Doctor([string]$Root) {
   try { $state = Read-InstallState $Root } catch { $failures.Add($_.Exception.Message); $state = $null }
   if ($state) {
     $versionRoot = Join-Path $Root ('versions\' + [string]$state.resolved_commit)
+    $python = Join-Path $versionRoot '.venv\Scripts\python.exe'
     try {
-      $verified = Test-SnapshotClosure $versionRoot
+      $verified = Test-SnapshotClosure $versionRoot -AllowManagedRuntime
       if ([string]$verified.ReceiptSha256 -cne [string]$state.source_receipt_sha256) {
         $failures.Add('Source receipt hash drifted from install state.')
       }
@@ -431,8 +472,14 @@ function Invoke-Doctor([string]$Root) {
       $failures.Add('Managed uv.exe is missing.')
     } elseif ((Get-Sha256 $uvPath) -cne ([string]$state.uv_sha256).ToUpperInvariant()) {
       $failures.Add('Managed uv.exe hash drifted from install state.')
+    } else {
+      try {
+        Invoke-CheckedNative 'locked community environment check' $uvPath @(
+          'sync', '--check', '--offline', '--directory', $versionRoot, '--frozen', '--no-dev', '--no-editable',
+          '--python', $python, '--cache-dir', (Join-Path $Root 'cache\uv')
+        )
+      } catch { $failures.Add($_.Exception.Message) }
     }
-    $python = Join-Path $versionRoot '.venv\Scripts\python.exe'
     if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
       $failures.Add('Managed Python environment is missing.')
     } else {
