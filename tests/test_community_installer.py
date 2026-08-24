@@ -25,6 +25,7 @@ def test_installer_has_pinned_bootstrap_and_complete_lifecycle() -> None:
     assert "'sync', '--check', '--offline'" in source
     assert "Remove-ManagedBuildResidue $versionRoot" in source
     assert "@('build', 'llm_aggregator.egg-info', '__pycache__')" in source
+    assert source.count("$env:DATA_DIR = Join-Path ([IO.Path]::GetDirectoryName($root)) 'data'") == 1
     assert "distribution-channels.v1.json" in source
     for action in ("Install", "Update", "Doctor", "Start", "Uninstall"):
         assert f"'{action}'" in source

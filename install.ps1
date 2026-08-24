@@ -308,15 +308,13 @@ $versionRoot = Join-Path $root ('versions\' + [string]$state.resolved_commit)
 $python = Join-Path $versionRoot '.venv\Scripts\python.exe'
 $maintenanceName = -join ([char[]](0x7ef4, 0x62a4))
 $maintenance = Join-Path (Join-Path $root $maintenanceName) 'nachuan-maintenance.ps1'
+$env:DATA_DIR = Join-Path ([IO.Path]::GetDirectoryName($root)) 'data'
 if ($NachuanArguments.Count -eq 0) { $NachuanArguments = @('start') }
 $verb = $NachuanArguments[0].ToLowerInvariant()
 if ($verb -in @('update', 'doctor', 'uninstall')) {
   $action = $verb.Substring(0, 1).ToUpperInvariant() + $verb.Substring(1)
   & $maintenance -Action $action -InstallRoot $root
   exit $LASTEXITCODE
-}
-if ($verb -eq 'start') {
-  $env:DATA_DIR = Join-Path ([IO.Path]::GetDirectoryName($root)) 'data'
 }
 & $python -m cli @NachuanArguments
 exit $LASTEXITCODE

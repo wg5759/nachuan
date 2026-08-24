@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260825-31",
+  "candidate_id": "nachuan-source-alpha-20260825-32",
   "file_count": 851,
   "files": [
     {
@@ -2484,8 +2484,8 @@
     },
     {
       "path": "install.ps1",
-      "sha256": "d3f67e5aacdcf6f2f94d8cf316f71309f5f2d778cad086cb5314d26b1a403d00",
-      "size": 23285
+      "sha256": "49b5c1d83ae2efb848bab33cfbf9d5876349bc5e755a377c61d701ffcf8e996b",
+      "size": 23256
     },
     {
       "path": "node-runtime-lock.json",
@@ -3234,8 +3234,8 @@
     },
     {
       "path": "tests/test_community_installer.py",
-      "sha256": "18f277d377efebc02eaafe284446e43cda0a73191e2b2fde5ad631a17541a32e",
-      "size": 2385
+      "sha256": "8db411355e8061e487dcb73dcd0b4f4938582b2454f66b8572f5feaaa8e40e8f",
+      "size": 2487
     },
     {
       "path": "tests/test_compress.py",
