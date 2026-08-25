@@ -129,6 +129,21 @@ class _ContentReader:
         )
 
 
+class _FenceChecker:
+    def __init__(self, fenced: set[str] | None = None, *, error=None):
+        self.fenced = fenced or set()
+        self.error = error
+        self.calls = []
+
+    def is_scope_fenced(
+        self, *, tenant_id, resource_scope, expected_policy_epoch
+    ):
+        self.calls.append((tenant_id, resource_scope, expected_policy_epoch))
+        if self.error is not None:
+            raise self.error
+        return resource_scope in self.fenced
+
+
 class _Reranker:
     def __init__(self, result=None):
         self.result = result
@@ -147,6 +162,7 @@ def _retriever(
     attribute=None,
     reader=None,
     reranker=None,
+    fence_checker=None,
     max_pages=8,
 ):
     relationship = _Evaluator(set(allowed))
@@ -156,6 +172,7 @@ def _retriever(
         candidate_source=candidate_source,
         authorization=_authorization(relationship, attribute),
         content_reader=content_reader,
+        fence_checker=fence_checker or _FenceChecker(),
         reranker=reranker,
         max_pages=max_pages,
     )
@@ -234,6 +251,49 @@ def test_cross_tenant_candidate_fails_before_authorization_or_content_read() -> 
     assert authz.calls == [] and reader.calls == []
 
 
+def test_pending_or_failed_policy_fence_drops_candidate_before_authorization() -> None:
+    contents = {"fenced": "must remain unavailable"}
+    fences = _FenceChecker({"document-fenced"})
+    retriever, _source, authz, reader = _retriever(
+        [
+            EnterpriseCandidatePage(
+                candidates=(_candidate("fenced", contents["fenced"]),),
+                next_cursor=None,
+            )
+        ],
+        {"fenced"},
+        contents,
+        fence_checker=fences,
+    )
+
+    result = retriever.retrieve(context=_context(), query="question", k=1)
+
+    assert result.chunks == ()
+    assert result.reason_codes == ("insufficient_authorized_results",)
+    assert fences.calls == [("tenant-a", "document-fenced", 7)]
+    assert authz.calls == [] and reader.calls == []
+
+
+def test_policy_fence_checker_failure_blocks_the_entire_retrieval() -> None:
+    contents = {"one": "content"}
+    fences = _FenceChecker(error=RuntimeError("fence store down"))
+    retriever, _source, authz, reader = _retriever(
+        [
+            EnterpriseCandidatePage(
+                candidates=(_candidate("one", contents["one"]),),
+                next_cursor=None,
+            )
+        ],
+        {"one"},
+        contents,
+        fence_checker=fences,
+    )
+
+    with pytest.raises(EnterpriseRetrievalError, match="fence check unavailable"):
+        retriever.retrieve(context=_context(), query="question", k=1)
+    assert authz.calls == [] and reader.calls == []
+
+
 @pytest.mark.parametrize("failure", ["missing", "extra", "hash"])
 def test_content_reader_missing_extra_or_hash_drift_fails_closed(failure: str) -> None:
     candidate = _candidate("one", "expected")
@@ -286,6 +346,7 @@ def test_authorization_dependency_failure_returns_no_plaintext() -> None:
         candidate_source=source,
         authorization=_authorization(relationship),
         content_reader=reader,
+        fence_checker=_FenceChecker(),
     )
 
     result = retriever.retrieve(context=_context(), query="question", k=1)

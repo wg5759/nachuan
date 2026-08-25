@@ -28,6 +28,10 @@ class EnterpriseKnowledgeStalePolicy(EnterpriseKnowledgeError):
     pass
 
 
+class EnterpriseKnowledgeFenced(EnterpriseKnowledgeError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class EnterpriseChunkMetadata:
     chunk_id: str
@@ -264,6 +268,256 @@ class EnterpriseKnowledgeStore:
                 raise EnterpriseKnowledgeStalePolicy("policy epoch changed")
             self._connection.commit()
         return expected_epoch + 1
+
+    def begin_document_revocation(
+        self,
+        *,
+        tenant_id: str,
+        expected_policy_epoch: int,
+        document_id: str,
+        source_version: str,
+        event_id: str,
+    ) -> dict[str, object]:
+        """Fence and revoke one document in the same policy-epoch transaction.
+
+        Unaffected local metadata advances to the new epoch atomically so a
+        scoped revocation does not make every other document stale.  External
+        indexes remain fenced for the target until the outbox event is applied.
+        """
+
+        tenant = _checked_id(tenant_id, "tenant_id")
+        document = _checked_id(document_id, "document_id")
+        version = _checked_id(source_version, "source_version")
+        event = _checked_id(event_id, "event_id")
+        if (
+            isinstance(expected_policy_epoch, bool)
+            or not isinstance(expected_policy_epoch, int)
+            or expected_policy_epoch < 1
+        ):
+            raise ValueError("expected_policy_epoch is invalid")
+        now = time.time()
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                current = self._connection.execute(
+                    "SELECT policy_epoch,corpus_epoch FROM kb_v2_tenant_epochs WHERE tenant_id=?",
+                    (tenant,),
+                ).fetchone()
+                if current is None or int(current[0]) != expected_policy_epoch:
+                    raise EnterpriseKnowledgeStalePolicy("policy epoch changed")
+                target = self._connection.execute(
+                    "SELECT status FROM kb_v2_documents WHERE tenant_id=? AND document_id=?",
+                    (tenant, document),
+                ).fetchone()
+                if target is None:
+                    raise EnterpriseKnowledgeError("document does not exist")
+                if str(target[0]) == "revoked":
+                    raise EnterpriseKnowledgeError("document is already revoked")
+                duplicate = self._connection.execute(
+                    "SELECT 1 FROM kb_v2_policy_outbox WHERE tenant_id=? AND event_id=?",
+                    (tenant, event),
+                ).fetchone()
+                if duplicate is not None:
+                    raise EnterpriseKnowledgeError("policy event already exists")
+                new_policy_epoch = expected_policy_epoch + 1
+                new_corpus_epoch = int(current[1]) + 1
+                advanced = self._connection.execute(
+                    "UPDATE kb_v2_tenant_epochs SET policy_epoch=?,corpus_epoch=? "
+                    "WHERE tenant_id=? AND policy_epoch=? AND corpus_epoch=?",
+                    (
+                        new_policy_epoch,
+                        new_corpus_epoch,
+                        tenant,
+                        expected_policy_epoch,
+                        int(current[1]),
+                    ),
+                )
+                if advanced.rowcount != 1:
+                    raise EnterpriseKnowledgeStalePolicy("policy epoch changed")
+                self._connection.execute(
+                    "UPDATE kb_v2_documents SET policy_epoch=? WHERE tenant_id=?",
+                    (new_policy_epoch, tenant),
+                )
+                self._connection.execute(
+                    "UPDATE kb_v2_chunks SET policy_epoch=? WHERE tenant_id=?",
+                    (new_policy_epoch, tenant),
+                )
+                revoked = self._connection.execute(
+                    "UPDATE kb_v2_documents SET status='revoked' "
+                    "WHERE tenant_id=? AND document_id=? AND status<>'revoked'",
+                    (tenant, document),
+                )
+                if revoked.rowcount != 1:
+                    raise EnterpriseKnowledgeError("document revocation changed")
+                self._connection.execute(
+                    "UPDATE kb_v2_chunks SET revoked_at=? "
+                    "WHERE tenant_id=? AND document_id=? AND revoked_at IS NULL",
+                    (now, tenant, document),
+                )
+                self._connection.execute(
+                    "INSERT INTO kb_v2_policy_outbox VALUES(?,?,?,?,?,'revoke','pending',?,NULL)",
+                    (
+                        tenant,
+                        event,
+                        version,
+                        new_policy_epoch,
+                        document,
+                        now,
+                    ),
+                )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        return {
+            "tenant_id": tenant,
+            "document_id": document,
+            "event_id": event,
+            "policy_epoch": new_policy_epoch,
+            "corpus_epoch": new_corpus_epoch,
+            "status": "revoked",
+            "sync_state": "pending",
+            "fenced": True,
+        }
+
+    def mark_policy_event_failed(
+        self,
+        *,
+        tenant_id: str,
+        event_id: str,
+        expected_policy_epoch: int,
+    ) -> None:
+        self._transition_policy_event(
+            tenant_id=tenant_id,
+            event_id=event_id,
+            expected_policy_epoch=expected_policy_epoch,
+            target_state="failed",
+        )
+
+    def apply_policy_event(
+        self,
+        *,
+        tenant_id: str,
+        event_id: str,
+        expected_policy_epoch: int,
+    ) -> None:
+        self._transition_policy_event(
+            tenant_id=tenant_id,
+            event_id=event_id,
+            expected_policy_epoch=expected_policy_epoch,
+            target_state="applied",
+        )
+
+    def _transition_policy_event(
+        self,
+        *,
+        tenant_id: str,
+        event_id: str,
+        expected_policy_epoch: int,
+        target_state: str,
+    ) -> None:
+        tenant = _checked_id(tenant_id, "tenant_id")
+        event = _checked_id(event_id, "event_id")
+        if target_state not in {"applied", "failed"}:
+            raise ValueError("target_state is invalid")
+        if (
+            isinstance(expected_policy_epoch, bool)
+            or not isinstance(expected_policy_epoch, int)
+            or expected_policy_epoch < 1
+        ):
+            raise ValueError("expected_policy_epoch is invalid")
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                current = self._connection.execute(
+                    "SELECT policy_epoch FROM kb_v2_tenant_epochs WHERE tenant_id=?",
+                    (tenant,),
+                ).fetchone()
+                if current is None or int(current[0]) != expected_policy_epoch:
+                    raise EnterpriseKnowledgeStalePolicy("policy epoch changed")
+                allowed_states = ("pending", "failed") if target_state == "applied" else ("pending",)
+                placeholders = ",".join("?" for _ in allowed_states)
+                cursor = self._connection.execute(
+                    "UPDATE kb_v2_policy_outbox SET state=?,applied_at=? "
+                    f"WHERE tenant_id=? AND event_id=? AND operation='revoke' "
+                    f"AND policy_epoch<=? AND state IN ({placeholders})",
+                    (
+                        target_state,
+                        time.time() if target_state == "applied" else None,
+                        tenant,
+                        event,
+                        expected_policy_epoch,
+                        *allowed_states,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise EnterpriseKnowledgeError("policy event transition rejected")
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def assert_scope_unfenced(
+        self,
+        *,
+        tenant_id: str,
+        resource_scope: str,
+        expected_policy_epoch: int,
+    ) -> None:
+        if self.is_scope_fenced(
+            tenant_id=tenant_id,
+            resource_scope=resource_scope,
+            expected_policy_epoch=expected_policy_epoch,
+        ):
+            raise EnterpriseKnowledgeFenced("resource scope is fenced")
+
+    def is_scope_fenced(
+        self,
+        *,
+        tenant_id: str,
+        resource_scope: str,
+        expected_policy_epoch: int,
+    ) -> bool:
+        tenant = _checked_id(tenant_id, "tenant_id")
+        scope = _checked_id(resource_scope, "resource_scope")
+        policy_epoch, _ = self.current_epochs(tenant)
+        if policy_epoch != expected_policy_epoch:
+            raise EnterpriseKnowledgeStalePolicy("policy epoch changed")
+        with self._lock:
+            fenced = self._connection.execute(
+                "SELECT 1 FROM kb_v2_policy_outbox WHERE tenant_id=? "
+                "AND resource_scope=? AND operation='revoke' "
+                "AND policy_epoch<=? AND state IN ('pending','failed') LIMIT 1",
+                (tenant, scope, expected_policy_epoch),
+            ).fetchone()
+        return fenced is not None
+
+    def list_policy_events(
+        self,
+        tenant_id: str,
+        expected_policy_epoch: int,
+    ) -> list[dict[str, object]]:
+        tenant = _checked_id(tenant_id, "tenant_id")
+        policy_epoch, _ = self.current_epochs(tenant)
+        if policy_epoch != expected_policy_epoch:
+            raise EnterpriseKnowledgeStalePolicy("policy epoch changed")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT event_id,source_version,policy_epoch,resource_scope,operation,state,created_at,applied_at "
+                "FROM kb_v2_policy_outbox WHERE tenant_id=? ORDER BY created_at,event_id",
+                (tenant,),
+            ).fetchall()
+        keys = (
+            "event_id",
+            "source_version",
+            "policy_epoch",
+            "resource_scope",
+            "operation",
+            "state",
+            "created_at",
+            "applied_at",
+        )
+        return [dict(zip(keys, row, strict=True)) for row in rows]
 
     def stage_document(
         self,
@@ -519,6 +773,7 @@ __all__ = [
     "EnterpriseChunkMetadata",
     "EnterpriseDocumentMetadata",
     "EnterpriseKnowledgeError",
+    "EnterpriseKnowledgeFenced",
     "EnterpriseKnowledgeStalePolicy",
     "EnterpriseKnowledgeStore",
 ]

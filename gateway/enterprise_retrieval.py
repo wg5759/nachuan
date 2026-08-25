@@ -116,6 +116,16 @@ class EnterpriseContentReader(Protocol):
     ) -> Sequence[EnterpriseContentRecord]: ...
 
 
+class EnterpriseScopeFenceChecker(Protocol):
+    def is_scope_fenced(
+        self,
+        *,
+        tenant_id: str,
+        resource_scope: str,
+        expected_policy_epoch: int,
+    ) -> bool: ...
+
+
 class EnterpriseAuthorizedReranker(Protocol):
     def rerank(
         self,
@@ -188,6 +198,7 @@ class EnterprisePermissionAwareRetriever:
         candidate_source: EnterpriseCandidateSource,
         authorization: EnterpriseAuthorizationFacade,
         content_reader: EnterpriseContentReader,
+        fence_checker: EnterpriseScopeFenceChecker,
         reranker: EnterpriseAuthorizedReranker | None = None,
         oversample_factor: int = 4,
         max_pages: int = 8,
@@ -198,6 +209,8 @@ class EnterprisePermissionAwareRetriever:
             raise EnterpriseRetrievalError("authorization is invalid")
         if not callable(getattr(content_reader, "read_many", None)):
             raise EnterpriseRetrievalError("content_reader is invalid")
+        if not callable(getattr(fence_checker, "is_scope_fenced", None)):
+            raise EnterpriseRetrievalError("fence_checker is invalid")
         if reranker is not None and not callable(getattr(reranker, "rerank", None)):
             raise EnterpriseRetrievalError("reranker is invalid")
         if (
@@ -215,6 +228,7 @@ class EnterprisePermissionAwareRetriever:
         self._candidates = candidate_source
         self._authorization = authorization
         self._content = content_reader
+        self._fences = fence_checker
         self._reranker = reranker
         self._oversample_factor = oversample_factor
         self._max_pages = max_pages
@@ -266,6 +280,20 @@ class EnterprisePermissionAwareRetriever:
                     raise EnterpriseRetrievalError("candidate cursor cycle detected")
                 seen_cursors.add(page.next_cursor)
 
+            eligible_candidates: list[EnterpriseVectorCandidate] = []
+            for candidate in page.candidates:
+                try:
+                    fenced = self._fences.is_scope_fenced(
+                        tenant_id=context.tenant_id,
+                        resource_scope=candidate.document_id,
+                        expected_policy_epoch=context.policy_epoch,
+                    )
+                except Exception:
+                    raise EnterpriseRetrievalError("policy fence check unavailable") from None
+                if not isinstance(fenced, bool):
+                    raise EnterpriseRetrievalError("policy fence result is invalid")
+                if not fenced:
+                    eligible_candidates.append(candidate)
             resources = tuple(
                 EnterpriseAuthorizationResource(
                     tenant_id=candidate.tenant_id,
@@ -275,14 +303,14 @@ class EnterprisePermissionAwareRetriever:
                     policy_epoch=candidate.policy_epoch,
                     classification=candidate.classification,
                 )
-                for candidate in page.candidates
+                for candidate in eligible_candidates
             )
             decisions = (
                 self._authorization.batch_check(context, resources) if resources else ()
             )
             allowed = [
                 (candidate, decision)
-                for candidate, decision in zip(page.candidates, decisions, strict=True)
+                for candidate, decision in zip(eligible_candidates, decisions, strict=True)
                 if decision.allowed
             ]
             if allowed:
@@ -412,5 +440,6 @@ __all__ = [
     "EnterprisePermissionAwareRetriever",
     "EnterpriseRetrievalError",
     "EnterpriseRetrievalResult",
+    "EnterpriseScopeFenceChecker",
     "EnterpriseVectorCandidate",
 ]
