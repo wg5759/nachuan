@@ -60,6 +60,46 @@ class EnterpriseChunkMetadata:
             raise ValueError("classification is invalid")
 
 
+@dataclass(frozen=True, slots=True)
+class EnterpriseDocumentMetadata:
+    document_id: str
+    source_id: str
+    source_version: str
+    policy_id: str
+    policy_epoch: int
+    classification: int
+    content_hash: str
+    chunks: tuple[EnterpriseChunkMetadata, ...]
+
+    def __post_init__(self) -> None:
+        for field in ("document_id", "source_id", "source_version", "policy_id"):
+            _checked_id(getattr(self, field), field)
+        _checked_digest(self.content_hash, "content_hash")
+        if (
+            isinstance(self.policy_epoch, bool)
+            or not isinstance(self.policy_epoch, int)
+            or self.policy_epoch < 1
+        ):
+            raise ValueError("policy_epoch is invalid")
+        if (
+            isinstance(self.classification, bool)
+            or not isinstance(self.classification, int)
+            or not 0 <= self.classification <= 10
+        ):
+            raise ValueError("classification is invalid")
+        if not self.chunks or len(self.chunks) > 100_000:
+            raise ValueError("chunks are invalid")
+        if len({chunk.chunk_id for chunk in self.chunks}) != len(self.chunks):
+            raise ValueError("chunk ids are duplicated")
+        if {chunk.ordinal for chunk in self.chunks} != set(range(len(self.chunks))):
+            raise ValueError("chunk ordinals must be contiguous")
+        for chunk in self.chunks:
+            if chunk.policy_epoch != self.policy_epoch or chunk.policy_id != self.policy_id:
+                raise EnterpriseKnowledgeStalePolicy("chunk policy differs from document")
+            if chunk.classification < self.classification:
+                raise EnterpriseKnowledgeError("chunk classification is wider than document")
+
+
 def _checked_id(value: object, field: str) -> str:
     if not isinstance(value, str) or _ID.fullmatch(value) is None:
         raise ValueError(f"{field} is invalid")
@@ -318,6 +358,141 @@ class EnterpriseKnowledgeStore:
             "chunk_count": len(staged),
         }
 
+    def stage_document_family(
+        self,
+        *,
+        tenant_id: str,
+        expected_policy_epoch: int,
+        documents: Iterable[EnterpriseDocumentMetadata],
+    ) -> dict[str, object]:
+        """Atomically stage all permission domains from one source snapshot.
+
+        A source version may contain several policy/classification domains.  The
+        caller must split those domains before this boundary.  This method gives
+        them one corpus epoch and one outbox event so a partial family can never
+        become visible after an insertion failure.
+        """
+
+        tenant = _checked_id(tenant_id, "tenant_id")
+        if (
+            isinstance(expected_policy_epoch, bool)
+            or not isinstance(expected_policy_epoch, int)
+            or expected_policy_epoch < 1
+        ):
+            raise ValueError("expected_policy_epoch is invalid")
+        staged = tuple(documents)
+        if not staged or len(staged) > 10_000:
+            raise ValueError("documents are invalid")
+        if len({document.document_id for document in staged}) != len(staged):
+            raise ValueError("document ids are duplicated")
+        if len({document.source_id for document in staged}) != 1:
+            raise EnterpriseKnowledgeError("document family source differs")
+        if len({document.source_version for document in staged}) != 1:
+            raise EnterpriseKnowledgeError("document family source version differs")
+        if any(document.policy_epoch != expected_policy_epoch for document in staged):
+            raise EnterpriseKnowledgeStalePolicy("document family policy epoch differs")
+        all_chunk_ids = [
+            chunk.chunk_id for document in staged for chunk in document.chunks
+        ]
+        if len(all_chunk_ids) > 100_000:
+            raise ValueError("document family has too many chunks")
+        if len(set(all_chunk_ids)) != len(all_chunk_ids):
+            raise ValueError("document family chunk ids are duplicated")
+
+        source_id = staged[0].source_id
+        source_version = staged[0].source_version
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                current = self._connection.execute(
+                    "SELECT policy_epoch,corpus_epoch FROM kb_v2_tenant_epochs WHERE tenant_id=?",
+                    (tenant,),
+                ).fetchone()
+                if current is None or int(current[0]) != expected_policy_epoch:
+                    raise EnterpriseKnowledgeStalePolicy("policy epoch changed")
+                corpus_epoch = int(current[1]) + 1
+                event_id = _canonical_digest(
+                    {
+                        "tenant": tenant,
+                        "source": source_id,
+                        "source_version": source_version,
+                        "documents": [document.document_id for document in staged],
+                        "corpus": corpus_epoch,
+                    }
+                )
+                advanced = self._connection.execute(
+                    "UPDATE kb_v2_tenant_epochs SET corpus_epoch=? WHERE tenant_id=? AND policy_epoch=?",
+                    (corpus_epoch, tenant, expected_policy_epoch),
+                )
+                if advanced.rowcount != 1:
+                    raise EnterpriseKnowledgeStalePolicy("policy epoch changed")
+                self._connection.executemany(
+                    "INSERT INTO kb_v2_documents VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    [
+                        (
+                            tenant,
+                            document.document_id,
+                            document.source_id,
+                            document.source_version,
+                            corpus_epoch,
+                            document.classification,
+                            document.policy_id,
+                            expected_policy_epoch,
+                            "isolated",
+                            document.content_hash,
+                        )
+                        for document in staged
+                    ],
+                )
+                self._connection.executemany(
+                    "INSERT INTO kb_v2_chunks VALUES(?,?,?,?,?,?,?,?,?,?,NULL)",
+                    [
+                        (
+                            tenant,
+                            chunk.chunk_id,
+                            document.document_id,
+                            chunk.ordinal,
+                            chunk.content_ref,
+                            chunk.content_hash,
+                            chunk.policy_id,
+                            chunk.policy_epoch,
+                            chunk.classification,
+                            chunk.provenance_digest,
+                        )
+                        for document in staged
+                        for chunk in document.chunks
+                    ],
+                )
+                resource_scope = "source-" + _canonical_digest(
+                    {"source": source_id, "source_version": source_version}
+                )
+                self._connection.execute(
+                    "INSERT INTO kb_v2_policy_outbox VALUES(?,?,?,?,?,'stage','pending',?,NULL)",
+                    (
+                        tenant,
+                        event_id,
+                        source_version,
+                        expected_policy_epoch,
+                        resource_scope,
+                        time.time(),
+                    ),
+                )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        return {
+            "tenant_id": tenant,
+            "source_id": source_id,
+            "source_version": source_version,
+            "policy_epoch": expected_policy_epoch,
+            "corpus_epoch": corpus_epoch,
+            "status": "isolated",
+            "event_id": event_id,
+            "document_count": len(staged),
+            "chunk_count": len(all_chunk_ids),
+        }
+
     def list_documents(self, tenant_id: str, expected_policy_epoch: int) -> list[dict[str, object]]:
         policy_epoch, _ = self.current_epochs(tenant_id)
         if policy_epoch != expected_policy_epoch:
@@ -342,6 +517,7 @@ class EnterpriseKnowledgeStore:
 
 __all__ = [
     "EnterpriseChunkMetadata",
+    "EnterpriseDocumentMetadata",
     "EnterpriseKnowledgeError",
     "EnterpriseKnowledgeStalePolicy",
     "EnterpriseKnowledgeStore",

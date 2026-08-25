@@ -1,6 +1,6 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260825-38",
-  "file_count": 864,
+  "candidate_id": "nachuan-source-alpha-20260825-39",
+  "file_count": 866,
   "files": [
     {
       "path": ".claude/commands/xreview.md",
@@ -1874,8 +1874,8 @@
     },
     {
       "path": "docs/ENTERPRISE_RAG_AUTHORIZATION_ARCHITECTURE.md",
-      "sha256": "097be779dbc328e71a1e3b4438ff6bc1f889450d6f6671046c983fa4da70979c",
-      "size": 19638
+      "sha256": "b844afc0b6560b21bd948607d8cd114b77645653772f5b6d98e414f7c60f142b",
+      "size": 20299
     },
     {
       "path": "docs/MSIX_STORE_RELEASE_READINESS.md",
@@ -2598,9 +2598,14 @@
       "size": 8043
     },
     {
+      "path": "orchestrator/enterprise_ingest.py",
+      "sha256": "5ba583dc67f7a05ea90bb1773507407636df999487435f6db3bdb4624e9e35b9",
+      "size": 18676
+    },
+    {
       "path": "orchestrator/enterprise_knowledge.py",
-      "sha256": "1ff7307eba6aa731115aa100255653d1a060768a4e5579a572506196c6b3561c",
-      "size": 15857
+      "sha256": "e9e09cf7414b8bb35e3dad898da4bef2c4d99859bbcdaa7c644ec18a74d59a72",
+      "size": 23657
     },
     {
       "path": "orchestrator/history_compress.py",
@@ -3401,6 +3406,11 @@
       "path": "tests/test_enterprise_request_context.py",
       "sha256": "c0e8f34e3b205aba040dafdb4dd2b60571975ebb128ff142ff0e056779577ee2",
       "size": 3833
+    },
+    {
+      "path": "tests/test_enterprise_secure_ingest.py",
+      "sha256": "bcbabe424a1fb24249e252e87a987bd928f97664ee74ff69b61b4dddff3a5d9c",
+      "size": 7909
     },
     {
       "path": "tests/test_export_python_payload_ownership.py",
