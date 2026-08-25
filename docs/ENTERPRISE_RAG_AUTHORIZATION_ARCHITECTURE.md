@@ -1,6 +1,6 @@
 # 纳川企业级 RAG 全链路权限架构
 
-> 状态：RAG-ACL-001 身份边界、RAG-ACL-002 本地 metadata/outbox、RAG-ACL-003 安全写入规划/隔离暂存、RAG-ACL-004 本地授权门面与 RAG-ACL-005 权限感知检索代理纵切已实现；真实 ReBAC/ABAC/向量/加密正文后端、生成 DLP、撤权同步、PostgreSQL RLS 与真实验收仍未实现，不得宣称企业级权限已经上线
+> 状态：RAG-ACL-001 身份边界至 RAG-ACL-006 本地生成防护的六个纵切已实现；真实 ReBAC/ABAC/向量/加密正文/DLP 后端、撤权同步、PostgreSQL RLS 与真实验收仍未实现，不得宣称企业级权限已经上线
 > 日期：2026-08-24
 > 适用范围：纳川团队版、企业版、多租户云同步和外部知识源同步
 
@@ -296,7 +296,7 @@ kb_v2_audit_decisions
 3. **RAG-ACL-003：安全写入（本地规划/隔离暂存纵切已完成）。** `EnterpriseSecureIngestPlanner` 固定可信 tenant/source/version/epoch，跨边界快照只返回无正文/无元数据的 quarantined 计划；先按 `policy_id + classification + acl_digest` 切连续权限域，再在域内无重叠分片，一个源快照的多域用同一 corpus epoch/outbox 事务原子暂存。暂存前重算 plan/payload 哈希闭包，正文只在瞬时 payload 中、不进 SQLite；派生物继承来源最高密级，不同 policy/epoch 在授权编译器可证明交集前一律隔离。连接器 ACL 同版本证明、加密对象写入、恶意内容扫描、向量派生及 searchable 激活仍未完成。
 4. **RAG-ACL-004：授权门面（本地组合/收据纵切已完成）。** `EnterpriseAuthorizationFacade` 只接收冻结 `EnterpriseRequestContext` 和租户/策略版本绑定资源；跨租户或 epoch 不一致不调用策略引擎即拒绝。关系与属性批量结果必须精确闭合集合并绑定同一 `policy_id + policy_epoch`，两者交集才允许，显式 deny 优先；异常/超时返回 `authz_dependency_unavailable`，缺项/多项/旧策略返回 `authz_component_invalid`。允许义务去重合并，拒绝时不透传允许义务；主体/会话/权限范围用受保护 audit key 做 HMAC 指纹，决策收据不含明文主体。真实 OpenFGA/OPA、密钥托管、持久审计与生产延迟验收仍未实现。
 5. **RAG-ACL-005：权限感知检索（本地代理纵切已完成）。** `EnterprisePermissionAwareRetriever` 只把可信 context 的 tenant 传入候选源，候选回传跨 tenant、分页重复或游标循环即熔断；按受限预算超量召回，逐页调用 ACL-004，对 allow 候选才向内容读取器请求正文，结果不足继续翻页。内容返回必须与授权 ID 闭包、tenant、索引 hash 和正文实算 hash 精确一致；仅授权正文可进入重排器，重排结果必须是完整排列，不能增删 ID。授权正文对象自身冻结并复核 hash，引用返回前重新按当前 epoch 授权；故障只返回空/通用不足，不读取未授权正文。真实向量库租户硬分区、加密对象读取、searchable 激活、外部重排路由与 API E2E 仍未实现。
-6. **RAG-ACL-006：生成防护。** 上下文清单、模型分级路由、输出 DLP、引用复核和策略感知缓存。
+6. **RAG-ACL-006：生成防护（本地清单/门面纵切已完成）。** `EnterpriseGenerationGuard` 在生成前重新授权全部上下文，按最高密级、region、`local_model_only`、`no_training` 等义务校验冻结模型路由；不认识的义务拒绝。逐片上下文 DLP 后分别绑定原文 hash 与准备态 hash，授权主体范围、policy/corpus epoch、query、完整片段清单、DLP 版本、路由全策略和义务用受保护 audit key 生成 HMAC manifest。输出释放前复核 manifest/准备态闭包、全部曾参与生成的上下文和引用，随后执行输出 DLP/推断风险判定；脱敏后的最终字节、引用和 DLP 版本再生成 HMAC 回执。真实 DLP/推断检测器、模型调用适配、策略感知缓存、生产密钥托管与 API E2E 仍未实现。
 7. **RAG-ACL-007：撤权与同步。** 单调 epoch、outbox、范围 fence、连接器漂移检测和恢复审计。
 8. **RAG-ACL-008：真实验收。** 多租户对抗、撤权并发、故障演练、长稳和独立安全评审。
 
