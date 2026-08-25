@@ -89,6 +89,11 @@ def main() -> int:
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--provider", choices=sorted(_PROVIDERS), required=True)
     parser.add_argument("--prompt", default="请只回复：连接成功")
+    parser.add_argument(
+        "--connection-only",
+        action="store_true",
+        help="Stop after exactly one provider connection probe; never submit a first turn.",
+    )
     parser.add_argument("--receipt", type=Path, required=True)
     args = parser.parse_args()
     stage = "initialize"
@@ -154,6 +159,23 @@ def main() -> int:
                     retry_safe=False,
                 )
             model = str(connection["models"][0])
+            if args.connection_only:
+                receipt = {
+                    "schema": "nachuan.installed-subscription-connection-probe.v1",
+                    "provider": args.provider,
+                    "model": model,
+                    "connection_verified": True,
+                    "first_turn_attempted": False,
+                    "connection_retained": True,
+                    "verified_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                }
+                _write_receipt(args.receipt, receipt)
+                print(
+                    "[installed-subscription-first-turn] OK "
+                    f"provider={receipt['provider']} model={receipt['model']} "
+                    "connection_only=true"
+                )
+                return 0
             stage = "first_turn"
             completion = client.post(
                 f"{gateway}/v1/chat/completions",
@@ -211,6 +233,7 @@ def main() -> int:
             "error_code": code,
             "submission_outcome": submission_outcome,
             "retry_safe": retry_safe,
+            "connection_only": bool(args.connection_only),
             "verified_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         }
         try:

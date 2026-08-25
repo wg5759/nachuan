@@ -63,7 +63,14 @@ class _Client:
         return _Response(self.completion)
 
 
-def _run(monkeypatch, tmp_path, client: _Client, *, prompt="PRIVATE_PROMPT"):
+def _run(
+    monkeypatch,
+    tmp_path,
+    client: _Client,
+    *,
+    prompt="PRIVATE_PROMPT",
+    connection_only: bool = False,
+):
     receipt = tmp_path / "receipt.json"
     monkeypatch.setattr(
         acceptance,
@@ -71,10 +78,7 @@ def _run(monkeypatch, tmp_path, client: _Client, *, prompt="PRIVATE_PROMPT"):
         lambda _path: SimpleNamespace(runtime_key="runtime", approval_key="approval"),
     )
     monkeypatch.setattr(acceptance.httpx, "Client", lambda **_kwargs: client)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
+    argv = [
             "installed_subscription_first_turn.py",
             "--data-dir",
             str(tmp_path / "data"),
@@ -84,8 +88,10 @@ def _run(monkeypatch, tmp_path, client: _Client, *, prompt="PRIVATE_PROMPT"):
             prompt,
             "--receipt",
             str(receipt),
-        ],
-    )
+        ]
+    if connection_only:
+        argv.append("--connection-only")
+    monkeypatch.setattr(sys, "argv", argv)
     return acceptance.main(), json.loads(receipt.read_text(encoding="utf-8"))
 
 
@@ -151,3 +157,27 @@ def test_success_receipt_contains_hashes_and_roster_proof_not_plaintext(
     encoded = json.dumps(receipt)
     assert "PRIVATE_PROMPT" not in encoded
     assert "PRIVATE_REPLY" not in encoded
+
+
+def test_connection_only_success_stops_before_first_turn(monkeypatch, tmp_path) -> None:
+    client = _Client(
+        connection={"ok": True, "models": ["kimi-code-subscription"]},
+        completion={
+            "choices": [{"message": {"content": "MUST_NOT_BE_REQUESTED"}}]
+        },
+        roster={"data": [{"id": "kimi-code-subscription"}]},
+    )
+
+    result, receipt = _run(
+        monkeypatch,
+        tmp_path,
+        client,
+        connection_only=True,
+    )
+
+    assert result == 0
+    assert receipt["schema"] == "nachuan.installed-subscription-connection-probe.v1"
+    assert receipt["connection_verified"] is True
+    assert receipt["first_turn_attempted"] is False
+    assert [method for method, _url in client.calls] == ["GET", "POST"]
+    assert "MUST_NOT_BE_REQUESTED" not in json.dumps(receipt)

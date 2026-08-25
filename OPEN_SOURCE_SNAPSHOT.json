@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260825-45",
+  "candidate_id": "nachuan-source-alpha-20260825-46",
   "file_count": 874,
   "files": [
     {
@@ -2959,8 +2959,8 @@
     },
     {
       "path": "scripts/installed_subscription_first_turn.py",
-      "sha256": "72b3d694dbdcdede239a4830cbeeda021e5ba93fd57346572a9475a8dcb3a5e0",
-      "size": 8509
+      "sha256": "b68add7b960ddc3803e587829f3fedd4c7d6025765e976e8e58361b4e6823da3",
+      "size": 9543
     },
     {
       "path": "scripts/kb_doctor.py",
@@ -3599,8 +3599,8 @@
     },
     {
       "path": "tests/test_installed_subscription_first_turn.py",
-      "sha256": "69b7a3a5a1614d4a42492cf3b58a66af2a6d9cc7434cd9cab220a65efd7f90d0",
-      "size": 4990
+      "sha256": "5fdca922cd7ce29e3d5a796419682b603f7c1e6253139d29e650d8dd20e4f342",
+      "size": 5921
     },
     {
       "path": "tests/test_intent.py",
