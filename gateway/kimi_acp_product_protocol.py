@@ -42,7 +42,7 @@ class KimiAcpProtocolRequest:
     prompt: str
     cwd: str
     bound_version: str
-    requested_alias: str = "kimi-code/k3"
+    requested_alias: str = "kimi-code/kimi-for-coding"
     max_message_bytes: int = _MAX_MESSAGE_BYTES
     max_prompt_bytes: int = _MAX_PROMPT_BYTES
     max_output_bytes: int = _MAX_OUTPUT_BYTES

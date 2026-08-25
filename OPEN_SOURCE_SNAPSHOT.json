@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260825-41",
+  "candidate_id": "nachuan-source-alpha-20260825-42",
   "file_count": 870,
   "files": [
     {
@@ -2199,8 +2199,8 @@
     },
     {
       "path": "gateway/kimi_acp_product_protocol.py",
-      "sha256": "5871d3a9e98665fb66e2bb85a6c592952821324fbc2bad7c9401928764e794d5",
-      "size": 31832
+      "sha256": "5f3de49dd084760884341c4592db9c02da79be8140152e71ea8c23eeb4cad3f8",
+      "size": 31845
     },
     {
       "path": "gateway/kimi_release_manifest.py",
@@ -2374,8 +2374,8 @@
     },
     {
       "path": "gateway/providers/kimi_subscription.py",
-      "sha256": "7cc6650d915f7dc3f2f58519860d5943e794f2f83690a9b8713537bde5bf800a",
-      "size": 11718
+      "sha256": "f666c1a3bb0d8bfea7109f6fa6b14c0839af0f9fadb330305e9b40d95bb6f80d",
+      "size": 11744
     },
     {
       "path": "gateway/providers/openai_compat.py",
@@ -3604,8 +3604,8 @@
     },
     {
       "path": "tests/test_kimi_acp_product_protocol.py",
-      "sha256": "d1f780a09c9057460bf2d5f5cc9ef4951204ec8f17fcd043d54006950a5dd139",
-      "size": 39452
+      "sha256": "b17e4e9f3951ac14bb3346f2758145ff8dcfb4935fe2b88a29968b10189e887a",
+      "size": 39822
     },
     {
       "path": "tests/test_kimi_auth_probe_entrypoint.py",
@@ -4074,8 +4074,8 @@
     },
     {
       "path": "tests/test_subscription_actual_served.py",
-      "sha256": "0afc92066f9a869f0dd4d325b613aa40b3227a2835e32591483f25e3538e3c89",
-      "size": 27880
+      "sha256": "8b94ec932d7ee84d3c28e36f3c448adf3cc85a5dfafd367da7f5aa168f63ae72",
+      "size": 27928
     },
     {
       "path": "tests/test_subscription_cli_config.py",

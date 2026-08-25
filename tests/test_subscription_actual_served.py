@@ -279,7 +279,10 @@ class TestProviderActualServedReceipt:
         )
         receipt = provider.actual_served_receipt()
         assert receipt == _UNPROVEN_KIMI
-        assert receipt["model"] not in {"kimi-code/k3", "kimi-code-subscription"}
+        assert receipt["model"] not in {
+            "kimi-code/kimi-for-coding",
+            "kimi-code-subscription",
+        }
 
 
 class _ProbeOkProvider:

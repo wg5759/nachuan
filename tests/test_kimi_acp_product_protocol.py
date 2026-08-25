@@ -26,7 +26,17 @@ def _line(value: object) -> bytes:
     )
 
 
-def _model_options(current: str = "kimi-code/k3") -> list[dict[str, object]]:
+def test_default_alias_matches_current_kimi_code_oauth_projection(tmp_path: Path) -> None:
+    request = KimiAcpProtocolRequest(
+        prompt="probe",
+        cwd=str(tmp_path.resolve()),
+        bound_version="0.27.0",
+    )
+
+    assert request.requested_alias == "kimi-code/kimi-for-coding"
+
+
+def _model_options(current: str = "kimi-code/kimi-for-coding") -> list[dict[str, object]]:
     return [
         {
             "id": "model",
@@ -35,7 +45,7 @@ def _model_options(current: str = "kimi-code/k3") -> list[dict[str, object]]:
             "type": "select",
             "currentValue": current,
             "options": [
-                {"value": "kimi-code/k3", "name": "Kimi K3"},
+                {"value": "kimi-code/kimi-for-coding", "name": "Kimi for Coding"},
                 {"value": "other", "name": "Other"},
             ],
         }
@@ -189,7 +199,7 @@ def test_success_transcript_is_exact_and_prompt_only_enters_session_prompt(
     assert result.text == "hello world"
     assert result.session_id == "session-0123456789abcdef"
     assert result.stop_reason == "end_turn"
-    assert result.requested_alias == "kimi-code/k3"
+    assert result.requested_alias == "kimi-code/kimi-for-coding"
     assert result.actual_served_model is None
     assert channel.input_closed is True
     sent = [json.loads(payload) for payload in channel.sent]
@@ -223,7 +233,7 @@ def test_success_transcript_is_exact_and_prompt_only_enters_session_prompt(
             "params": {
                 "sessionId": "session-0123456789abcdef",
                 "configId": "model",
-                "value": "kimi-code/k3",
+                "value": "kimi-code/kimi-for-coding",
             },
         },
         {
@@ -927,7 +937,7 @@ def test_one_model_selector_among_profiled_non_model_options_is_accepted(
         _ScriptedChannel(messages),
     )
 
-    assert result.requested_alias == "kimi-code/k3"
+    assert result.requested_alias == "kimi-code/kimi-for-coding"
     assert result.actual_served_model is None
 
 

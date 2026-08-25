@@ -78,7 +78,7 @@ _ALLOWED_ROLES = frozenset({"system", "developer", "user", "assistant"})
 
 # Kimi Code 0.27 ACP 的 initialize / session/new / session/prompt 响应精确键集
 # （gateway/kimi_acp_product_protocol.py 闭管道校验）不含服役型号字段；
-# configOptions 里的 model 只是请求别名 kimi-code/k3 的回显确认，不是证据。
+# configOptions 里的 model 只是请求别名 kimi-code/kimi-for-coding 的回显确认，不是证据。
 _ACTUAL_SERVED_RECEIPT: Final = {
     "status": "unproven",
     "model": None,
@@ -243,7 +243,7 @@ class KimiSubscriptionProvider(ChatProvider):
 
         The ACP prompt response carries only ``stopReason``; no served-model
         field exists on the wire, so this stays ``unproven`` and never echoes
-        the internal ``kimi-code/k3`` request alias as evidence.
+        the internal ``kimi-code/kimi-for-coding`` request alias as evidence.
         """
 
         return dict(_ACTUAL_SERVED_RECEIPT)
