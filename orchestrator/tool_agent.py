@@ -36,6 +36,7 @@ from gateway.runtime_profile import RuntimeCapability, current_runtime_profile
 from gateway.schemas import ChatCompletionRequest
 from orchestrator import skills
 from orchestrator.approval import escapes_workdir, is_protected_path, reads_secret
+from orchestrator.plugin_kernel import PluginKernel
 from orchestrator.workflows.common import route_receipt
 from orchestrator.workspace_guard import WorkspaceBoundaryError, resolve_workspace
 
@@ -80,6 +81,36 @@ _DISABLED_HOST_BROWSER_TOOLS = frozenset({
 
 # 所有已注册工具名（供 A1 未知工具纠错回喂用；execute_tool 之外唯一权威来源）。
 _TOOL_NAMES = frozenset(t["function"]["name"] for t in TOOLS)
+_PLUGIN_MIGRATED_TOOL_NAMES = frozenset({"list_skills", "load_skill"})
+
+
+def _router_plugin_kernel(router: Any) -> PluginKernel | None:
+    if router is None:
+        return None
+    try:
+        candidate = getattr(router, "plugin_kernel", None)
+    except Exception:  # noqa: BLE001 -- optional legacy router seam
+        return None
+    return candidate if isinstance(candidate, PluginKernel) else None
+
+
+def _runtime_tools(router: Any) -> list[dict[str, Any]]:
+    """Project legacy schemas plus the exact tools active in this Router kernel."""
+
+    kernel = _router_plugin_kernel(router)
+    if kernel is None:
+        return list(TOOLS)
+    legacy = [
+        item
+        for item in TOOLS
+        if item["function"]["name"] not in _PLUGIN_MIGRATED_TOOL_NAMES
+    ]
+    plugin_schemas = list(kernel.tool_schemas())
+    legacy_names = {item["function"]["name"] for item in legacy}
+    plugin_names = [item["function"]["name"] for item in plugin_schemas]
+    if len(plugin_names) != len(set(plugin_names)) or legacy_names & set(plugin_names):
+        raise RuntimeError("plugin tool schema conflicts with the legacy closed set")
+    return [*legacy, *plugin_schemas]
 
 # agent 累积上下文压缩：保留最近这么多条消息不压（含最新一步），更早的 tool 结果才压。
 _KEEP_RECENT = 4
@@ -867,6 +898,17 @@ async def execute_tool(
             "⛔ 宿主浏览器自动化已关闭：当前浏览器共享机主登录态，"
             "需独立浏览器配置与精确 origin/action capability 后才能启用。"
         )
+    plugin_kernel = _router_plugin_kernel(router)
+    if name in _PLUGIN_MIGRATED_TOOL_NAMES and plugin_kernel is not None:
+        if not plugin_kernel.tools.has_provider(name):
+            return f"未知工具：{name}。该插件工具当前未挂载或已撤销。"
+        lease = plugin_kernel.borrow_tool(name)
+        try:
+            return await lease.invoke(args)
+        except Exception as exc:  # noqa: BLE001 -- plugin layer already sanitizes cause
+            return f"工具 {name} 出错：{exc}"
+        finally:
+            lease.release()
     if name in _WORKSPACE_TOUCHING_TOOLS:
         if not current_runtime_profile().allows(
             RuntimeCapability.WORKSPACE_FILE_TOOLS
@@ -1152,8 +1194,9 @@ async def run_tool_agent(
     )
     if needs_workspace:
         workdir = str(resolve_workspace(workdir))
-    tools = list(TOOLS) if allow is None else [
-        t for t in TOOLS if t["function"]["name"] in allow
+    runtime_tools = _runtime_tools(router)
+    tools = runtime_tools if allow is None else [
+        t for t in runtime_tools if t["function"]["name"] in allow
     ]
     advisory_only = allow is not None and not tools
     sys = (

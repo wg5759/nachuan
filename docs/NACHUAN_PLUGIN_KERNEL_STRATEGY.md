@@ -1,7 +1,7 @@
 # 纳川插件内核策略：吸收 DeepSeek Harness“一切皆插件”的精华
 
-> 状态：架构提案，尚未实施
-> 日期：2026-08-24
+> 状态：PK-001～PK-003 最小纵切已实施；PK-004～PK-008 待推进
+> 日期：2026-08-26
 > 目标：在不破坏纳川现有安全账本、真实渠道和安装发行边界的前提下，把模型、工具、协作、知识、渠道和 UI 变成可组合能力
 
 ## 1. 最终判断
@@ -240,17 +240,21 @@ Bundle 是签名的插件组合，不复制源码：
 
 ## 8. 当前实现与剩余差距
 
-截至 2026-08-24，PK-001/PK-002 最小纵切已经落地：`orchestrator/plugin_kernel.py`
+截至 2026-08-26，PK-001/PK-002/PK-003 最小纵切已经落地：`orchestrator/plugin_kernel.py`
 提供严格 manifest、service/event registry、能力票据、借用租约、LIFO effect 回收、
 失败回滚、卸载和 quarantine；`EchoProvider` 已通过 `provider.factory.echo` 内置插件
-接入 legacy Router。Router reload 会复用同一内核，关闭时释放借用和内核，旧接口保持兼容。
+接入 legacy Router。`ToolRegistry` 新增闭集 schema、精确 `tool.execute:<name>` 能力、
+逐次验票、调用借用和卸载撤销；现有六份受审 Skill 已冻结为不带执行入口的
+`nachuan.skill-bundle.v1` 数据服务，`list_skills/load_skill` 由同一 bundle 工具插件提供。
+legacy Tool Agent 只从当前 Router 内核读取这两个工具的实时 schema 和执行入口；插件卸载后
+模型 schema 与执行能力同时消失。Router reload 会复用同一内核，关闭时按工具→bundle→provider
+逆序释放借用和内核，旧接口保持兼容。
 
 仍待统一迁移的部分包括：
 
 - 目前只有无外网、无密钥的 `EchoProvider` 完成插件纵切；其他 provider 仍由 Router 旧构造路径管理。
-- Skills 已用 `trusted-manifest.json` 固定闭集，这是来源信任雏形，但缺统一生命周期和能力票据。
 - MCP registry 有注册表外形，但生产能力被整体禁用，尚无签名、隔离和权限合同。
-- `TOOLS` 是全局静态列表，工具实现和分发集中在 `tool_agent.py`。
+- 除 `list_skills/load_skill` 外，其他 `TOOLS` 仍是 legacy 静态列表，工具实现和分发仍集中在 `tool_agent.py`。
 - 工作流在 `gateway/app.py` 中逐个直接 import，新增流程必须改 Gateway。
 - Renderer 工作区和设置面板大多硬编码，尚无签名 UI slot。
 - 大量 durable ledger 已很强，但会话、工具、插件和渠道尚未汇入统一事件模型。
@@ -281,11 +285,14 @@ Bundle 是签名的插件组合，不复制源码：
 - 插件卸载后模型目录立即撤销；
 - 不涉及密钥和外网，风险最低。
 
-### PK-003：工具与 Skill
+### PK-003：工具与 Skill（已完成最小纵切）
 
-- 把一个只读工具迁入 `ctx.tools`；
-- Skill 变成 bundle 型插件，不执行代码；
-- 现有 trusted manifest 继续作为发行来源门。
+- `list_skills/load_skill` 已迁入内核 `ToolRegistry`，通过 `PluginContext.register_tool` 挂载；
+- 工具注册必须拥有精确 `tool.execute:<name>` 能力，每次调用重新验票，借用期间禁止卸载；
+- Skill 已变成冻结数据 bundle，不含 Python/JS entrypoint，不执行 `SKILL.md` 中的代码或命令；
+- 现有 `trusted-manifest.json` 及每份 Skill SHA-256 继续作为发行来源门，篡改后 bundle 与工具均不挂载；
+- 聚焦核心25项、相邻工具/Router/Store50项、管理/目录63项、依赖边界13项与工具/Skill/打包组合118项分区通过；去重后15个文件共224个用例均有绿色终态，wheel 合同确认携带 `plugin_kernel.py/tool_plugins.py/provider_plugins.py`。
+- 本机另发现未改动公开400f8fb也可复现的 `ConversationStore` 冷启动 WAL 锁等待；它发生在插件执行前，已单列为 SQLite 稳定性债务，不能拿来否定或冒充 PK-003 证据。
 
 ### PK-004：工作流与事件日志
 

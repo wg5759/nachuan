@@ -1,6 +1,6 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260826-49",
-  "file_count": 874,
+  "candidate_id": "nachuan-source-alpha-20260826-50",
+  "file_count": 876,
   "files": [
     {
       "path": ".claude/commands/xreview.md",
@@ -1884,8 +1884,8 @@
     },
     {
       "path": "docs/NACHUAN_PLUGIN_KERNEL_STRATEGY.md",
-      "sha256": "2e687d66b4307f743c12d006a9f4d3fc342bb07f9c7b7d50af6f1f77de91aadc",
-      "size": 16883
+      "sha256": "f4c47b8538bcbca0cd0655c61e5a6a46d663a0281c87e006986295d8317519cd",
+      "size": 18171
     },
     {
       "path": "docs/OPEN_SOURCE_STRATEGY_OPENCLAW_COMPARISON.md",
@@ -2339,8 +2339,8 @@
     },
     {
       "path": "gateway/provider_plugins.py",
-      "sha256": "155cafa81c1bf9e9486352838a34885bcc1fae2f5c7ebd06bb8e0886067b193b",
-      "size": 2032
+      "sha256": "f73acdd41208c43b796f3c16c410e1e1894ecf1d0d95c661934f8b043c5e21d7",
+      "size": 4775
     },
     {
       "path": "gateway/providers/__init__.py",
@@ -2689,8 +2689,8 @@
     },
     {
       "path": "orchestrator/plugin_kernel.py",
-      "sha256": "293efd1863ee5ec0ed796ec6f2fd20570d498d74d7942759554247218ad1f719",
-      "size": 20552
+      "sha256": "a0827da47e397cdad285c3d88dbee2c0b82f6d7dfde38986cafda94a8fe93378",
+      "size": 32740
     },
     {
       "path": "orchestrator/review_gate.py",
@@ -2734,8 +2734,13 @@
     },
     {
       "path": "orchestrator/tool_agent.py",
-      "sha256": "8bb101bf8ae144b48b9db90d7489fb3e6869fb5138f048483f1449040b50591c",
-      "size": 85658
+      "sha256": "56af51b6dd92ff352bb6b9c79df27e1f45243a2c065688ea0990100e7d9c266d",
+      "size": 87497
+    },
+    {
+      "path": "orchestrator/tool_plugins.py",
+      "sha256": "6c1906b0d2b092891dedce8d6bf04fd1c544d70b8a0839b9002ff800137fb1ac",
+      "size": 3557
     },
     {
       "path": "orchestrator/translate.py",
@@ -3929,8 +3934,8 @@
     },
     {
       "path": "tests/test_pip_packaging.py",
-      "sha256": "db4e53b1836ae4e813410debaeae3c471df1c42a5cf205a56c357683786c1c97",
-      "size": 12838
+      "sha256": "12c149757507c76d9d05e1d42aea3ce6e25b354cd568e33f21442a912c75cf59",
+      "size": 13003
     },
     {
       "path": "tests/test_plugin_kernel.py",
@@ -3989,8 +3994,8 @@
     },
     {
       "path": "tests/test_provider_plugin_echo.py",
-      "sha256": "dfe005988959f90b6feeb1bee7c0ec6a3d30e227e90600cf718412eaaed262ab",
-      "size": 2552
+      "sha256": "65aff3294217283cafe950b8f1bcbf6867a8308c1f61911d74973d349cc5ec97",
+      "size": 2972
     },
     {
       "path": "tests/test_providers.py",
@@ -4161,6 +4166,11 @@
       "path": "tests/test_tool_path_containment.py",
       "sha256": "ed67cfb4cce6353c976ed634a7fb8aed24e4b4359512e65282d87ffb7c2f36f3",
       "size": 528
+    },
+    {
+      "path": "tests/test_tool_skill_plugins.py",
+      "sha256": "2efcf08a02e4bfec4874b70f4a6ed70385c825c6fb4477fd2868470b5885bcbb",
+      "size": 6000
     },
     {
       "path": "tests/test_translate.py",

@@ -7,6 +7,8 @@ import pytest
 
 from gateway.provider_plugins import (
     BUILTIN_ECHO_MANIFEST,
+    BUILTIN_LIST_SKILLS_MANIFEST,
+    BUILTIN_SKILL_BUNDLE_MANIFEST,
     build_builtin_provider_kernel,
 )
 from gateway.router import Router
@@ -45,6 +47,8 @@ async def test_router_builds_echo_from_plugin_service_and_holds_lifecycle_lease(
 
     await router.aclose()
     await kernel.unmount(BUILTIN_ECHO_MANIFEST.plugin_id)
+    assert BUILTIN_ECHO_MANIFEST.plugin_id not in kernel.active_plugin_ids()
+    await kernel.aclose()
     assert kernel.active_plugin_ids() == ()
 
 
@@ -52,7 +56,11 @@ async def test_router_builds_echo_from_plugin_service_and_holds_lifecycle_lease(
 async def test_default_router_owns_and_closes_its_builtin_plugin_kernel():
     router = Router(models_config={})
     owned_kernel = router.plugin_kernel
-    assert owned_kernel.active_plugin_ids() == (BUILTIN_ECHO_MANIFEST.plugin_id,)
+    assert owned_kernel.active_plugin_ids() == (
+        BUILTIN_ECHO_MANIFEST.plugin_id,
+        BUILTIN_SKILL_BUNDLE_MANIFEST.plugin_id,
+        BUILTIN_LIST_SKILLS_MANIFEST.plugin_id,
+    )
 
     await router.aclose()
 
@@ -71,10 +79,15 @@ async def test_router_reload_reuses_kernel_and_keeps_old_generation_leased_until
     replacement = router.resolve("echo")
     assert replacement is not None
     assert replacement.provider is not original.provider
-    assert kernel.active_plugin_ids() == (BUILTIN_ECHO_MANIFEST.plugin_id,)
+    assert kernel.active_plugin_ids() == (
+        BUILTIN_ECHO_MANIFEST.plugin_id,
+        BUILTIN_SKILL_BUNDLE_MANIFEST.plugin_id,
+        BUILTIN_LIST_SKILLS_MANIFEST.plugin_id,
+    )
     with pytest.raises(PluginInUseError):
         await kernel.unmount(BUILTIN_ECHO_MANIFEST.plugin_id)
 
     await router.aclose()
     await kernel.unmount(BUILTIN_ECHO_MANIFEST.plugin_id)
+    await kernel.aclose()
     assert kernel.active_plugin_ids() == ()
