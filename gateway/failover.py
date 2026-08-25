@@ -344,22 +344,16 @@ def _provider_chat_attempt_budget(
 
 
 def _provider_chat_total_budget(
-    resolved_chain: list[tuple[str, object | None]],
+    provider: object,
     explicit_timeout: float | None,
 ) -> float:
     if explicit_timeout is not None:
         return _timeout_or_default(explicit_timeout, DEFAULT_TOTAL_TIMEOUT_SEC)
-    declared = [
-        timeout
-        for _mid, route in resolved_chain
-        if route is not None
-        for timeout in [_declared_provider_chat_timeout(route.provider)]
-        if timeout is not None
-    ]
+    declared = _declared_provider_chat_timeout(provider)
     return max(
         DEFAULT_TOTAL_TIMEOUT_SEC,
-        max(declared) + _DECLARED_CHAT_TOTAL_GRACE_SEC
-        if declared
+        declared + _DECLARED_CHAT_TOTAL_GRACE_SEC
+        if declared is not None
         else DEFAULT_TOTAL_TIMEOUT_SEC,
     )
 
@@ -376,27 +370,26 @@ def _provider_stream_budget(
 
 
 def _provider_stream_total_budget(
-    resolved_chain: list[tuple[str, object | None]],
+    provider: object,
     explicit_timeout: float | None,
 ) -> float:
     if explicit_timeout is not None:
         return _timeout_or_default(explicit_timeout, DEFAULT_STREAM_TOTAL_TIMEOUT_SEC)
-    declared: list[float] = []
-    for _mid, route in resolved_chain:
-        if route is None:
-            continue
-        direct = _declared_provider_timeout(route.provider, "stream_total_timeout_s")
-        attempt = _declared_provider_timeout(
-            route.provider,
-            "stream_attempt_timeout_s",
-        )
-        if direct is not None:
-            declared.append(direct)
-        elif attempt is not None:
-            declared.append(attempt + _DECLARED_CHAT_TOTAL_GRACE_SEC)
+    direct = _declared_provider_timeout(provider, "stream_total_timeout_s")
+    attempt = _declared_provider_timeout(
+        provider,
+        "stream_attempt_timeout_s",
+    )
+    declared = (
+        direct
+        if direct is not None
+        else attempt + _DECLARED_CHAT_TOTAL_GRACE_SEC
+        if attempt is not None
+        else None
+    )
     return max(
         DEFAULT_STREAM_TOTAL_TIMEOUT_SEC,
-        max(declared) if declared else DEFAULT_STREAM_TOTAL_TIMEOUT_SEC,
+        declared if declared is not None else DEFAULT_STREAM_TOTAL_TIMEOUT_SEC,
     )
 
 
@@ -612,21 +605,24 @@ async def chat_with_fallback(
     从机制上避免同一用户操作被模型商重复执行或收费。
     """
     chain = fallback_chain(req.model, req)
-    resolved_chain = [(mid, router.resolve(mid)) for mid in chain]
-    total_budget = _provider_chat_total_budget(
-        resolved_chain,
-        total_timeout,
-    )
+    total_budget = _timeout_or_default(total_timeout, DEFAULT_TOTAL_TIMEOUT_SEC)
     req = _maybe_compress_long(req)  # 超长输入：有损压冗余消息省 token（不动用户问题）
     last: ProviderError | None = None
-    deadline = time.monotonic() + total_budget
+    operation_started = time.monotonic()
+    deadline = operation_started + total_budget
     ledger = await resolve_provider_call_ledger_durable(provider_call_ledger)
     context = call_context or current_provider_call_context()
     attempt_number = 0
-    for i, (mid, route) in enumerate(resolved_chain):
+    for i, mid in enumerate(chain):
+        route = router.resolve(mid)
         if route is None:
             continue
         provider = route.provider
+        if total_timeout is None:
+            deadline = max(
+                deadline,
+                operation_started + _provider_chat_total_budget(provider, None),
+            )
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             last = ProviderError("消息渠道总延迟预算已耗尽", status_code=504)
@@ -787,19 +783,25 @@ async def stream_with_fallback(
     """
 
     chain = fallback_chain(req.model, req)
-    resolved_chain = [(mid, router.resolve(mid)) for mid in chain]
-    total_budget = _provider_stream_total_budget(resolved_chain, total_timeout)
+    total_budget = _timeout_or_default(total_timeout, DEFAULT_STREAM_TOTAL_TIMEOUT_SEC)
     req = _maybe_compress_long(req)  # 超长输入：有损压冗余消息省 token（不动用户问题）
     last: ProviderError | None = None
     last_type = "provider_error"
-    deadline = time.monotonic() + total_budget
+    operation_started = time.monotonic()
+    deadline = operation_started + total_budget
     ledger = await resolve_provider_call_ledger_durable(provider_call_ledger)
     context = call_context or current_provider_call_context()
     attempt_number = 0
-    for i, (mid, route) in enumerate(resolved_chain):
+    for i, mid in enumerate(chain):
+        route = router.resolve(mid)
         if route is None:
             continue
         provider = route.provider
+        if total_timeout is None:
+            deadline = max(
+                deadline,
+                operation_started + _provider_stream_total_budget(provider, None),
+            )
         # Freeze scalar attribution immediately after resolution.  A long
         # first-token wait must not let an in-place hot reload rewrite the
         # provider/upstream/tier later recorded for this invocation.

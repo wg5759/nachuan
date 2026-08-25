@@ -213,7 +213,7 @@ def test_chat_timeout_budget_contract_is_bounded_and_explicit_values_win(
         explicit_attempt,
     )
     total = failover._provider_chat_total_budget(
-        [("model", route)],
+        route.provider,
         explicit_total,
     )
 
