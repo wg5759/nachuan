@@ -6,6 +6,16 @@ import time
 import pytest
 
 
+def _wait_until_monotonic(deadline: float) -> None:
+    """Wait through early wakeups so deadline tests are deterministic on Windows."""
+
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        threading.Event().wait(remaining)
+
+
 class _Storage:
     def __init__(
         self,
@@ -201,9 +211,7 @@ def test_deadline_aware_storage_keeps_finish_wallclock_bounded() -> None:
         ) -> bool:
             self.finish_calls += 1
             self.finish_deadlines.append(deadline_monotonic)
-            remaining = deadline_monotonic - time.monotonic()
-            if remaining > 0:
-                threading.Event().wait(remaining)
+            _wait_until_monotonic(deadline_monotonic)
             raise TimeoutError("storage deadline reached")
 
     storage = DeadlineStorage()
@@ -231,9 +239,7 @@ def test_commit_returning_true_at_the_deadline_is_not_reported_healthy() -> None
         ) -> bool:
             self.finish_calls += 1
             self.finish_deadlines.append(deadline_monotonic)
-            remaining = deadline_monotonic - time.monotonic()
-            if remaining > 0:
-                threading.Event().wait(remaining)
+            _wait_until_monotonic(deadline_monotonic)
             return True
 
     storage = LateCommitStorage()
@@ -268,9 +274,7 @@ def test_confirmation_cannot_reset_or_run_past_the_finish_deadline() -> None:
         ) -> bool:
             self.confirm_calls += 1
             self.confirm_deadlines.append(deadline_monotonic)
-            remaining = deadline_monotonic - time.monotonic()
-            if remaining > 0:
-                threading.Event().wait(remaining)
+            _wait_until_monotonic(deadline_monotonic)
             raise TimeoutError("confirmation deadline reached")
 
     storage = ConfirmationDeadlineStorage()
@@ -304,9 +308,7 @@ def test_confirmation_returning_true_at_the_deadline_is_not_reported_healthy() -
         ) -> bool:
             self.confirm_calls += 1
             self.confirm_deadlines.append(deadline_monotonic)
-            remaining = deadline_monotonic - time.monotonic()
-            if remaining > 0:
-                threading.Event().wait(remaining)
+            _wait_until_monotonic(deadline_monotonic)
             return True
 
     storage = LateConfirmationStorage()

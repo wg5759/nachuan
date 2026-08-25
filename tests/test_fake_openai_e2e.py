@@ -11,6 +11,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import pytest
+
 from gateway.connections import normalize_connection_candidate
 from scripts.fake_openai_e2e import MODEL_ID, REPLY
 
@@ -56,7 +58,11 @@ def _post_json(
         return exc.code, exc.read(), dict(exc.headers.items())
 
 
-def _start_server(tmp_path: Path) -> tuple[subprocess.Popen[str], int, Path]:
+def _start_server(
+    tmp_path: Path,
+    *,
+    chat_status: int = 200,
+) -> tuple[subprocess.Popen[str], int, Path]:
     port = _free_loopback_port()
     log_path = tmp_path / "fake-openai.jsonl"
     process = subprocess.Popen(
@@ -68,6 +74,8 @@ def _start_server(tmp_path: Path) -> tuple[subprocess.Popen[str], int, Path]:
             str(port),
             "--log",
             str(log_path),
+            "--chat-status",
+            str(chat_status),
         ],
         cwd=ROOT,
         stdin=subprocess.DEVNULL,
@@ -233,6 +241,34 @@ def test_stream_chat_returns_openai_sse_chunks_and_done(tmp_path: Path) -> None:
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
         },
     ]
+
+
+@pytest.mark.parametrize("chat_status", [400, 401, 403, 404, 429, 503, 504])
+def test_chat_failure_modes_are_deterministic_and_do_not_echo_prompt(
+    tmp_path: Path,
+    chat_status: int,
+) -> None:
+    prompt = "private prompt must not be echoed"
+    process, port, log_path = _start_server(tmp_path, chat_status=chat_status)
+    try:
+        status, body, headers = _post_json(
+            port,
+            "/v1/chat/completions",
+            {
+                "model": MODEL_ID,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+            },
+        )
+    finally:
+        _stop_server(process)
+
+    assert status == chat_status
+    assert headers["Content-Type"].startswith("application/json")
+    assert json.loads(body) == {
+        "error": {"message": "deterministic fixture failure"}
+    }
+    assert prompt not in log_path.read_text(encoding="utf-8")
 
 
 def test_jsonl_audit_log_contains_only_safe_request_metadata(tmp_path: Path) -> None:

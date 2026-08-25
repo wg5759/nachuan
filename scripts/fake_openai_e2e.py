@@ -26,9 +26,10 @@ def _json_bytes(payload: object) -> bytes:
 class _FakeOpenAIServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port: int, log_path: Path) -> None:
+    def __init__(self, port: int, log_path: Path, chat_status: int = 200) -> None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         self.log_path = log_path
+        self.chat_status = chat_status
         self._log_lock = threading.Lock()
         super().__init__(("127.0.0.1", port), _Handler)
 
@@ -92,6 +93,15 @@ class _Handler(BaseHTTPRequestHandler):
         self._audit(path=path, model=model, stream=stream)
         if requested_model != MODEL_ID:
             self._send_json(400, {"error": {"message": "unsupported request"}})
+            return
+        server = self.server
+        if not isinstance(server, _FakeOpenAIServer):
+            raise RuntimeError("unexpected server type")
+        if server.chat_status != 200:
+            self._send_json(
+                server.chat_status,
+                {"error": {"message": "deterministic fixture failure"}},
+            )
             return
         if stream:
             self._send_stream()
@@ -194,6 +204,12 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--log", type=Path, required=True)
+    parser.add_argument(
+        "--chat-status",
+        type=int,
+        default=200,
+        choices=(200, 400, 401, 403, 404, 429, 503, 504),
+    )
     return parser.parse_args()
 
 
@@ -203,7 +219,7 @@ def _raise_keyboard_interrupt(_signum: int, _frame: object) -> None:
 
 def main() -> int:
     args = _parse_args()
-    server = _FakeOpenAIServer(args.port, args.log)
+    server = _FakeOpenAIServer(args.port, args.log, args.chat_status)
     signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
     if hasattr(signal, "SIGBREAK"):
         signal.signal(signal.SIGBREAK, _raise_keyboard_interrupt)

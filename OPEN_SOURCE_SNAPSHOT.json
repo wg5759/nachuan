@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260825-34",
+  "candidate_id": "nachuan-source-alpha-20260825-35",
   "file_count": 853,
   "files": [
     {
@@ -2889,8 +2889,8 @@
     },
     {
       "path": "scripts/fake_openai_e2e.py",
-      "sha256": "bccd6118eb095e0cb559c511ceb1401a62daac91547fa1d07ae8606ec7fb9b1c",
-      "size": 7066
+      "sha256": "768e02ba637401f9046d6f16240c2db0cc5d6c0717b462b2cc556483ae40b94d",
+      "size": 7649
     },
     {
       "path": "scripts/healthcheck.py",
@@ -3159,8 +3159,8 @@
     },
     {
       "path": "tests/test_channel_delivery_claim.py",
-      "sha256": "02a3e9904ff5dcf1bc670fb5307071222682ba9c87dea65a640a5dd696c131af",
-      "size": 20990
+      "sha256": "12786333ef526d49d2350b3e049702a8864287b74a05cd3312f62f9942251b39",
+      "size": 20930
     },
     {
       "path": "tests/test_channel_media_idempotency_identity.py",
@@ -3369,8 +3369,8 @@
     },
     {
       "path": "tests/test_fake_openai_e2e.py",
-      "sha256": "2a51b6cf37c1048f116c895e5738917b7587df449f9e0fe9d5ea05b3192e6ebf",
-      "size": 9986
+      "sha256": "a71f9d6d104a56260a9d3719b8d9b5792582fba22ea66fe4de217383739a6bb7",
+      "size": 11019
     },
     {
       "path": "tests/test_feedback.py",
