@@ -1015,6 +1015,8 @@ def _run_acp_cli_process(
                 failure_code=(
                     "auth_required"
                     if exc.code == "auth_required"
+                    else "agent_rpc_error"
+                    if exc.code == "agent_rpc_error"
                     else None
                     if channel.timed_out
                     else "protocol_rejected"

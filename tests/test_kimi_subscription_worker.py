@@ -296,6 +296,32 @@ def test_worker_surfaces_only_stable_inner_failure_code(
     assert remote_detail not in repr(caught.value)
 
 
+def test_worker_preserves_agent_rpc_error_without_remote_detail(tmp_path: Path) -> None:
+    environment, _ = _environment(tmp_path)
+    result = KimiWorkerResult(
+        returncode=70,
+        text="REMOTE_MESSAGE_MUST_NOT_LEAK",
+        session_id="",
+        stop_reason="",
+        actual_served_model=None,
+        tool_activity_observed=False,
+        process_tree_exit_verified=True,
+        failure_code="agent_rpc_error",
+    )
+    worker = KimiSubscriptionWorker(
+        environment=environment,
+        runner=_Runner(result),
+    )
+
+    with pytest.raises(KimiSubscriptionError) as caught:
+        worker.invoke("PRIVATE_PROMPT_MUST_NOT_LEAK")
+
+    assert caught.value.code == "agent_rpc_error"
+    assert str(caught.value) == "agent_rpc_error"
+    assert "REMOTE_MESSAGE_MUST_NOT_LEAK" not in repr(caught.value)
+    assert "PRIVATE_PROMPT_MUST_NOT_LEAK" not in repr(caught.value)
+
+
 def test_binary_replacement_is_rejected_before_runner(tmp_path: Path) -> None:
     environment, executable = _environment(tmp_path)
     runner = _Runner(_success())

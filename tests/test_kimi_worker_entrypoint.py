@@ -534,7 +534,7 @@ def test_acp_product_error_becomes_prompt_free_cli_failure_code(
     assert remote_detail not in repr(caught.value)
 
 
-def test_non_auth_acp_product_error_folds_to_protocol_rejected(
+def test_agent_rpc_error_keeps_one_prompt_free_stable_failure_code(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -579,8 +579,8 @@ def test_non_auth_acp_product_error_folds_to_protocol_rejected(
         )
 
     assert caught.value.code == "protocol_rejected"
-    assert caught.value.failure_code == "protocol_rejected"
-    assert "agent_rpc_error" not in repr(caught.value)
+    assert caught.value.failure_code == "agent_rpc_error"
+    assert repr(caught.value) == "KimiCliProcessError('protocol_rejected')"
 
 
 def test_stderr_is_bounded_drained_and_never_becomes_model_output(

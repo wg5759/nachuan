@@ -1119,6 +1119,35 @@ async def test_named_single_provider_call_uses_the_same_ledger(tmp_path) -> None
     assert calls[0]["total_tokens"] == 4
 
 
+async def test_named_single_provider_persists_only_closed_ledger_error_type(
+    tmp_path,
+) -> None:
+    class Provider:
+        name = "kimi-code"
+
+        async def chat(self, _req, _upstream):  # noqa: ANN001
+            raise ProviderError(
+                "fixed public message",
+                status_code=503,
+                ledger_error_type="KimiSubscriptionProviderError.agent_rpc_error",
+            )
+
+    ledger = ProviderCallLedger(tmp_path / "usage.db", required=True)
+
+    with pytest.raises(ProviderError):
+        await chat_once_with_deadline(
+            Provider(),
+            _request("kimi-code-subscription"),
+            "kimi-code-subscription",
+            provider_call_ledger=ledger,
+            call_context=ProviderCallContext(role="admin.connection_connect"),
+        )
+
+    call = ledger.list_calls()[0]
+    assert call["status"] == "provider_error"
+    assert call["error_type"] == "KimiSubscriptionProviderError.agent_rpc_error"
+
+
 async def test_stream_provider_error_after_invocation_stops_before_fallback(
     tmp_path, monkeypatch
 ) -> None:

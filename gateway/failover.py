@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import math
 import os
+import re
 import time
 from typing import Any, AsyncIterator, Optional
 
@@ -43,6 +44,15 @@ GPT_BACKUP = "gpt-5.4"
 LONG_INPUT_CHARS = 400_000
 # 本身上下文/额度就大的模型，不因长度转走。
 _BIG_ENOUGH = {"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "codex-spark", "glm"}
+
+_LEDGER_ERROR_TYPE = re.compile(r"[A-Za-z][A-Za-z0-9_.:-]{0,127}\Z")
+
+
+def _closed_ledger_error_type(exc: BaseException) -> str:
+    candidate = getattr(exc, "ledger_error_type", None)
+    if isinstance(candidate, str) and _LEDGER_ERROR_TYPE.fullmatch(candidate):
+        return candidate
+    return type(exc).__name__[:128]
 
 
 def _env_timeout(name: str, default: float) -> float:
@@ -378,7 +388,7 @@ async def chat_once_with_deadline(
             error_type=(
                 _CHAT_SUBMISSION_OUTCOME_UNKNOWN
                 if _transport_may_have_submitted(exc)
-                else type(exc).__name__
+                else _closed_ledger_error_type(exc)
             ),
             error_message=str(exc),
         )
@@ -390,7 +400,7 @@ async def chat_once_with_deadline(
             error_type=(
                 _CHAT_SUBMISSION_OUTCOME_UNKNOWN
                 if _exception_chain_may_have_submitted(exc)
-                else type(exc).__name__
+                else _closed_ledger_error_type(exc)
             ),
             error_message=str(exc),
         )
@@ -909,7 +919,7 @@ async def stream_with_fallback(
                         error_type=(
                             _STREAM_SUBMISSION_OUTCOME_UNKNOWN
                             if _exception_chain_may_have_submitted(exc)
-                            else type(exc).__name__
+                            else _closed_ledger_error_type(exc)
                         ),
                         error_message=str(exc),
                     )

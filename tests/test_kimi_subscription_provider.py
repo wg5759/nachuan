@@ -271,6 +271,7 @@ async def test_worker_errors_are_stable_and_do_not_echo_sensitive_values(
     ("worker_code", "expected_reason"),
     [
         ("auth_required", "reauth_required"),
+        ("agent_rpc_error", "connector_unavailable"),
         ("protocol_rejected", "text_contract_rejected"),
         ("unknown_PRIVATE_PROMPT_sk-live", "connector_unavailable"),
     ],
@@ -302,6 +303,12 @@ async def test_worker_error_codes_map_to_a_closed_public_connection_reason(
     assert caught.value.reason_code == expected_reason
     assert str(caught.value) == "Kimi Code subscription turn is unavailable"
     assert worker_code not in str(caught.value)
+    if worker_code == "agent_rpc_error":
+        assert caught.value.diagnostic_code == "agent_rpc_error"
+        assert (
+            caught.value.ledger_error_type
+            == "KimiSubscriptionProviderError.agent_rpc_error"
+        )
 
 
 @pytest.mark.asyncio

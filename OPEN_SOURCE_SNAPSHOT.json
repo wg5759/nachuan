@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260825-46",
+  "candidate_id": "nachuan-source-alpha-20260825-47",
   "file_count": 874,
   "files": [
     {
@@ -164,8 +164,8 @@
     },
     {
       "path": "cli/kimi_worker_entrypoint.py",
-      "sha256": "ea59a0e0c1dc0930be7f2ced0932476bef2c46213ffa367806262f716b8adfd1",
-      "size": 51997
+      "sha256": "2d266ea6395ae7611e96fd1ea4a6579a208ed53f81e1dd89cf9eb72e1310cf2d",
+      "size": 52093
     },
     {
       "path": "cli/local_web_start.py",
@@ -2149,8 +2149,8 @@
     },
     {
       "path": "gateway/failover.py",
-      "sha256": "4fffd2806baec647c66b150732d02223927afce8fe52d21e7599b7a86a895deb",
-      "size": 44433
+      "sha256": "014310dda9c1521b132ae43cb30ae3a4b9dea48fddacebb56db6f5fb6cf79c17",
+      "size": 44805
     },
     {
       "path": "gateway/gateway_installation_control.py",
@@ -2219,8 +2219,8 @@
     },
     {
       "path": "gateway/kimi_subscription_worker.py",
-      "sha256": "598dd170b8c0923cb5d8d1f8167f3f8173b04566d932c70a66a4b649ad01c463",
-      "size": 14227
+      "sha256": "0405055ae59e5413a135228c992a83bcbbd5173236817a5ed1741c988a9fd365",
+      "size": 14254
     },
     {
       "path": "gateway/legacy_connections.py",
@@ -2354,8 +2354,8 @@
     },
     {
       "path": "gateway/providers/base.py",
-      "sha256": "f1cd50904833432a7a1c8f96ec80d3b52c1129764325b7c888e9408f6f7f9e05",
-      "size": 6265
+      "sha256": "df2629c55bd72785f853109b337a99ee361e6753b8ccc9a4002011872b20367f",
+      "size": 6593
     },
     {
       "path": "gateway/providers/claude_code.py",
@@ -2379,8 +2379,8 @@
     },
     {
       "path": "gateway/providers/kimi_subscription.py",
-      "sha256": "f666c1a3bb0d8bfea7109f6fa6b14c0839af0f9fadb330305e9b40d95bb6f80d",
-      "size": 11744
+      "sha256": "3f28ce167952822261df55054fa16bd74366ebaf39a7c4f8b94ab8ca3cb06983",
+      "size": 12251
     },
     {
       "path": "gateway/providers/openai_compat.py",
@@ -3649,8 +3649,8 @@
     },
     {
       "path": "tests/test_kimi_subscription_provider.py",
-      "sha256": "1409b3ae528c14be18b18882212c66eb7593569251e2908833620a530ff9d010",
-      "size": 11884
+      "sha256": "3235ec26a7f3b6efdbc86b8f6a5477d9118fe55ee1e576132f1669476c317948",
+      "size": 12177
     },
     {
       "path": "tests/test_kimi_subscription_routing.py",
@@ -3659,13 +3659,13 @@
     },
     {
       "path": "tests/test_kimi_subscription_worker.py",
-      "sha256": "8dcca2800aeb164988c05ec44d2e4fa209d9fe3b9fdcc7d05156f27d1fb64b6d",
-      "size": 11978
+      "sha256": "bf3b678352dddd0f237e69b3b29b898813b2e7ba26f1b475b703361898ec4e6d",
+      "size": 12875
     },
     {
       "path": "tests/test_kimi_worker_entrypoint.py",
-      "sha256": "ebf92396698a6d5da2d6b34d30a3a4dd780306d2a66ee2d054aeb9b5d6897288",
-      "size": 34419
+      "sha256": "cf2acfe764f5527351ee6750b45306b4d8ec73e7857d880a5c5faa8855e1a741",
+      "size": 34442
     },
     {
       "path": "tests/test_knowledge.py",
@@ -3964,8 +3964,8 @@
     },
     {
       "path": "tests/test_provider_call_ledger.py",
-      "sha256": "0253b1ebbd7f6a26fd24ca3f72983185a16cea0be61a053230c5e71ee01fc0a8",
-      "size": 76801
+      "sha256": "816283a3cff331c55315665cdc66628de8d078d021e1c153cbba8ced8b172fb8",
+      "size": 77771
     },
     {
       "path": "tests/test_provider_call_scope_coverage.py",
@@ -3994,8 +3994,8 @@
     },
     {
       "path": "tests/test_providers.py",
-      "sha256": "e077bf6617011658839cd8debd617cdf50faa857adcb2b21d0d149d3462b5687",
-      "size": 13537
+      "sha256": "7386a1e780e5b7c40103d6d248a1bac8fc244875b4ae6d3f9d6c506c4c501c79",
+      "size": 14016
     },
     {
       "path": "tests/test_python_license_export.py",

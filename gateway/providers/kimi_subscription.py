@@ -60,6 +60,9 @@ _TEXT_CONTRACT_WORKER_CODES: Final[frozenset[str]] = frozenset(
         "worker_result_rejected",
     }
 )
+_DIAGNOSTIC_WORKER_CODES: Final[frozenset[str]] = frozenset(
+    {*_REAUTH_WORKER_CODES, *_TEXT_CONTRACT_WORKER_CODES, "agent_rpc_error"}
+)
 _TEXT_ONLY_PREFIX = (
     "You are answering one text-only conversation through Nachuan. "
     "Do not run commands, inspect files, browse the web, call tools, or modify "
@@ -103,8 +106,19 @@ class KimiSubscriptionProviderError(ProviderError):
         reason_code: object,
         status_code: int = 503,
     ) -> None:
+        diagnostic_code = (
+            reason_code
+            if isinstance(reason_code, str)
+            and reason_code in _DIAGNOSTIC_WORKER_CODES
+            else "connector_unavailable"
+        )
+        self.diagnostic_code = diagnostic_code
         self.reason_code = _closed_connection_reason(reason_code)
-        super().__init__(_PUBLIC_UNAVAILABLE_MESSAGE, status_code=status_code)
+        super().__init__(
+            _PUBLIC_UNAVAILABLE_MESSAGE,
+            status_code=status_code,
+            ledger_error_type=f"KimiSubscriptionProviderError.{diagnostic_code}",
+        )
 
 
 class KimiInvokeWorker(Protocol):

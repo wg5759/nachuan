@@ -26,6 +26,22 @@ def _req(model: str = "m", stream: bool = False) -> ChatCompletionRequest:
     )
 
 
+def test_provider_error_accepts_only_closed_ledger_error_type() -> None:
+    accepted = ProviderError(
+        "public",
+        ledger_error_type="KimiSubscriptionProviderError.agent_rpc_error",
+    )
+    rejected = ProviderError(
+        "public",
+        ledger_error_type="PRIVATE PROMPT sk-live-must-not-persist",
+    )
+
+    assert accepted.ledger_error_type == (
+        "KimiSubscriptionProviderError.agent_rpc_error"
+    )
+    assert rejected.ledger_error_type is None
+
+
 async def test_echo_provider_chat():
     out = await EchoProvider().chat(_req(model="echo"), "echo")
     assert out["choices"][0]["message"]["content"].startswith("[echo:echo]")

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import re
 from typing import Any, AsyncIterator
 
 from gateway.schemas import ChatCompletionRequest, ImageGenerationRequest, VideoGenerationRequest
@@ -15,9 +16,21 @@ from gateway.schemas import ChatCompletionRequest, ImageGenerationRequest, Video
 class ProviderError(Exception):
     """Provider 调用失败。status_code 用于网关回传给客户端。"""
 
-    def __init__(self, message: str, status_code: int = 502):
+    def __init__(
+        self,
+        message: str,
+        status_code: int = 502,
+        *,
+        ledger_error_type: str | None = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
+        self.ledger_error_type = (
+            ledger_error_type
+            if isinstance(ledger_error_type, str)
+            and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,127}", ledger_error_type)
+            else None
+        )
 
 
 class ProviderSubmissionOutcomeUnknown(ProviderError):

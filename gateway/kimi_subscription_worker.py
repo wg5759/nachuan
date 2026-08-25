@@ -33,6 +33,7 @@ _ACTIVE_CONFIG_NAMES = frozenset(
 )
 _STABLE_FAILURE_CODES = frozenset(
     {
+        "agent_rpc_error",
         "auth_required",
         "process_tree_rejected",
         "protocol_rejected",
