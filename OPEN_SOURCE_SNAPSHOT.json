@@ -1,6 +1,6 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260825-33",
-  "file_count": 851,
+  "candidate_id": "nachuan-source-alpha-20260825-34",
+  "file_count": 853,
   "files": [
     {
       "path": ".claude/commands/xreview.md",
@@ -1269,8 +1269,8 @@
     },
     {
       "path": "desktop/src/renderer/src/App.tsx",
-      "sha256": "695c3da7557a95540cefef6a3ee655a168a77af1d7c9f95af420771d394c8692",
-      "size": 26948
+      "sha256": "64bfbe7ae1f6fb6406042f17487850b43cccf853539a6fbb2277e5082503973b",
+      "size": 26990
     },
     {
       "path": "desktop/src/renderer/src/api.engine-proxy.test.ts",
@@ -1299,8 +1299,8 @@
     },
     {
       "path": "desktop/src/renderer/src/api.ts",
-      "sha256": "b6c8a7ba968a666960ccf4cb3e55cfb9f236a28beefe7ef5d4b8b4b67e10afa4",
-      "size": 67163
+      "sha256": "39129ce6c6d698aa427f751320ab9fa1056e3938663a7bf10beb3d1c04757840",
+      "size": 67325
     },
     {
       "path": "desktop/src/renderer/src/api.web-paid-media-consent.test.ts",
@@ -1369,18 +1369,18 @@
     },
     {
       "path": "desktop/src/renderer/src/components/ChatPane.tsx",
-      "sha256": "eb1351efd726a81457b68495cc0127fed6313eb3f489e39d49b18694ce467b8a",
-      "size": 153788
+      "sha256": "8c6e746856b781a1166f413a8fce874ba0d7f422b78cebe2da7fc9c76500db56",
+      "size": 154040
     },
     {
       "path": "desktop/src/renderer/src/components/ConnectionCenter.subscription.test.tsx",
-      "sha256": "54a7766da9c178144d071c53ce9b0b62a3dab5e30b082ad9f440c329fdc8f1bf",
-      "size": 7593
+      "sha256": "6a080e3cd685805e8b6b383e99fae18ba632da65efa6f4b7493fab80a48dc981",
+      "size": 9244
     },
     {
       "path": "desktop/src/renderer/src/components/ConnectionCenter.tsx",
-      "sha256": "881da65fc422e8867447db014be5ea53d3f9da0c9de64504991dcea0dcee14e3",
-      "size": 42629
+      "sha256": "d93e26202765e41bd6896c264aa079b5b6bd48b57fc252023cc9ed41d3ba3b6f",
+      "size": 46900
     },
     {
       "path": "desktop/src/renderer/src/components/CreativeDrawer.test.tsx",
@@ -1406,6 +1406,16 @@
       "path": "desktop/src/renderer/src/components/FilesPane.tsx",
       "sha256": "fbc090d85910b2039fb116de4c17bd478bf038ee1042146fdb1d4eb5c98e27ba",
       "size": 1460
+    },
+    {
+      "path": "desktop/src/renderer/src/components/FirstRunModelPrompt.test.tsx",
+      "sha256": "6cdecf101378a46334560113d29df88db49258e6d19028c36f537b1bc1d6ebef",
+      "size": 1378
+    },
+    {
+      "path": "desktop/src/renderer/src/components/FirstRunModelPrompt.tsx",
+      "sha256": "12bddd14a872d6f8888984615f0ac58ab68a7d43fac3064d390985c5e98532df",
+      "size": 1181
     },
     {
       "path": "desktop/src/renderer/src/components/KbPane.file-import.test.tsx",
@@ -1604,13 +1614,13 @@
     },
     {
       "path": "desktop/src/renderer/src/locales/en.json",
-      "sha256": "07af467c73df253df5a6badcc8083bb2dc3899105deab3bb708062ee4b2ce3dc",
-      "size": 32060
+      "sha256": "3e13d8f18f147c014d03b0c13e21e4c0c9042f66c5d4d470e1f5e0129940267c",
+      "size": 33889
     },
     {
       "path": "desktop/src/renderer/src/locales/zh.json",
-      "sha256": "50eb96436de074cfc1ce9d901b58e1eaf4d02c155e53ec3ed1c7e8dccc77849f",
-      "size": 31127
+      "sha256": "089a458095aa396616a9bbe14063489d62263c481c43f25370ef08625d25e6ec",
+      "size": 32871
     },
     {
       "path": "desktop/src/renderer/src/main.tsx",
@@ -1974,8 +1984,8 @@
     },
     {
       "path": "gateway/admin.py",
-      "sha256": "d7961cca78f374195bf39da44cdd776b4b0baa6bd599e69bf58cbf5fbbea922f",
-      "size": 37319
+      "sha256": "408253dbb6fbe52c7446ad3a0ace99a8db2986dc1f0bd5795f939fd2ddd35fea",
+      "size": 39110
     },
     {
       "path": "gateway/admission.py",
@@ -2449,22 +2459,22 @@
     },
     {
       "path": "gateway/web_ui/api-shim.js",
-      "sha256": "93e1468d7011751d411ad58a6ca0be8bddcc3b34961c07b18516c0757a35598f",
-      "size": 26450
+      "sha256": "cac8e86759c2560ae53b7d47eafacbc1aa823d9abc91d5b7ac346f5e006ac82d",
+      "size": 30939
     },
     {
-      "path": "gateway/web_ui/assets/index-Cpslu4YQ.css",
-      "sha256": "1006e7bda5f9b8e4383b7f59a38264b72db797ed99d0a8871b66bc840f18cdc9",
-      "size": 54183
+      "path": "gateway/web_ui/assets/index-CWDx88Ub.css",
+      "sha256": "1205ac7a0b514ea375905f938b8c14c00f7efe26a19433e9f56c61059734cdee",
+      "size": 57630
     },
     {
-      "path": "gateway/web_ui/assets/index-DVumsA7j.js",
-      "sha256": "bb44472a2089dcff24918279445a55510575b2c5b9163debead973fc1cc1a12e",
-      "size": 521604
+      "path": "gateway/web_ui/assets/index-zbJttgvj.js",
+      "sha256": "66e6400f5cf411176f0ea2b0e236bd7faa720cf23ecb4be67d33ae567f322b8f",
+      "size": 533470
     },
     {
       "path": "gateway/web_ui/index.html",
-      "sha256": "5e172b50164d5cdf09d281f94ca0ddbedd67fa17dc3f4836c59a8a3ad973e5a4",
+      "sha256": "4d790a06748faa3fd4b568fd23c6751ed7b86afa702924b5222d16a18e0dc91a",
       "size": 705
     },
     {
@@ -3029,8 +3039,8 @@
     },
     {
       "path": "tests/test_admin.py",
-      "sha256": "0b2a8c0d2bf4569b3438a32e8cac84d73f42492bafca47fa1ab9e14183d1dce3",
-      "size": 50047
+      "sha256": "98b7af50ff500bde28cf284d8b30f47731a79913c533649d3f070c2c02c596e1",
+      "size": 51563
     },
     {
       "path": "tests/test_admission_control.py",

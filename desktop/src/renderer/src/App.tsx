@@ -635,7 +635,7 @@ export default function App(): React.ReactNode {
               ) : view === 'settings' ? (
                 <SettingsPane />
               ) : (
-                <ConnectionCenter />
+                <ConnectionCenter onStartChat={() => selectPrimary('chat')} />
               )}
             </section>
             {creativeOpen && view === 'chat' && (

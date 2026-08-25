@@ -414,10 +414,32 @@
     "sbRate": "Win %",
     "sbLast": "Last"
   },
+  "firstRun": {
+    "eyebrow": "First use · 3 steps",
+    "title": "Connect a model first",
+    "hint": "Choose a model service you already use. Once verified, it appears in the model selector automatically.",
+    "stepEngine": "Nachuan Engine is connected",
+    "stepModel": "Choose and verify one model",
+    "stepChat": "Send the first message",
+    "connectModel": "Connect a model"
+  },
   "conn": {
     "title": "Connection Center",
     "simpleTitle": "Verify a connection, then keep using Nachuan Auto",
     "simpleHint": "Common providers usually need only an API key and Connect. Nachuan automatically selects and verifies one recommended chat model. A few providers also require a model ID or official sign-in; technical fields stay under Advanced.",
+    "quick": {
+      "eyebrow": "First use · step 2",
+      "title": "Choose one connection method",
+      "hint": "Pick an account or local model you already have. Start chatting as soon as verification succeeds.",
+      "deepseek": "DeepSeek API key",
+      "kimiApi": "Kimi API key",
+      "subscription": "Codex / Kimi subscription",
+      "local": "Local model",
+      "all": "Other methods",
+      "readyTitle": "A model is connected",
+      "readyHint": "{{n}} verified model source is ready. You can start the first chat.",
+      "startChat": "Start chatting"
+    },
     "loading": "Loading…",
     "connected": "Connected",
     "configurationVerified": "Configuration verified",
@@ -442,6 +464,15 @@
     "connectOk": "Connected and verified; {{n}} models enabled ✅",
     "connectPartial": "{{n}} models connected; {{m}} others failed verification or are not supported yet.",
     "connectFail": "Connection was not applied. Check the credential, model ID, or network; the previous connection was preserved.",
+    "failure": {
+      "invalidCredentials": "The API key is invalid, expired, or lacks permission. Copy the correct key again.",
+      "quotaOrRateLimited": "The account is out of quota or rate-limited. Check the plan balance and try again.",
+      "modelOrEndpointNotFound": "The model or endpoint was not found. Check the model ID and Base URL.",
+      "networkOrTimeout": "The model service could not be reached or timed out. Check the network, proxy, or local service.",
+      "upstreamUnavailable": "The model service is temporarily unavailable. The previous connection was not replaced; try later.",
+      "invalidRequest": "The model service rejected this configuration. Check the model ID, endpoint, and account permission.",
+      "connectorUnavailable": "The connector is temporarily unavailable. Try later instead of submitting repeatedly."
+    },
     "connectRefreshUnknown": "Verification returned success, but the interface could not refresh the final state. Refresh Connections to verify before submitting again.",
     "connecting": "Verifying…",
     "testOk": "Connection OK ✅",

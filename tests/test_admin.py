@@ -15,6 +15,7 @@ from gateway import admin, connections, local_model
 from gateway.app import app
 from gateway.auth import require_api_key, require_approval_admin_key
 from gateway.connections import ConnectionStore
+from gateway.providers.base import ProviderError
 from gateway.providers.kimi_subscription import KimiSubscriptionProviderError
 from gateway.providers.openai_compat import OpenAICompatProvider
 from gateway.router import Router
@@ -37,6 +38,41 @@ def _adapt_admin_provider_doubles_to_the_bounded_probe(monkeypatch):
     monkeypatch.setattr(OpenAICompatProvider, "probe_chat", probe_chat)
 
 AUTH = {"Authorization": "Bearer test-key"}
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (ProviderError("private", status_code=401), "invalid_credentials"),
+        (ProviderError("private", status_code=403), "invalid_credentials"),
+        (ProviderError("private", status_code=429), "quota_or_rate_limited"),
+        (
+            ProviderError("private", status_code=404),
+            "model_or_endpoint_not_found",
+        ),
+        (ProviderError("private", status_code=400), "invalid_request"),
+        (ProviderError("private", status_code=503), "upstream_unavailable"),
+        (ProviderError("private", status_code=504), "network_or_timeout"),
+        (asyncio.TimeoutError(), "network_or_timeout"),
+    ],
+)
+def test_connection_failure_reason_is_closed_and_actionable(
+    error: BaseException,
+    expected: str,
+) -> None:
+    assert admin._connection_failure_reason("provider", error) == expected
+    response = admin._connection_validation_failure("provider", expected)
+    assert response["reason_code"] == expected
+    assert "private" not in json.dumps(response)
+
+
+def test_unknown_connection_failure_does_not_echo_private_details() -> None:
+    assert admin._connection_failure_reason(
+        "provider", RuntimeError("PRIVATE_REMOTE_FAILURE_DETAIL")
+    ) is None
+    response = admin._connection_validation_failure("provider")
+    assert "reason_code" not in response
+    assert "PRIVATE" not in json.dumps(response)
 
 
 def test_subscription_cli_connection_probe_uses_its_declared_bounded_deadline():
@@ -1370,6 +1406,7 @@ async def test_transient_provider_cleanup_failure_is_redacted_and_never_promoted
     assert response.json() == {
         "ok": False,
         "error": "连接验证失败，请检查凭据、模型与服务状态",
+        "reason_code": "connector_unavailable",
     }
     assert "new-secret" not in response.text
     assert store.get("cleanupfail") is None

@@ -49,7 +49,78 @@ const REGION_KEY: Record<string, string> = {
   local: 'conn.regionLocal'
 }
 
-export default function ConnectionCenter(): React.ReactNode {
+export type QuickConnectionTarget =
+  | 'deepseek'
+  | 'kimi-api'
+  | 'subscription'
+  | 'local'
+  | 'all'
+
+export function ConnectionQuickStart({
+  verifiedConnections,
+  onTarget,
+  onStartChat
+}: {
+  verifiedConnections: number
+  onTarget: (target: QuickConnectionTarget) => void
+  onStartChat?: () => void
+}): React.ReactNode {
+  const { t } = useTranslation()
+  const ready = verifiedConnections > 0
+  return (
+    <section className="rounded-xl border border-blue-900/70 bg-blue-950/25 p-4">
+      <div className="text-xs font-medium uppercase tracking-wider text-blue-300">
+        {t('conn.quick.eyebrow')}
+      </div>
+      <div className="mt-1 font-medium text-blue-100">
+        {ready ? t('conn.quick.readyTitle') : t('conn.quick.title')}
+      </div>
+      <div className="mt-1 text-xs leading-5 text-neutral-400">
+        {ready
+          ? t('conn.quick.readyHint', { n: verifiedConnections })
+          : t('conn.quick.hint')}
+      </div>
+      {ready ? (
+        <button
+          type="button"
+          onClick={onStartChat}
+          disabled={!onStartChat}
+          className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-500 disabled:opacity-40"
+        >
+          {t('conn.quick.startChat')}
+        </button>
+      ) : (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {(
+            [
+              ['deepseek', 'conn.quick.deepseek'],
+              ['kimi-api', 'conn.quick.kimiApi'],
+              ['subscription', 'conn.quick.subscription'],
+              ['local', 'conn.quick.local'],
+              ['all', 'conn.quick.all']
+            ] as const
+          ).map(([target, key]) => (
+            <button
+              key={target}
+              type="button"
+              data-quick-target={target}
+              onClick={() => onTarget(target)}
+              className="rounded-lg border border-neutral-700 bg-neutral-950/50 px-3 py-2 text-sm text-neutral-200 hover:border-blue-700 hover:bg-blue-950/40"
+            >
+              {t(key)}
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+export default function ConnectionCenter({
+  onStartChat
+}: {
+  onStartChat?: () => void
+} = {}): React.ReactNode {
   const { t } = useTranslation()
   const [catalog, setCatalog] = useState<CatalogProvider[]>([])
   const [connections, setConnections] = useState<Record<string, ConnectionSummary>>({})
@@ -72,6 +143,26 @@ export default function ConnectionCenter(): React.ReactNode {
       ),
     [connections]
   )
+
+  const jumpToQuickTarget = (target: QuickConnectionTarget): void => {
+    const selection: Record<QuickConnectionTarget, { query: string; selector?: string }> = {
+      deepseek: { query: 'DeepSeek', selector: '[data-connection-provider="deepseek"]' },
+      'kimi-api': { query: '月之暗面', selector: '[data-connection-provider="moonshot"]' },
+      subscription: { query: '', selector: '[data-connection-section="subscription"]' },
+      local: { query: '', selector: '[data-connection-section="local"]' },
+      all: { query: '' }
+    }
+    const next = selection[target]
+    const selector = next.selector
+    setQuery(next.query)
+    if (selector) {
+      window.setTimeout(() => {
+        document
+          .querySelector(selector)
+          ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 0)
+    }
+  }
 
   const refresh = async (): Promise<boolean> => {
     const epoch = ++refreshEpoch.current
@@ -162,10 +253,11 @@ export default function ConnectionCenter(): React.ReactNode {
       </div>
       {error && <div className="text-red-400 text-sm">{error}</div>}
 
-      <div className="rounded-lg border border-blue-900/70 bg-blue-950/30 p-3 text-sm">
-        <div className="font-medium text-blue-200">{t('conn.simpleTitle')}</div>
-        <div className="mt-1 text-xs text-neutral-400">{t('conn.simpleHint')}</div>
-      </div>
+      <ConnectionQuickStart
+        verifiedConnections={connectedProviders.size}
+        onTarget={jumpToQuickTarget}
+        onStartChat={onStartChat}
+      />
 
       <SubscriptionConnectorPanel />
       <LocalModelPicker />
@@ -248,10 +340,31 @@ function catalogLoginInstruction(
   return CATALOG_LOGIN_INSTRUCTION[providerType]
 }
 
-const KIMI_CONNECTION_FAILURE_KEYS: Record<ConnectionFailureReasonCode, string> = {
+const KIMI_CONNECTION_FAILURE_KEYS: Partial<Record<ConnectionFailureReasonCode, string>> = {
   reauth_required: 'conn.kimiFailureReauth',
   text_contract_rejected: 'conn.kimiFailureTextContract',
   connector_unavailable: 'conn.kimiFailureUnavailable'
+}
+
+const CONNECTION_FAILURE_KEYS: Partial<Record<ConnectionFailureReasonCode, string>> = {
+  invalid_credentials: 'conn.failure.invalidCredentials',
+  quota_or_rate_limited: 'conn.failure.quotaOrRateLimited',
+  model_or_endpoint_not_found: 'conn.failure.modelOrEndpointNotFound',
+  network_or_timeout: 'conn.failure.networkOrTimeout',
+  upstream_unavailable: 'conn.failure.upstreamUnavailable',
+  invalid_request: 'conn.failure.invalidRequest',
+  connector_unavailable: 'conn.failure.connectorUnavailable'
+}
+
+export function connectionFailureMessage(
+  reasonCode: unknown,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
+  const key =
+    typeof reasonCode === 'string'
+      ? CONNECTION_FAILURE_KEYS[reasonCode as ConnectionFailureReasonCode]
+      : undefined
+  return key ? t(key) : t('conn.connectFail')
 }
 
 export function loginConnectionFailureMessage(
@@ -263,7 +376,7 @@ export function loginConnectionFailureMessage(
     typeof reasonCode === 'string' &&
     Object.prototype.hasOwnProperty.call(KIMI_CONNECTION_FAILURE_KEYS, reasonCode)
   ) {
-    return t(KIMI_CONNECTION_FAILURE_KEYS[reasonCode as ConnectionFailureReasonCode], {
+    return t(KIMI_CONNECTION_FAILURE_KEYS[reasonCode as ConnectionFailureReasonCode]!, {
       cmd: loginCommand
     })
   }
@@ -333,7 +446,10 @@ export function SubscriptionConnectorSection({
   })
 
   return (
-    <section className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-900/30 p-3">
+    <section
+      data-connection-section="subscription"
+      className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-900/30 p-3"
+    >
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-medium">{t('conn.subscription.title')}</div>
@@ -539,7 +655,10 @@ function LocalModelPicker(): React.ReactNode {
   const gb = (mb: number): string => (mb >= 1024 ? (mb / 1024).toFixed(1) + 'GB' : mb + 'MB')
 
   return (
-    <section className="space-y-2 border border-neutral-800 rounded-lg p-3 bg-neutral-900/30">
+    <section
+      data-connection-section="local"
+      className="space-y-2 border border-neutral-800 rounded-lg p-3 bg-neutral-900/30"
+    >
       <div className="flex items-center justify-between">
         <div className="text-sm font-medium">
           本地模型（验证后离线可用）
@@ -838,7 +957,10 @@ export function ProviderCard({
 
   if (provider.connectable === false) {
     return (
-      <div className="border border-neutral-800 rounded-lg p-4 bg-neutral-900/30 opacity-80">
+      <div
+        data-connection-provider={provider.name}
+        className="border border-neutral-800 rounded-lg p-4 bg-neutral-900/30 opacity-80"
+      >
         <div className="flex items-center justify-between">
           <div className="font-medium">{provider.label}</div>
           <span className="text-xs px-2 py-0.5 rounded bg-neutral-800 text-neutral-400">
@@ -863,7 +985,10 @@ export function ProviderCard({
     const loginInstruction = catalogLoginInstruction(provider.type)
     if (loginInstruction === null) {
       return (
-        <div className="border border-neutral-800 rounded-lg p-4 bg-neutral-900/50">
+        <div
+          data-connection-provider={provider.name}
+          className="border border-neutral-800 rounded-lg p-4 bg-neutral-900/50"
+        >
           <div className="flex items-center justify-between">
             <div className="font-medium">{provider.label}</div>
             {statusBadge}
@@ -917,7 +1042,10 @@ export function ProviderCard({
       }
     }
     return (
-      <div className="border border-neutral-800 rounded-lg p-4 bg-neutral-900/50">
+      <div
+        data-connection-provider={provider.name}
+        className="border border-neutral-800 rounded-lg p-4 bg-neutral-900/50"
+      >
         <div className="flex items-center justify-between">
           <div className="font-medium">{provider.label}</div>
           {statusBadge}
@@ -983,6 +1111,7 @@ export function ProviderCard({
 
   const connect = async (): Promise<void> => {
     let verified = false
+    let failureReason: ConnectionFailureReasonCode | undefined
     setBusy(true)
     setMsg(null)
     try {
@@ -1015,7 +1144,10 @@ export function ProviderCard({
           baseUrl
         )
       })
-      if (!res.ok) throw new Error('connection verification failed')
+      if (!res.ok) {
+        failureReason = res.reason_code
+        throw new Error('connection verification failed')
+      }
       verified = true
       setApiKey('')
       const successMessage =
@@ -1028,14 +1160,21 @@ export function ProviderCard({
       const activationConfirmed = await onVerified(res.models)
       setMsg(activationConfirmed ? successMessage : t('conn.connectRefreshUnknown'))
     } catch (e) {
-      setMsg(verified ? t('conn.connectRefreshUnknown') : t('conn.connectFail'))
+      setMsg(
+        verified
+          ? t('conn.connectRefreshUnknown')
+          : connectionFailureMessage(failureReason, t)
+      )
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <div className="border border-neutral-800 rounded-lg p-4 bg-neutral-900/50">
+    <div
+      data-connection-provider={provider.name}
+      className="border border-neutral-800 rounded-lg p-4 bg-neutral-900/50"
+    >
       <div className="flex items-center justify-between">
         <div className="font-medium">
           {provider.label}

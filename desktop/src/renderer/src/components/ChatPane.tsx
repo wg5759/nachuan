@@ -63,6 +63,7 @@ import {
   type CreativeComposerRequest
 } from '../creative-composer-bridge'
 import { PaidMediaRecoveryCard } from './PaidMediaRecoveryCard'
+import { FirstRunModelPrompt } from './FirstRunModelPrompt'
 import { MAX_PENDING_IMAGES, isTextAttachmentFile, planPickedFiles } from '../utils/attachments'
 import type { RuntimeCapabilityManifest, RuntimeKind } from '../../../runtime-capabilities'
 import {
@@ -924,6 +925,7 @@ export default function ChatPane({
   const { t } = useTranslation()
   const models = useAppStore((s) => s.models)
   const currentModel = useAppStore((s) => s.currentModel)
+  const setView = useAppStore((s) => s.setView)
   const engineStatus = useAppStore((s) => s.status) // 视频重启恢复：等引擎在线再代下
   const setAgentBusy = useAppStore((s) => s.setAgentBusy)
   const setLastAgentReply = useAppStore((s) => s.setLastAgentReply)
@@ -2906,7 +2908,11 @@ export default function ChatPane({
               <circle cx="56" cy="40" r="11" fill="none" stroke="#93c5fd" strokeWidth="1.5" opacity="0.5" />
             </svg>
             <div className="text-lg font-semibold text-neutral-300">纳川 · Nexus</div>
-            <div className="text-sm text-neutral-600">{t('chat.empty')}</div>
+            {currentModel ? (
+              <div className="text-sm text-neutral-600">{t('chat.empty')}</div>
+            ) : (
+              <FirstRunModelPrompt onConnect={() => setView('connections')} />
+            )}
           </div>
         )}
         {messages.map((m, i) => (

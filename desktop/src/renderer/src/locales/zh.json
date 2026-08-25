@@ -414,10 +414,32 @@
     "sbRate": "胜率",
     "sbLast": "最近"
   },
+  "firstRun": {
+    "eyebrow": "首次使用 · 3 步",
+    "title": "先连接一个模型",
+    "hint": "选择你已经在用的模型服务。连接成功后，模型会自动出现在顶部选择器。",
+    "stepEngine": "纳川引擎已连接",
+    "stepModel": "选择并验证一个模型",
+    "stepChat": "发送第一条消息",
+    "connectModel": "连接一个模型"
+  },
   "conn": {
     "title": "连接中心",
     "simpleTitle": "先安全验证接入，之后默认使用“纳川·自动”",
     "simpleHint": "常用厂商通常只需粘贴 API Key 并连接；纳川会自动挑选并验证 1 个推荐聊天模型。少数厂商还需填写模型 ID 或完成官方登录，技术参数在高级设置中。",
+    "quick": {
+      "eyebrow": "首次使用 · 第 2 步",
+      "title": "选择一种连接方式",
+      "hint": "只选你已经有的账号或本地模型；连接成功后直接开始对话。",
+      "deepseek": "DeepSeek API Key",
+      "kimiApi": "Kimi API Key",
+      "subscription": "Codex / Kimi 订阅",
+      "local": "本地模型",
+      "all": "其它方式",
+      "readyTitle": "模型已经连接",
+      "readyHint": "已验证 {{n}} 个模型来源，可以开始第一条对话。",
+      "startChat": "开始对话"
+    },
     "loading": "加载中…",
     "connected": "已连接",
     "configurationVerified": "配置已验证",
@@ -442,6 +464,15 @@
     "connectOk": "连接并验证成功，已启用 {{n}} 个模型 ✅",
     "connectPartial": "已接入 {{n}} 个模型；另有 {{m}} 个未通过验证或暂不支持。",
     "connectFail": "连接未生效，请检查凭据、模型 ID 或网络；原有连接未被替换。",
+    "failure": {
+      "invalidCredentials": "API Key 无效、已失效或没有权限；请重新复制正确的 Key。",
+      "quotaOrRateLimited": "当前账号额度不足或请求过于频繁；请检查套餐余量后再试。",
+      "modelOrEndpointNotFound": "没有找到该模型或接口地址；请检查模型 ID 和 Base URL。",
+      "networkOrTimeout": "无法连接模型服务或响应超时；请检查网络、代理或本地服务是否启动。",
+      "upstreamUnavailable": "模型服务暂时不可用；原连接没有被替换，请稍后重试。",
+      "invalidRequest": "模型服务拒绝了当前配置；请检查模型 ID、接口地址和账号权限。",
+      "connectorUnavailable": "连接器暂时不可用；请稍后重试，不要连续重复提交。"
+    },
     "connectRefreshUnknown": "连接验证已返回成功，但界面未能刷新确认最终状态；请先刷新连接中心核对，不要重复提交。",
     "connecting": "正在验证…",
     "testOk": "连接正常 ✅",

@@ -7,8 +7,10 @@ import type { CatalogProvider, SubscriptionConnector } from '../api'
 import en from '../locales/en.json'
 import zh from '../locales/zh.json'
 import {
+  ConnectionQuickStart,
   ProviderCard,
   SubscriptionConnectorSection,
+  connectionFailureMessage,
   loginConnectionFailureMessage
 } from './ConnectionCenter'
 
@@ -73,6 +75,35 @@ async function renderLoginProvider(
 }
 
 describe('Connection Center subscription status', () => {
+  it('keeps first use to choose, connect, and start without operator controls', async () => {
+    const i18n = await translationInstance('zh')
+    const chooseHtml = renderToStaticMarkup(
+      <I18nextProvider i18n={i18n}>
+        <ConnectionQuickStart
+          verifiedConnections={0}
+          onTarget={() => undefined}
+          onStartChat={() => undefined}
+        />
+      </I18nextProvider>
+    )
+    const readyHtml = renderToStaticMarkup(
+      <I18nextProvider i18n={i18n}>
+        <ConnectionQuickStart
+          verifiedConnections={1}
+          onTarget={() => undefined}
+          onStartChat={() => undefined}
+        />
+      </I18nextProvider>
+    )
+
+    expect(chooseHtml).toContain('DeepSeek API Key')
+    expect(chooseHtml).toContain('Kimi API Key')
+    expect(chooseHtml).toContain('Codex / Kimi 订阅')
+    expect(chooseHtml).toContain('本地模型')
+    expect(chooseHtml).not.toMatch(/管理员|日志|发布|恢复/)
+    expect(readyHtml).toContain('开始对话')
+  })
+
   it('shows only Codex and Kimi public status with a concrete local-login next step', async () => {
     const html = await renderConnectors([
       {
@@ -163,6 +194,18 @@ describe('Connection Center subscription status', () => {
 })
 
 describe('Connection Center catalog login cards', () => {
+  it.each([
+    ['invalid_credentials', 'API Key 无效'],
+    ['quota_or_rate_limited', '额度不足'],
+    ['model_or_endpoint_not_found', '没有找到该模型或接口地址'],
+    ['network_or_timeout', '无法连接模型服务或响应超时'],
+    ['upstream_unavailable', '模型服务暂时不可用'],
+    ['invalid_request', '模型服务拒绝了当前配置']
+  ] as const)('maps %s to a closed customer action', async (reason, expected) => {
+    const i18n = await translationInstance('zh')
+    expect(connectionFailureMessage(reason, i18n.t.bind(i18n))).toContain(expected)
+  })
+
   it.each([
     [
       'reauth_required',

@@ -70,6 +70,19 @@ _CONNECTION_VALIDATION_FAILURE = {
     "error": "连接验证失败，请检查凭据、模型与服务状态",
 }
 _KIMI_CONNECTION_PROVIDER = "kimi-code"
+_CONNECTION_FAILURE_REASON_CODES = frozenset(
+    {
+        "invalid_credentials",
+        "quota_or_rate_limited",
+        "model_or_endpoint_not_found",
+        "network_or_timeout",
+        "upstream_unavailable",
+        "invalid_request",
+        "reauth_required",
+        "text_contract_rejected",
+        "connector_unavailable",
+    }
+)
 
 
 def _connection_validation_failure(
@@ -77,14 +90,51 @@ def _connection_validation_failure(
     reason_code: object = None,
 ) -> dict[str, object]:
     failure: dict[str, object] = dict(_CONNECTION_VALIDATION_FAILURE)
-    if provider == _KIMI_CONNECTION_PROVIDER:
-        failure["reason_code"] = (
-            reason_code
-            if isinstance(reason_code, str)
-            and reason_code in KIMI_CONNECTION_REASON_CODES
+    closed_reason = (
+        reason_code
+        if isinstance(reason_code, str)
+        and reason_code in _CONNECTION_FAILURE_REASON_CODES
+        else None
+    )
+    if closed_reason is not None:
+        failure["reason_code"] = closed_reason
+    elif provider == _KIMI_CONNECTION_PROVIDER:
+        failure["reason_code"] = "connector_unavailable"
+    return failure
+
+
+def _connection_failure_reason(
+    provider: str,
+    error: BaseException,
+) -> str | None:
+    """Map a private provider failure to one closed customer action code."""
+
+    if isinstance(error, KimiSubscriptionProviderError):
+        return (
+            error.reason_code
+            if error.reason_code in KIMI_CONNECTION_REASON_CODES
             else "connector_unavailable"
         )
-    return failure
+    raw_status = getattr(error, "status_code", None)
+    status = int(raw_status) if isinstance(raw_status, int) and not isinstance(raw_status, bool) else None
+    if status in {401, 403}:
+        return "invalid_credentials"
+    if status == 429:
+        return "quota_or_rate_limited"
+    if status == 404:
+        return "model_or_endpoint_not_found"
+    if status in {408, 504}:
+        return "network_or_timeout"
+    if status is not None and 400 <= status < 500:
+        return "invalid_request"
+    if status is not None and status >= 500:
+        return "upstream_unavailable"
+    if isinstance(
+        error,
+        (asyncio.TimeoutError, httpx.TimeoutException, httpx.ConnectError, OSError),
+    ):
+        return "network_or_timeout"
+    return "connector_unavailable" if provider == _KIMI_CONNECTION_PROVIDER else None
 
 
 def _connection_probe_deadlines(provider: object) -> tuple[float, float]:
@@ -169,7 +219,15 @@ class _ConnectionPromotionIndeterminate(RuntimeError):
 
 
 class _ConnectionDiscoveryUnavailable(RuntimeError):
-    pass
+    def __init__(self, reason_code: str | None = None):
+        super().__init__("connection discovery unavailable")
+        self.reason_code = reason_code
+
+
+class _ModelCatalogHttpError(ValueError):
+    def __init__(self, status_code: int):
+        super().__init__("model catalog returned a non-success status")
+        self.status_code = status_code
 
 
 async def _promote_verified_connection(
@@ -494,8 +552,8 @@ async def _save_connection_locked(provider: str, request: Request) -> dict:
             },
         )
         conn = request.app.state.router.assign_available_model_ids(provider, conn)
-    except _ConnectionDiscoveryUnavailable:
-        return _connection_validation_failure(provider)
+    except _ConnectionDiscoveryUnavailable as exc:
+        return _connection_validation_failure(provider, exc.reason_code)
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(
             status_code=422, detail="连接配置不符合接入策略"
@@ -536,19 +594,10 @@ async def _save_connection_locked(provider: str, request: Request) -> dict:
                         probe=True,
                     )
             return _ConnectionProbeResult(succeeded=True)
-        except KimiSubscriptionProviderError as exc:
+        except Exception as exc:  # noqa: BLE001 - never expose provider errors or targets
             return _ConnectionProbeResult(
                 succeeded=False,
-                reason_code=exc.reason_code,
-            )
-        except Exception:  # noqa: BLE001 - never expose provider errors or targets
-            return _ConnectionProbeResult(
-                succeeded=False,
-                reason_code=(
-                    "connector_unavailable"
-                    if provider == _KIMI_CONNECTION_PROVIDER
-                    else None
-                ),
+                reason_code=_connection_failure_reason(provider, exc),
             )
 
     probe_results: list[_ConnectionProbeResult]
@@ -810,7 +859,7 @@ async def _bounded_model_catalog(
         "GET", url, headers=headers or {"Accept": "application/json"}
     ) as response:
         if not 200 <= response.status_code < 300:
-            raise ValueError("model catalog returned a non-success status")
+            raise _ModelCatalogHttpError(int(response.status_code))
         declared = getattr(response, "headers", {}).get("content-length")
         if declared is not None:
             if not str(declared).isdigit() or int(declared) > _MODEL_CATALOG_BODY_LIMIT:
@@ -932,7 +981,9 @@ async def _discover_connection_models(
                 timeout=_MODEL_CATALOG_TOTAL_TIMEOUT_SEC,
             )
     except (asyncio.TimeoutError, httpx.HTTPError, OSError, ValueError) as exc:
-        raise _ConnectionDiscoveryUnavailable from exc
+        raise _ConnectionDiscoveryUnavailable(
+            _connection_failure_reason("", exc)
+        ) from exc
 
 
 @router.get("/local/detect")

@@ -1567,6 +1567,12 @@ export interface ConnectionSummary {
 }
 
 export type ConnectionFailureReasonCode =
+  | 'invalid_credentials'
+  | 'quota_or_rate_limited'
+  | 'model_or_endpoint_not_found'
+  | 'network_or_timeout'
+  | 'upstream_unavailable'
+  | 'invalid_request'
   | 'reauth_required'
   | 'text_contract_rejected'
   | 'connector_unavailable'
