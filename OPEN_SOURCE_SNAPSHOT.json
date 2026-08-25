@@ -1,6 +1,6 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260825-39",
-  "file_count": 866,
+  "candidate_id": "nachuan-source-alpha-20260825-40",
+  "file_count": 868,
   "files": [
     {
       "path": ".claude/commands/xreview.md",
@@ -1874,8 +1874,8 @@
     },
     {
       "path": "docs/ENTERPRISE_RAG_AUTHORIZATION_ARCHITECTURE.md",
-      "sha256": "b844afc0b6560b21bd948607d8cd114b77645653772f5b6d98e414f7c60f142b",
-      "size": 20299
+      "sha256": "eb10fb8aaa65f78aa2fb2bc87948b8f02f74e1b5a7f0aabca8d374209a625b29",
+      "size": 20953
     },
     {
       "path": "docs/MSIX_STORE_RELEASE_READINESS.md",
@@ -2121,6 +2121,11 @@
       "path": "gateway/durable_media_requests.py",
       "sha256": "3585015d8f1e9deed37421ebd4142df1b98d9f27f8c84f7348de04f724e739a6",
       "size": 266890
+    },
+    {
+      "path": "gateway/enterprise_authz.py",
+      "sha256": "d29645529c2aafc36c9b0b57be863d7e30c0637e01aaec6c3fe42b18903b0fe8",
+      "size": 16186
     },
     {
       "path": "gateway/enterprise_context.py",
@@ -3396,6 +3401,11 @@
       "path": "tests/test_engine_main.py",
       "sha256": "8f2ede7a529d57cb54f0f00dc9cdd1eeba7d7c7876dd5269f073e6618e79668b",
       "size": 6625
+    },
+    {
+      "path": "tests/test_enterprise_authorization_facade.py",
+      "sha256": "2686d9f6d6db15ad552ac1dd97f7ed04ad3458aa5aec8b971a1faef453a0cad0",
+      "size": 8181
     },
     {
       "path": "tests/test_enterprise_knowledge_v2.py",
