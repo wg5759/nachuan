@@ -421,7 +421,21 @@ def test_managed_launcher_exits_and_kills_child_tree_when_supervisor_exits(
 
     try:
         deadline = time.monotonic() + 15
-        while not (wrapper_pid_file.is_file() and gateway_pids_file.is_file()):
+        gateway_pids: list[int] = []
+        while True:
+            if wrapper_pid_file.is_file() and gateway_pids_file.is_file():
+                try:
+                    gateway_pids = [
+                        int(value)
+                        for value in gateway_pids_file.read_text(
+                            encoding="ascii"
+                        ).splitlines()
+                        if value.strip()
+                    ]
+                except (OSError, UnicodeError, ValueError):
+                    gateway_pids = []
+                if len(gateway_pids) == 2:
+                    break
             if parent.poll() is not None:
                 stdout, stderr = parent.communicate(timeout=1)
                 pytest.fail(
@@ -433,12 +447,6 @@ def test_managed_launcher_exits_and_kills_child_tree_when_supervisor_exits(
             time.sleep(0.05)
 
         wrapper_pid = int(wrapper_pid_file.read_text(encoding="ascii").strip())
-        gateway_pids = [
-            int(value)
-            for value in gateway_pids_file.read_text(encoding="ascii").splitlines()
-            if value.strip()
-        ]
-        assert len(gateway_pids) == 2
         open_process("wrapper", wrapper_pid)
         open_process("gateway", gateway_pids[0])
         open_process("gateway descendant", gateway_pids[1])

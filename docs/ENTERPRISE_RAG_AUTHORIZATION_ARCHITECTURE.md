@@ -1,6 +1,6 @@
 # 纳川企业级 RAG 全链路权限架构
 
-> 状态：已完成现状审计与目标设计，尚未实现，不得据此宣称企业级权限已经上线
+> 状态：RAG-ACL-001 身份边界与 RAG-ACL-002 本地 metadata/outbox 存储纵切已实现；授权引擎、正文/向量存储、权限检索、DLP、撤权同步、PostgreSQL RLS 与真实验收仍未实现，不得宣称企业级权限已经上线
 > 日期：2026-08-24
 > 适用范围：纳川团队版、企业版、多租户云同步和外部知识源同步
 
@@ -24,6 +24,11 @@
 - `gateway/app.py` 的 `/v1/kb/docs` 和 `/v1/kb/query` 从请求参数或请求体读取 `user_id`，共享 API key 仅证明调用方知道网关密钥，没有把已认证主体强绑定到该 `user_id`。
 - 检索结果直接拼入系统消息后调用模型，没有独立的策略决策点、上下文清单、模型路由分级、输出 DLP 或引用复核。
 - `orchestrator/cloud_sync.py` 可把 Supabase 登录用户映射到本地用户，但知识文档和权限关系并非同一事务或同一因果版本，不能保证撤权即时生效。
+
+2026-08-25 已完成第一条独立边界：`gateway/enterprise_context.py` 只接受应用侧可信 resolver 生成的
+冻结 `EnterpriseRequestContext`；企业请求正文不能提交或覆盖租户、主体、组、角色和 epoch。
+`POST /v1/enterprise/kb/query` 在后续能力未完成时固定返回 `enterprise_rag_not_ready`，不会回退到个人知识库。
+这只关闭 RAG-ACL-001，不改变下列未完成判断。
 
 现状允许继续服务个人版，但企业版必须默认拒绝沿用这条路径。
 
@@ -286,8 +291,8 @@ kb_v2_audit_decisions
 
 ## 13. 纳川实施切片
 
-1. **RAG-ACL-001：身份边界。** 新增不可变 `RequestContext`，禁止 KB API 接受可覆盖主体；个人模式显式标为单所有者。
-2. **RAG-ACL-002：`knowledge_v2` 存储。** 建立租户、策略、分片来源、epoch、outbox 和 RLS；旧库只做迁移源。
+1. **RAG-ACL-001：身份边界（已完成源码纵切）。** 新增不可变 `RequestContext`，禁止企业 KB API 接受可覆盖主体；缺可信 resolver、返回伪字典或客户端夹带身份字段均故障关闭，个人模式仍显式标为单所有者。
+2. **RAG-ACL-002：`knowledge_v2` 存储（本地 metadata/outbox 纵切已完成）。** 独立 SQLite schema 已建立租户 epoch、文档/分片元数据和策略 outbox；不存正文，分片不得比文档低密，策略 epoch 单调且陈旧读取拒绝。PostgreSQL RLS、加密正文/向量、激活事务和真实云隔离仍未完成；旧库只做迁移源。
 3. **RAG-ACL-003：安全写入。** 实现 ACL 同版本读取、权限同质分片、隔离区和派生物继承。
 4. **RAG-ACL-004：授权门面。** 落地关系/属性统一决策、deny 优先、批量校验、决策收据和故障拒绝。
 5. **RAG-ACL-005：权限感知检索。** 租户硬过滤、预过滤/超量召回、正文前分片终检和授权后重排。

@@ -1,0 +1,348 @@
+"""Enterprise knowledge_v2 metadata store with tenant and epoch hard fences."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import sqlite3
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
+
+
+_APPLICATION_ID = 0x4E434B32  # NCK2
+_USER_VERSION = 1
+_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_STATUSES = {"isolated", "searchable", "revoked"}
+
+
+class EnterpriseKnowledgeError(RuntimeError):
+    pass
+
+
+class EnterpriseKnowledgeStalePolicy(EnterpriseKnowledgeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class EnterpriseChunkMetadata:
+    chunk_id: str
+    ordinal: int
+    content_ref: str
+    content_hash: str
+    policy_id: str
+    policy_epoch: int
+    classification: int
+    provenance_digest: str
+
+    def __post_init__(self) -> None:
+        for field in ("chunk_id", "content_ref", "policy_id"):
+            _checked_id(getattr(self, field), field)
+        for field in ("content_hash", "provenance_digest"):
+            _checked_digest(getattr(self, field), field)
+        if isinstance(self.ordinal, bool) or not isinstance(self.ordinal, int) or self.ordinal < 0:
+            raise ValueError("ordinal is invalid")
+        if (
+            isinstance(self.policy_epoch, bool)
+            or not isinstance(self.policy_epoch, int)
+            or self.policy_epoch < 1
+        ):
+            raise ValueError("policy_epoch is invalid")
+        if (
+            isinstance(self.classification, bool)
+            or not isinstance(self.classification, int)
+            or not 0 <= self.classification <= 10
+        ):
+            raise ValueError("classification is invalid")
+
+
+def _checked_id(value: object, field: str) -> str:
+    if not isinstance(value, str) or _ID.fullmatch(value) is None:
+        raise ValueError(f"{field} is invalid")
+    return value
+
+
+def _checked_digest(value: object, field: str) -> str:
+    if not isinstance(value, str) or _DIGEST.fullmatch(value) is None:
+        raise ValueError(f"{field} is invalid")
+    return value
+
+
+def _canonical_digest(value: object) -> str:
+    encoded = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+class EnterpriseKnowledgeStore:
+    def __init__(self, db_path: str | Path):
+        path = Path(db_path).resolve(strict=False)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.is_symlink():
+            raise EnterpriseKnowledgeError("knowledge_v2 database cannot be a symlink")
+        self._connection = sqlite3.connect(str(path), check_same_thread=False)
+        self._connection.execute("PRAGMA foreign_keys=ON")
+        self._lock = threading.RLock()
+        self._initialize()
+
+    def _initialize(self) -> None:
+        with self._lock:
+            application_id = int(self._connection.execute("PRAGMA application_id").fetchone()[0])
+            user_version = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
+            existing = self._connection.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table','index','trigger')"
+            ).fetchone()[0]
+            if existing and (application_id != _APPLICATION_ID or user_version != _USER_VERSION):
+                raise EnterpriseKnowledgeError("knowledge_v2 schema authority is invalid")
+            if not existing:
+                self._connection.executescript(
+                    f"""
+                    PRAGMA application_id={_APPLICATION_ID};
+                    PRAGMA user_version={_USER_VERSION};
+                    CREATE TABLE kb_v2_tenant_epochs (
+                        tenant_id TEXT PRIMARY KEY,
+                        policy_epoch INTEGER NOT NULL CHECK(policy_epoch >= 1),
+                        corpus_epoch INTEGER NOT NULL CHECK(corpus_epoch >= 1)
+                    ) STRICT;
+                    CREATE TABLE kb_v2_documents (
+                        tenant_id TEXT NOT NULL,
+                        document_id TEXT NOT NULL,
+                        source_id TEXT NOT NULL,
+                        source_version TEXT NOT NULL,
+                        corpus_epoch INTEGER NOT NULL CHECK(corpus_epoch >= 1),
+                        classification INTEGER NOT NULL CHECK(classification BETWEEN 0 AND 10),
+                        policy_id TEXT NOT NULL,
+                        policy_epoch INTEGER NOT NULL CHECK(policy_epoch >= 1),
+                        status TEXT NOT NULL CHECK(status IN ('isolated','searchable','revoked')),
+                        content_hash TEXT NOT NULL CHECK(length(content_hash)=64 AND content_hash NOT GLOB '*[^0-9a-f]*'),
+                        PRIMARY KEY(tenant_id, document_id),
+                        FOREIGN KEY(tenant_id) REFERENCES kb_v2_tenant_epochs(tenant_id)
+                    ) STRICT;
+                    CREATE TABLE kb_v2_chunks (
+                        tenant_id TEXT NOT NULL,
+                        chunk_id TEXT NOT NULL,
+                        document_id TEXT NOT NULL,
+                        ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+                        content_ref TEXT NOT NULL,
+                        content_hash TEXT NOT NULL CHECK(length(content_hash)=64 AND content_hash NOT GLOB '*[^0-9a-f]*'),
+                        policy_id TEXT NOT NULL,
+                        policy_epoch INTEGER NOT NULL CHECK(policy_epoch >= 1),
+                        classification INTEGER NOT NULL CHECK(classification BETWEEN 0 AND 10),
+                        provenance_digest TEXT NOT NULL CHECK(length(provenance_digest)=64 AND provenance_digest NOT GLOB '*[^0-9a-f]*'),
+                        revoked_at REAL,
+                        PRIMARY KEY(tenant_id, chunk_id),
+                        UNIQUE(tenant_id, document_id, ordinal),
+                        FOREIGN KEY(tenant_id, document_id) REFERENCES kb_v2_documents(tenant_id, document_id)
+                    ) STRICT;
+                    CREATE TABLE kb_v2_policy_outbox (
+                        tenant_id TEXT NOT NULL,
+                        event_id TEXT NOT NULL,
+                        source_version TEXT NOT NULL,
+                        policy_epoch INTEGER NOT NULL CHECK(policy_epoch >= 1),
+                        resource_scope TEXT NOT NULL,
+                        operation TEXT NOT NULL CHECK(operation IN ('stage','activate','revoke')),
+                        state TEXT NOT NULL CHECK(state IN ('pending','applied','failed')),
+                        created_at REAL NOT NULL,
+                        applied_at REAL,
+                        PRIMARY KEY(tenant_id, event_id),
+                        FOREIGN KEY(tenant_id) REFERENCES kb_v2_tenant_epochs(tenant_id)
+                    ) STRICT;
+                    CREATE INDEX idx_kb_v2_documents_policy ON kb_v2_documents(tenant_id, policy_epoch, status);
+                    CREATE INDEX idx_kb_v2_chunks_document ON kb_v2_chunks(tenant_id, document_id, ordinal);
+                    """
+                )
+                self._connection.commit()
+            self._verify_schema()
+
+    def _verify_schema(self) -> None:
+        expected = {
+            "kb_v2_tenant_epochs": {"tenant_id", "policy_epoch", "corpus_epoch"},
+            "kb_v2_documents": {
+                "tenant_id", "document_id", "source_id", "source_version", "corpus_epoch",
+                "classification", "policy_id", "policy_epoch", "status", "content_hash",
+            },
+            "kb_v2_chunks": {
+                "tenant_id", "chunk_id", "document_id", "ordinal", "content_ref", "content_hash",
+                "policy_id", "policy_epoch", "classification", "provenance_digest", "revoked_at",
+            },
+            "kb_v2_policy_outbox": {
+                "tenant_id", "event_id", "source_version", "policy_epoch", "resource_scope",
+                "operation", "state", "created_at", "applied_at",
+            },
+        }
+        actual_tables = {
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        if actual_tables != set(expected):
+            raise EnterpriseKnowledgeError("knowledge_v2 table closure drifted")
+        for table, columns in expected.items():
+            actual = {
+                str(row[1]) for row in self._connection.execute(f"PRAGMA table_info({table})")
+            }
+            if actual != columns:
+                raise EnterpriseKnowledgeError(f"knowledge_v2 table drifted: {table}")
+
+    def initialize_tenant(self, tenant_id: str) -> None:
+        tenant = _checked_id(tenant_id, "tenant_id")
+        with self._lock:
+            self._connection.execute(
+                "INSERT OR IGNORE INTO kb_v2_tenant_epochs(tenant_id,policy_epoch,corpus_epoch) VALUES(?,1,1)",
+                (tenant,),
+            )
+            self._connection.commit()
+
+    def current_epochs(self, tenant_id: str) -> tuple[int, int]:
+        tenant = _checked_id(tenant_id, "tenant_id")
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT policy_epoch,corpus_epoch FROM kb_v2_tenant_epochs WHERE tenant_id=?",
+                (tenant,),
+            ).fetchone()
+        if row is None:
+            raise EnterpriseKnowledgeError("tenant is not initialized")
+        return int(row[0]), int(row[1])
+
+    def advance_policy_epoch(self, tenant_id: str, expected_epoch: int) -> int:
+        tenant = _checked_id(tenant_id, "tenant_id")
+        if isinstance(expected_epoch, bool) or not isinstance(expected_epoch, int) or expected_epoch < 1:
+            raise ValueError("expected_epoch is invalid")
+        with self._lock:
+            cursor = self._connection.execute(
+                "UPDATE kb_v2_tenant_epochs SET policy_epoch=policy_epoch+1 WHERE tenant_id=? AND policy_epoch=?",
+                (tenant, expected_epoch),
+            )
+            if cursor.rowcount != 1:
+                self._connection.rollback()
+                raise EnterpriseKnowledgeStalePolicy("policy epoch changed")
+            self._connection.commit()
+        return expected_epoch + 1
+
+    def stage_document(
+        self,
+        *,
+        tenant_id: str,
+        expected_policy_epoch: int,
+        document_id: str,
+        source_id: str,
+        source_version: str,
+        policy_id: str,
+        classification: int,
+        content_hash: str,
+        chunks: Iterable[EnterpriseChunkMetadata],
+    ) -> dict[str, object]:
+        tenant = _checked_id(tenant_id, "tenant_id")
+        document = _checked_id(document_id, "document_id")
+        source = _checked_id(source_id, "source_id")
+        source_version = _checked_id(source_version, "source_version")
+        policy = _checked_id(policy_id, "policy_id")
+        _checked_digest(content_hash, "content_hash")
+        if isinstance(classification, bool) or not isinstance(classification, int) or not 0 <= classification <= 10:
+            raise ValueError("classification is invalid")
+        staged = tuple(chunks)
+        if not staged or len(staged) > 100_000:
+            raise ValueError("chunks are invalid")
+        if len({chunk.chunk_id for chunk in staged}) != len(staged):
+            raise ValueError("chunk ids are duplicated")
+        if {chunk.ordinal for chunk in staged} != set(range(len(staged))):
+            raise ValueError("chunk ordinals must be contiguous")
+        for chunk in staged:
+            if chunk.policy_epoch != expected_policy_epoch or chunk.policy_id != policy:
+                raise EnterpriseKnowledgeStalePolicy("chunk policy differs from document")
+            if chunk.classification < classification:
+                raise EnterpriseKnowledgeError("chunk classification is wider than document")
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                current = self._connection.execute(
+                    "SELECT policy_epoch,corpus_epoch FROM kb_v2_tenant_epochs WHERE tenant_id=?",
+                    (tenant,),
+                ).fetchone()
+                if current is None or int(current[0]) != expected_policy_epoch:
+                    raise EnterpriseKnowledgeStalePolicy("policy epoch changed")
+                corpus_epoch = int(current[1]) + 1
+                event_id = _canonical_digest(
+                    {
+                        "tenant": tenant,
+                        "document": document,
+                        "source_version": source_version,
+                        "corpus": corpus_epoch,
+                    }
+                )
+                advanced = self._connection.execute(
+                    "UPDATE kb_v2_tenant_epochs SET corpus_epoch=? WHERE tenant_id=? AND policy_epoch=?",
+                    (corpus_epoch, tenant, expected_policy_epoch),
+                )
+                if advanced.rowcount != 1:
+                    raise EnterpriseKnowledgeStalePolicy("policy epoch changed")
+                self._connection.execute(
+                    "INSERT INTO kb_v2_documents VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        tenant, document, source, source_version, corpus_epoch, classification,
+                        policy, expected_policy_epoch, "isolated", content_hash,
+                    ),
+                )
+                self._connection.executemany(
+                    "INSERT INTO kb_v2_chunks VALUES(?,?,?,?,?,?,?,?,?,?,NULL)",
+                    [
+                        (
+                            tenant, chunk.chunk_id, document, chunk.ordinal, chunk.content_ref,
+                            chunk.content_hash, chunk.policy_id, chunk.policy_epoch,
+                            chunk.classification, chunk.provenance_digest,
+                        )
+                        for chunk in staged
+                    ],
+                )
+                self._connection.execute(
+                    "INSERT INTO kb_v2_policy_outbox VALUES(?,?,?,?,?,'stage','pending',?,NULL)",
+                    (tenant, event_id, source_version, expected_policy_epoch, document, time.time()),
+                )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        return {
+            "tenant_id": tenant,
+            "document_id": document,
+            "policy_epoch": expected_policy_epoch,
+            "corpus_epoch": corpus_epoch,
+            "status": "isolated",
+            "event_id": event_id,
+            "chunk_count": len(staged),
+        }
+
+    def list_documents(self, tenant_id: str, expected_policy_epoch: int) -> list[dict[str, object]]:
+        policy_epoch, _ = self.current_epochs(tenant_id)
+        if policy_epoch != expected_policy_epoch:
+            raise EnterpriseKnowledgeStalePolicy("policy epoch changed")
+        tenant = _checked_id(tenant_id, "tenant_id")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT document_id,source_id,source_version,corpus_epoch,classification,policy_id,policy_epoch,status,content_hash "
+                "FROM kb_v2_documents WHERE tenant_id=? ORDER BY document_id",
+                (tenant,),
+            ).fetchall()
+        keys = (
+            "document_id", "source_id", "source_version", "corpus_epoch", "classification",
+            "policy_id", "policy_epoch", "status", "content_hash",
+        )
+        return [dict(zip(keys, row, strict=True)) for row in rows]
+
+    def close(self) -> None:
+        with self._lock:
+            self._connection.close()
+
+
+__all__ = [
+    "EnterpriseChunkMetadata",
+    "EnterpriseKnowledgeError",
+    "EnterpriseKnowledgeStalePolicy",
+    "EnterpriseKnowledgeStore",
+]
