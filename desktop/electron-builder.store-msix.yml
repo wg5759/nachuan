@@ -1,0 +1,18 @@
+extends: ./electron-builder.yml
+
+# Microsoft Store lane only. Partner Center supplies the exact identity and
+# publisher after the app name is reserved; missing values must fail closed.
+win:
+  target:
+    - appx
+  artifactName: nachuan-${version}-${env.DMX_VARIANT}-store.${ext}
+
+appx:
+  applicationId: ${env.NACHUAN_STORE_APPLICATION_ID}
+  identityName: ${env.NACHUAN_STORE_IDENTITY_NAME}
+  publisher: ${env.NACHUAN_STORE_PUBLISHER}
+  publisherDisplayName: ${env.NACHUAN_STORE_PUBLISHER_DISPLAY_NAME}
+  displayName: 纳川
+  languages:
+    - zh-CN
+    - en-US

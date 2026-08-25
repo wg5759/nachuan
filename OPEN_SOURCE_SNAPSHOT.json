@@ -1,6 +1,6 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260825-35",
-  "file_count": 853,
+  "candidate_id": "nachuan-source-alpha-20260825-36",
+  "file_count": 862,
   "files": [
     {
       "path": ".claude/commands/xreview.md",
@@ -199,8 +199,8 @@
     },
     {
       "path": "config/open-source-manifest.v1.json",
-      "sha256": "dd4f7026b412fe2f5d3231cc92b91093976bbd6f1fe82906967a58e9984da9a2",
-      "size": 3101
+      "sha256": "b80131ce5a56059ba3b29e93950e8c441a37e699b8ad1dda939f02aeb001c87c",
+      "size": 3145
     },
     {
       "path": "config/store-runtime-profile.v1.json",
@@ -248,6 +248,11 @@
       "size": 376
     },
     {
+      "path": "desktop/electron-builder.store-msix.yml",
+      "sha256": "3b004cfb12941a7be4ab760e5f2b9a65858cc339a43cdfce35b3664a38a61222",
+      "size": 561
+    },
+    {
       "path": "desktop/electron-builder.yml",
       "sha256": "09bd1ad2342cfba8715a0c4c2e2c08f285549a18682915179f42bda87cf52aa8",
       "size": 5210
@@ -289,8 +294,8 @@
     },
     {
       "path": "desktop/package.json",
-      "sha256": "98dc45bd936156a0f6d7d5ed37b2cafdffe9f5acb4fde534f79ac45ce58e1de9",
-      "size": 4640
+      "sha256": "0be39b6b338d4d06ef9639a7431f75dcbfd65faa241c23ad93d0f8140e87404f",
+      "size": 4708
     },
     {
       "path": "desktop/python-license-registry.json",
@@ -666,6 +671,16 @@
       "path": "desktop/scripts/signing-material-paths.mjs",
       "sha256": "a70e8bca043454322119fda9cb24e6fe5ca0588e5889fc12322eaf7b38e9abdd",
       "size": 2648
+    },
+    {
+      "path": "desktop/scripts/store-msix-readiness.mjs",
+      "sha256": "4dc9df8b4e97a6782dad1cb0ae9b230f9b4f71a2f8cf9fe8c47b06d0df172c0d",
+      "size": 2798
+    },
+    {
+      "path": "desktop/scripts/store-msix-readiness.test.mjs",
+      "sha256": "b42f0fa3188d850f39ff36b569e67a7160233e8ab7104fcce015ed2e460ce1bf",
+      "size": 1998
     },
     {
       "path": "desktop/scripts/update-envelope.mjs",
@@ -1863,6 +1878,11 @@
       "size": 18701
     },
     {
+      "path": "docs/MSIX_STORE_RELEASE_READINESS.md",
+      "sha256": "2dcdb5130b361c4673f13f97530a04fba3f0d7f48ff9f0a645beee5f2599aae5",
+      "size": 2399
+    },
+    {
       "path": "docs/NACHUAN_PLUGIN_KERNEL_STRATEGY.md",
       "sha256": "2e687d66b4307f743c12d006a9f4d3fc342bb07f9c7b7d50af6f1f77de91aadc",
       "size": 16883
@@ -1999,8 +2019,8 @@
     },
     {
       "path": "gateway/app.py",
-      "sha256": "d458af99eeffb853ab32c4b7b40a2b0e5e975abd1257048d7a99d4b937dedbd1",
-      "size": 422858
+      "sha256": "48f186d5772ee6885afa650908c7e1ea6fd239782306268c29208059383c6fd9",
+      "size": 422967
     },
     {
       "path": "gateway/asr_nemotron.py",
@@ -2101,6 +2121,16 @@
       "path": "gateway/durable_media_requests.py",
       "sha256": "3585015d8f1e9deed37421ebd4142df1b98d9f27f8c84f7348de04f724e739a6",
       "size": 266890
+    },
+    {
+      "path": "gateway/enterprise_context.py",
+      "sha256": "91edd7332e6ea89ab9fb212ad6d6c9853ff7ccabc138db8d7707777b30ea6241",
+      "size": 4976
+    },
+    {
+      "path": "gateway/enterprise_rag.py",
+      "sha256": "7c58b7533b439b97a06f8a1ebad39a89256a9273f5ffdc1977fb2baa2354e2fa",
+      "size": 1216
     },
     {
       "path": "gateway/failover.py",
@@ -2898,6 +2928,16 @@
       "size": 1114
     },
     {
+      "path": "scripts/installed_model_onboarding_acceptance.py",
+      "sha256": "fec68062ad1989d30781e2b521672521c0e47729b02f92ff5655548d96dd3dc2",
+      "size": 6424
+    },
+    {
+      "path": "scripts/installed_subscription_first_turn.py",
+      "sha256": "17440a4c92596b3ee020b3f464636cd3b66d82e95e186f69ea0b9b4c35f119d6",
+      "size": 5017
+    },
+    {
       "path": "scripts/kb_doctor.py",
       "sha256": "049c44c18d77b8eb95ddd04e09280bd419e2b0bbb0ec295bfbde1c26caf33dad",
       "size": 7421
@@ -3348,6 +3388,11 @@
       "size": 6625
     },
     {
+      "path": "tests/test_enterprise_request_context.py",
+      "sha256": "c0e8f34e3b205aba040dafdb4dd2b60571975ebb128ff142ff0e056779577ee2",
+      "size": 3833
+    },
+    {
       "path": "tests/test_export_python_payload_ownership.py",
       "sha256": "76e2126a2e00e96d81cd9e60db8b3abdd53794b5e0b43134c08aa59c9cc797fd",
       "size": 4067
@@ -3699,8 +3744,8 @@
     },
     {
       "path": "tests/test_open_source_snapshot.py",
-      "sha256": "a0dc097bc7de67d2fe88897c925d34a659314ab38f9c5b01fe591dd4332facc4",
-      "size": 6093
+      "sha256": "21cce3ee0d26e71fda95f4f06a1d52eedef54c335899348f9adacfc70fc0eb89",
+      "size": 6159
     },
     {
       "path": "tests/test_openai_compat_probe_safety.py",

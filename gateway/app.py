@@ -47,6 +47,7 @@ from gateway.admin import router as admin_router
 from gateway.channel_recovery import router as channel_recovery_router
 from gateway.subscription_connectors import router as subscription_connectors_router
 from gateway.team_session import router as team_session_router
+from gateway.enterprise_rag import router as enterprise_rag_router
 from gateway.privacy_admin import (
     initialize_privacy_rights,
     router as privacy_admin_router,
@@ -2032,6 +2033,7 @@ app.include_router(channel_recovery_router)
 app.include_router(privacy_admin_router)
 app.include_router(subscription_connectors_router)
 app.include_router(team_session_router)
+app.include_router(enterprise_rag_router)
 
 
 def _compute_code_version() -> int:

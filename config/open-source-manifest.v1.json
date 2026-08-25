@@ -31,6 +31,7 @@
     ".github/workflows/publish-early-access.yml",
     ".github/workflows/release.yml",
     "docs/CODE_SIGNING_POLICY.md",
+    "docs/MSIX_STORE_RELEASE_READINESS.md",
     "docs/ENTERPRISE_RAG_AUTHORIZATION_ARCHITECTURE.md",
     "docs/data-lifecycle.v1.json",
     "docs/NACHUAN_PLUGIN_KERNEL_STRATEGY.md",

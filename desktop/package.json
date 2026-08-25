@@ -38,7 +38,8 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node scripts/node-runtime-policy.mjs run scripts/vitest-isolated-runner.mjs run --testTimeout=30000 --no-file-parallelism",
-    "security:release": "node scripts/release-security.mjs scan ../dist/seed-connections.json release"
+    "security:release": "node scripts/release-security.mjs scan ../dist/seed-connections.json release",
+    "package:store:check": "node scripts/store-msix-readiness.mjs"
   },
   "dependencies": {
     "electron-updater": "6.8.9",

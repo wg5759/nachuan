@@ -140,6 +140,7 @@ def test_real_manifest_keeps_the_human_facing_chinese_maintenance_entry() -> Non
     assert "安装与维护/README.md" in public_files
     assert "install.ps1" in public_files
     assert "docs/CODE_SIGNING_POLICY.md" in public_files
+    assert "docs/MSIX_STORE_RELEASE_READINESS.md" in public_files
     assert "安装与维护/安装开源版.cmd" in public_files
     assert "安装与维护/更新开源版.cmd" in public_files
     assert "安装与维护/诊断开源版.cmd" in public_files
