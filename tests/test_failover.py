@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import pytest
 
-from gateway.failover import FALLBACKS, chat_with_fallback, fallback_chain
+from gateway.failover import (
+    FALLBACKS,
+    chat_with_fallback,
+    fallback_chain,
+    stream_with_fallback,
+)
 from gateway.providers.base import ProviderError, ProviderSubmissionOutcomeUnknown
 from gateway.schemas import ChatCompletionRequest
 
@@ -134,6 +140,148 @@ async def test_failover_all_fail_raises():
     router = _Router({"glm": _Route(_Prov("volcano", fail=True))})
     with pytest.raises(ProviderError):
         await chat_with_fallback(router, _req("glm"))
+
+
+async def test_chat_uses_bounded_provider_declared_timeout_without_changing_defaults(
+    monkeypatch,
+):
+    from gateway import failover
+
+    class Attempt:
+        call_id = "test-call"
+
+    async def resolve_ledger(_ledger):
+        return object()
+
+    async def start_attempt(*_args, **_kwargs):
+        return Attempt()
+
+    async def finish_attempt(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(failover, "resolve_provider_call_ledger_durable", resolve_ledger)
+    monkeypatch.setattr(failover, "start_provider_attempt_durable", start_attempt)
+    monkeypatch.setattr(failover, "finish_provider_attempt_durable", finish_attempt)
+
+    class Provider(_Prov):
+        chat_timeout_s = 0.1
+
+        async def chat(self, req, upstream):
+            self.calls += 1
+            await asyncio.sleep(0.04)
+            return {
+                "choices": [{"message": {"content": "from subscription"}}],
+                "usage": {},
+            }
+
+    monkeypatch.setattr(failover, "DEFAULT_ATTEMPT_TIMEOUT_SEC", 0.01)
+    monkeypatch.setattr(failover, "DEFAULT_TOTAL_TIMEOUT_SEC", 0.02)
+    provider = Provider("subscription")
+    result, served, _route = await chat_with_fallback(
+        _Router({"subscription-model": _Route(provider)}),
+        _req("subscription-model"),
+    )
+
+    assert result["choices"][0]["message"]["content"] == "from subscription"
+    assert served == "subscription-model"
+    assert provider.calls == 1
+
+
+@pytest.mark.parametrize(
+    ("declared", "explicit_attempt", "explicit_total"),
+    [
+        (None, None, None),
+        (180.0, None, None),
+        (180.0, 0.5, 0.7),
+        (True, None, None),
+        (301.0, None, None),
+    ],
+)
+def test_chat_timeout_budget_contract_is_bounded_and_explicit_values_win(
+    declared,
+    explicit_attempt,
+    explicit_total,
+):
+    from gateway import failover
+
+    class Provider:
+        chat_timeout_s = declared
+
+    route = _Route(Provider())
+    attempt = failover._provider_chat_attempt_budget(
+        route.provider,
+        explicit_attempt,
+    )
+    total = failover._provider_chat_total_budget(
+        [("model", route)],
+        explicit_total,
+    )
+
+    expected_declared = declared if type(declared) in {int, float} and declared <= 300 else None
+    assert attempt == (
+        explicit_attempt
+        if explicit_attempt is not None
+        else expected_declared or failover.DEFAULT_ATTEMPT_TIMEOUT_SEC
+    )
+    assert total == (
+        explicit_total
+        if explicit_total is not None
+        else max(
+            failover.DEFAULT_TOTAL_TIMEOUT_SEC,
+            expected_declared + failover._DECLARED_CHAT_TOTAL_GRACE_SEC
+            if expected_declared
+            else failover.DEFAULT_TOTAL_TIMEOUT_SEC,
+        )
+    )
+
+
+async def test_stream_uses_bounded_provider_declared_first_chunk_timeout(
+    monkeypatch,
+):
+    from gateway import failover
+
+    class Attempt:
+        call_id = "stream-test-call"
+
+    async def resolve_ledger(_ledger):
+        return object()
+
+    async def start_attempt(*_args, **_kwargs):
+        return Attempt()
+
+    async def finish_attempt(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(failover, "resolve_provider_call_ledger_durable", resolve_ledger)
+    monkeypatch.setattr(failover, "start_provider_attempt_durable", start_attempt)
+    monkeypatch.setattr(failover, "finish_provider_attempt_durable", finish_attempt)
+
+    class Provider:
+        name = "subscription"
+        stream_attempt_timeout_s = 0.1
+        stream_first_chunk_timeout_s = 0.1
+        stream_total_timeout_s = 0.2
+
+        async def stream(self, req, upstream):
+            await asyncio.sleep(0.04)
+            yield {
+                "model": req.model,
+                "choices": [{"delta": {"content": "hello"}}],
+            }
+
+    monkeypatch.setattr(failover, "DEFAULT_STREAM_ATTEMPT_TIMEOUT_SEC", 0.01)
+    monkeypatch.setattr(failover, "DEFAULT_STREAM_TOTAL_TIMEOUT_SEC", 0.02)
+    monkeypatch.setattr(failover, "DEFAULT_FIRST_CHUNK_TIMEOUT_SEC", 0.01)
+    chunks = [
+        chunk
+        async for chunk in stream_with_fallback(
+            _Router({"subscription-model": _Route(Provider())}),
+            _req("subscription-model"),
+        )
+    ]
+
+    assert len(chunks) == 1
+    assert chunks[0]["choices"][0]["delta"]["content"] == "hello"
 
 
 class _SSLProv(_Prov):

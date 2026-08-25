@@ -99,6 +99,10 @@ class CodexProvider(ChatProvider):
     # Official subscription turns include local CLI startup and account routing.
     # Admin connection validation must not apply the 10/15 second HTTP probe
     # budget, otherwise it cancels a still-running contained CLI turn.
+    chat_timeout_s = 180.0
+    stream_attempt_timeout_s = 180.0
+    stream_first_chunk_timeout_s = 180.0
+    stream_total_timeout_s = 195.0
     connection_probe_timeout_s = 180.0
 
     def __init__(

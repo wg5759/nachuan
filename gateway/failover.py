@@ -68,6 +68,8 @@ def _env_timeout(name: str, default: float) -> float:
 # 180/300 seconds internally).
 DEFAULT_ATTEMPT_TIMEOUT_SEC = _env_timeout("NACHUAN_FAILOVER_ATTEMPT_TIMEOUT", 25.0)
 DEFAULT_TOTAL_TIMEOUT_SEC = _env_timeout("NACHUAN_FAILOVER_TOTAL_TIMEOUT", 55.0)
+_MAX_DECLARED_CHAT_TIMEOUT_SEC = 300.0
+_DECLARED_CHAT_TOTAL_GRACE_SEC = 15.0
 DEFAULT_STREAM_ATTEMPT_TIMEOUT_SEC = _env_timeout(
     "NACHUAN_FAILOVER_STREAM_ATTEMPT_TIMEOUT", DEFAULT_TOTAL_TIMEOUT_SEC
 )
@@ -312,6 +314,92 @@ def _timeout_or_default(value: float | None, default: float) -> float:
     return candidate if math.isfinite(candidate) and candidate > 0 else default
 
 
+def _declared_provider_timeout(
+    provider: object,
+    attribute: str,
+) -> float | None:
+    value = getattr(provider, attribute, None)
+    if (
+        not isinstance(attribute, str)
+        or isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or not 0 < float(value) <= _MAX_DECLARED_CHAT_TIMEOUT_SEC
+    ):
+        return None
+    return float(value)
+
+
+def _declared_provider_chat_timeout(provider: object) -> float | None:
+    return _declared_provider_timeout(provider, "chat_timeout_s")
+
+
+def _provider_chat_attempt_budget(
+    provider: object,
+    explicit_timeout: float | None,
+) -> float:
+    if explicit_timeout is not None:
+        return _timeout_or_default(explicit_timeout, DEFAULT_ATTEMPT_TIMEOUT_SEC)
+    return _declared_provider_chat_timeout(provider) or DEFAULT_ATTEMPT_TIMEOUT_SEC
+
+
+def _provider_chat_total_budget(
+    resolved_chain: list[tuple[str, object | None]],
+    explicit_timeout: float | None,
+) -> float:
+    if explicit_timeout is not None:
+        return _timeout_or_default(explicit_timeout, DEFAULT_TOTAL_TIMEOUT_SEC)
+    declared = [
+        timeout
+        for _mid, route in resolved_chain
+        if route is not None
+        for timeout in [_declared_provider_chat_timeout(route.provider)]
+        if timeout is not None
+    ]
+    return max(
+        DEFAULT_TOTAL_TIMEOUT_SEC,
+        max(declared) + _DECLARED_CHAT_TOTAL_GRACE_SEC
+        if declared
+        else DEFAULT_TOTAL_TIMEOUT_SEC,
+    )
+
+
+def _provider_stream_budget(
+    provider: object,
+    attribute: str,
+    explicit_timeout: float | None,
+    default: float,
+) -> float:
+    if explicit_timeout is not None:
+        return _timeout_or_default(explicit_timeout, default)
+    return _declared_provider_timeout(provider, attribute) or default
+
+
+def _provider_stream_total_budget(
+    resolved_chain: list[tuple[str, object | None]],
+    explicit_timeout: float | None,
+) -> float:
+    if explicit_timeout is not None:
+        return _timeout_or_default(explicit_timeout, DEFAULT_STREAM_TOTAL_TIMEOUT_SEC)
+    declared: list[float] = []
+    for _mid, route in resolved_chain:
+        if route is None:
+            continue
+        direct = _declared_provider_timeout(route.provider, "stream_total_timeout_s")
+        attempt = _declared_provider_timeout(
+            route.provider,
+            "stream_attempt_timeout_s",
+        )
+        if direct is not None:
+            declared.append(direct)
+        elif attempt is not None:
+            declared.append(attempt + _DECLARED_CHAT_TOTAL_GRACE_SEC)
+    return max(
+        DEFAULT_STREAM_TOTAL_TIMEOUT_SEC,
+        max(declared) if declared else DEFAULT_STREAM_TOTAL_TIMEOUT_SEC,
+    )
+
+
 async def chat_once_with_deadline(
     provider: Any,
     req: ChatCompletionRequest,
@@ -523,25 +611,30 @@ async def chat_with_fallback(
     “提交结果未知”且停止备用链；只有可证明发生在提交前的连接失败才切换，
     从机制上避免同一用户操作被模型商重复执行或收费。
     """
-    attempt_budget = _timeout_or_default(attempt_timeout, DEFAULT_ATTEMPT_TIMEOUT_SEC)
-    total_budget = _timeout_or_default(total_timeout, DEFAULT_TOTAL_TIMEOUT_SEC)
     chain = fallback_chain(req.model, req)
+    resolved_chain = [(mid, router.resolve(mid)) for mid in chain]
+    total_budget = _provider_chat_total_budget(
+        resolved_chain,
+        total_timeout,
+    )
     req = _maybe_compress_long(req)  # 超长输入：有损压冗余消息省 token（不动用户问题）
     last: ProviderError | None = None
     deadline = time.monotonic() + total_budget
     ledger = await resolve_provider_call_ledger_durable(provider_call_ledger)
     context = call_context or current_provider_call_context()
     attempt_number = 0
-    for i, mid in enumerate(chain):
-        route = router.resolve(mid)
+    for i, (mid, route) in enumerate(resolved_chain):
         if route is None:
             continue
+        provider = route.provider
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             last = ProviderError("消息渠道总延迟预算已耗尽", status_code=504)
             break
-        timeout = min(attempt_budget, remaining)
-        provider = route.provider
+        timeout = min(
+            _provider_chat_attempt_budget(provider, attempt_timeout),
+            remaining,
+        )
         upstream_model = str(route.upstream_model)
         provider_request = _sub(req, mid)
         attempt_number += 1
@@ -693,15 +786,9 @@ async def stream_with_fallback(
     never replays the answer from a backup model.
     """
 
-    attempt_budget = _timeout_or_default(
-        attempt_timeout, DEFAULT_STREAM_ATTEMPT_TIMEOUT_SEC
-    )
-    total_budget = _timeout_or_default(total_timeout, DEFAULT_STREAM_TOTAL_TIMEOUT_SEC)
-    first_budget = _timeout_or_default(
-        first_chunk_timeout, DEFAULT_FIRST_CHUNK_TIMEOUT_SEC
-    )
-    idle_budget = _timeout_or_default(idle_chunk_timeout, DEFAULT_IDLE_CHUNK_TIMEOUT_SEC)
     chain = fallback_chain(req.model, req)
+    resolved_chain = [(mid, router.resolve(mid)) for mid in chain]
+    total_budget = _provider_stream_total_budget(resolved_chain, total_timeout)
     req = _maybe_compress_long(req)  # 超长输入：有损压冗余消息省 token（不动用户问题）
     last: ProviderError | None = None
     last_type = "provider_error"
@@ -709,10 +796,10 @@ async def stream_with_fallback(
     ledger = await resolve_provider_call_ledger_durable(provider_call_ledger)
     context = call_context or current_provider_call_context()
     attempt_number = 0
-    for i, mid in enumerate(chain):
-        route = router.resolve(mid)
+    for i, (mid, route) in enumerate(resolved_chain):
         if route is None:
             continue
+        provider = route.provider
         # Freeze scalar attribution immediately after resolution.  A long
         # first-token wait must not let an in-place hot reload rewrite the
         # provider/upstream/tier later recorded for this invocation.
@@ -722,8 +809,25 @@ async def stream_with_fallback(
             last = ProviderError("流式响应总延迟预算已耗尽", status_code=504)
             last_type = "stream_total_timeout"
             break
-        attempt_deadline = min(deadline, time.monotonic() + attempt_budget)
-        provider = route.provider
+        route_attempt_budget = _provider_stream_budget(
+            provider,
+            "stream_attempt_timeout_s",
+            attempt_timeout,
+            DEFAULT_STREAM_ATTEMPT_TIMEOUT_SEC,
+        )
+        route_first_budget = _provider_stream_budget(
+            provider,
+            "stream_first_chunk_timeout_s",
+            first_chunk_timeout,
+            DEFAULT_FIRST_CHUNK_TIMEOUT_SEC,
+        )
+        route_idle_budget = _provider_stream_budget(
+            provider,
+            "stream_idle_timeout_s",
+            idle_chunk_timeout,
+            DEFAULT_IDLE_CHUNK_TIMEOUT_SEC,
+        )
+        attempt_deadline = min(deadline, time.monotonic() + route_attempt_budget)
         upstream_model = str(route.upstream_model)
         provider_request = _sub(req, mid)
         attempt_number += 1
@@ -749,16 +853,16 @@ async def stream_with_fallback(
                 now = time.monotonic()
                 first_total_remaining = deadline - now
                 first_attempt_remaining = attempt_deadline - now
-                if deadline <= attempt_deadline and first_total_remaining <= first_budget:
+                if deadline <= attempt_deadline and first_total_remaining <= route_first_budget:
                     first_timeout_type = "stream_total_timeout"
-                elif attempt_deadline < deadline and first_attempt_remaining <= first_budget:
+                elif attempt_deadline < deadline and first_attempt_remaining <= route_first_budget:
                     first_timeout_type = "stream_attempt_timeout"
                 else:
                     first_timeout_type = "first_chunk_timeout"
                 first = await asyncio.wait_for(
                     gen.__anext__(),
                     timeout=min(
-                        first_budget,
+                        route_first_budget,
                         max(0.001, first_attempt_remaining),
                         max(0.001, first_total_remaining),
                     ),
@@ -878,14 +982,14 @@ async def stream_with_fallback(
                         status_code=504,
                     )
                     return
-                if remaining <= idle_budget:
+                if remaining <= route_idle_budget:
                     timeout_type = "stream_total_timeout"
                 else:
                     timeout_type = "stream_idle_timeout"
                 try:
                     chunk = await asyncio.wait_for(
                         gen.__anext__(),
-                        timeout=min(idle_budget, remaining),
+                        timeout=min(route_idle_budget, remaining),
                     )
                 except StopAsyncIteration:
                     await accounting.finish("success")

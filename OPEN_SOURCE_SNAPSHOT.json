@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260825-47",
+  "candidate_id": "nachuan-source-alpha-20260826-48",
   "file_count": 874,
   "files": [
     {
@@ -2149,8 +2149,8 @@
     },
     {
       "path": "gateway/failover.py",
-      "sha256": "014310dda9c1521b132ae43cb30ae3a4b9dea48fddacebb56db6f5fb6cf79c17",
-      "size": 44805
+      "sha256": "140f95b4c26b386893e43553b489ccd467be54365ad0a43fe84db758a88a4063",
+      "size": 48051
     },
     {
       "path": "gateway/gateway_installation_control.py",
@@ -2369,8 +2369,8 @@
     },
     {
       "path": "gateway/providers/codex.py",
-      "sha256": "be7931c087e760853d08ddd6a8b53450bd2dd48bda4ce86de7463676cbf36c20",
-      "size": 7491
+      "sha256": "ce5a1b899a3b561c5451b32ee4a4367d6c205b6c0e91257b1f279ce3a3b108cc",
+      "size": 7631
     },
     {
       "path": "gateway/providers/echo.py",
@@ -3459,8 +3459,8 @@
     },
     {
       "path": "tests/test_failover.py",
-      "sha256": "eb8c83e165b585e407d54fb2142c26e9439e762a1dd337585ed2f3da4fc4ea90",
-      "size": 6316
+      "sha256": "414f751bbdb9220ec955151f3f4c60a70930f3b635d505448d0f536392242460",
+      "size": 10692
     },
     {
       "path": "tests/test_failover_latency_budget.py",
