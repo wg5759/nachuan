@@ -22,7 +22,11 @@ hiddenimports += collect_submodules('orchestrator')
 # gateway.app imports the reviewed online backup module statically.  Keep an
 # explicit frozen-build edge as a regression guard without collecting every
 # operator-only script into the commercial runtime.
-hiddenimports += ['scripts.sqlite_backup', 'scripts.run_weixin_ilink_bridge']
+hiddenimports += [
+    'cli.isolated_plugin_worker_entrypoint',
+    'scripts.sqlite_backup',
+    'scripts.run_weixin_ilink_bridge',
+]
 # lean/full 商业候选当前均为 text-first：只收文字网关、渠道桥接与多模型协作的直接运行库。
 # 本地语音/LLMLingua 仍可从源码用显式 extra 评估，但在许可证和二进制闭包完成前不得冻结进发行引擎。
 for _pkg in ('uvicorn', 'fastapi', 'pydantic'):

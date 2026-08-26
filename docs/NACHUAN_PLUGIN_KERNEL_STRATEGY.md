@@ -1,6 +1,6 @@
 # 纳川插件内核策略：吸收 DeepSeek Harness“一切皆插件”的精华
 
-> 状态：PK-001～PK-005 最小纵切已实施；PK-006～PK-008 待推进
+> 状态：PK-001～PK-006 最小纵切已实施；PK-007～PK-008 待推进
 > 日期：2026-08-26
 > 目标：在不破坏纳川现有安全账本、真实渠道和安装发行边界的前提下，把模型、工具、协作、知识、渠道和 UI 变成可组合能力
 
@@ -240,7 +240,7 @@ Bundle 是签名的插件组合，不复制源码：
 
 ## 8. 当前实现与剩余差距
 
-截至 2026-08-26，PK-001～PK-005 最小纵切已经落地：`orchestrator/plugin_kernel.py`
+截至 2026-08-26，PK-001～PK-006 最小纵切已经落地：`orchestrator/plugin_kernel.py`
 提供严格 manifest、service/event registry、能力票据、借用租约、LIFO effect 回收、
 失败回滚、卸载和 quarantine；`EchoProvider` 已通过 `provider.factory.echo` 内置插件
 接入 legacy Router。`ToolRegistry` 新增闭集 schema、精确 `tool.execute:<name>` 能力、
@@ -256,6 +256,9 @@ PK-005 新增闭集 `UiSlotRegistry`，首个内置 `workspace.orchestration` sl
 已编译的 `orchestrate` 组件；Host 不可下发 JS、HTML、URL 或文案。Electron Main 只能通过
 挑战后同一 socket 的 `plugin.ui.snapshot` HMAC 会话能力读取，preload 只暴露无参数只读 IPC，
 Renderer 再次验证闭集 DTO；Web 使用普通受保护只读端点保持同形 API。
+PK-006 增加签名第三方 bundle、闭集 SBOM、撤销集、持久 quarantine、单次有界 IPC 和
+Windows 真 AppContainer worker。第三方 Python 不被导入 Engine；内核只挂载内置代理，再按
+`id + version + artifact_sha256` 精确选择已验 bundle。
 
 仍待统一迁移的部分包括：
 
@@ -320,13 +323,18 @@ Renderer 再次验证闭集 DTO；Web 使用普通受保护只读端点保持同
 - preload 只暴露无参数 `getPluginUiSnapshot()`；Main 和 Renderer 都用同一闭集解析器复验，通用 Renderer Engine 代理明确拒绝 `/v1/plugin-ui/snapshot`，renderer 无长期 key；
 - Web shim 通过带 runtime authority 的 `/v1/plugin-ui/snapshot` 获取同一 DTO，不携带 approval key；Team Web 继续标 planned；
 - 现有 `OrchestratePane` 代码仍由正式构建编译，插件只能决定入口是否出现，不能携带或执行组件代码；slot 缺失或响应畸形时入口安全隐藏；
-- 聚焦 Python 144 项、Desktop 81 项、typecheck、Web/Electron build 与 wheel 自包含合同通过。当前只证明内置只读菜单 slot，不证明动态第三方 UI、安全 worker、热更新订阅或其他面板已插件化。
+- 聚焦公开候选 Python 153项/6跳过、Desktop 81项、typecheck、Web/Electron build 与 wheel 自包含合同通过；候选57为887个声明文件。最终公开提交 `8017158` 的 Actions `32939620298` 为后端4153/40、Desktop1433/14、发行证据37、发行安全18全绿。本机社区版已升级至同提交，doctor、health/readiness、数据库8/8、在线备份17库均正常；`-I` 隔离 wheel 实际加载五插件和 UI slot，卸载后slot归零、关闭后插件归零，HTTP快照/Web shim/正式Web资产字节全部复验。当前只证明内置只读菜单 slot，不证明动态第三方 UI、安全 worker、热更新订阅或其他面板已插件化。
 
-### PK-006：隔离第三方插件
+### PK-006：隔离第三方插件（已完成最小纵切）
 
-- 独立低权限 worker；
-- 插件 IPC、出站域、文件根和资源限额；
-- 精确版本授权、签名/SBOM、撤销和 quarantine。
+- bundle 只允许 `manifest.json/plugin.py/sbom.json` 三个普通 non-reparse 文件；manifest、SBOM、请求和响应都必须是无重复字段的 canonical JSON；
+- Ed25519 签名绑定精确入口/SBOM SHA-256、publisher key id、版本、capability 和 CPU/内存/请求/响应/墙钟限额；未知 publisher、改字节、多文件或撤销身份均在 worker 前拒绝；
+- broker 只把验过的 `plugin.py` 字节复制到每次临时执行根；worker 以 `-I -S -B`、封闭环境和四字节长度帧只处理一个 JSON 请求，不在 argv 携带凭据或客户目标；
+- Windows 启动器用 `SECURITY_CAPABILITIES` 创建无 capability AppContainer，恢复线程前反查 `TokenIsAppContainer=1`；未授网络 capability，仅给专用 CPython 运行时缓存和本次执行根最小 ACL；
+- 子进程以 `CREATE_SUSPENDED` 起动，先纳入 kill-on-close Job Object 再恢复；Job 强制活动进程数 1、CPU 时间和内存上限，墙钟超时终止整个 Job。Windows `CHILD_PROCESS_POLICY` 会使 CPython 3.12 在入口前以 `0xC0000142` 退出，因此不做假兼容，改由已实验的单进程 Job 限额封锁；
+- 协议错误、worker 异常或超时会把精确签名身份写入独立 SQLite quarantine，重启 broker 也不会自动复活；新版本/新哈希不会被旧身份误伤；
+- 内核中只挂载 builtin `isolated.plugin.execute` 代理，第三方 manifest 仍不能 in-process mount；服务借用期间禁止卸载，释放后注册和引用全部清理；
+- 当前本机证据为核心/worker/AppContainer/proxy 27 项与插件/发行相邻 89 项全绿，恶意样例确认插件能正常 import `socket/subprocess`，但不能读宿主哨兵文件、写外部文件、连本机 TCP 或拉起子进程。它不等于插件市场、Linux/macOS 隔离、出站白名单或动态第三方 UI 已完成。
 
 ### PK-007：企业 RAG 插件组合
 
@@ -384,5 +392,9 @@ Renderer 再次验证闭集 DTO；Web 使用普通受保护只读端点保持同
   https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/extensions/cordis-client-runner/README.md
 - Process Sandbox 的 full/partial 边界：
   https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/sandbox.md
+- Microsoft AppContainer 实现与 `SECURITY_CAPABILITIES` 启动示例：
+  https://learn.microsoft.com/windows/win32/secauthz/implementing-an-appcontainer
+- Microsoft `UpdateProcThreadAttribute` 的 AppContainer、句柄列表和进程创建属性合同：
+  https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute
 - Cordis 可逆 effect 与 reactive coeffect 论文预印本：
   https://github.com/cordiverse/paper

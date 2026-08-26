@@ -31,6 +31,7 @@ known vulnerabilities。当前 lock 仍须在发布提交中重新导出并生�
 
 ## 已实施的故障关闭策略
 
+- 第三方插件：PK-006 只接受三文件闭集、canonical JSON、Ed25519 签名与绑定入口哈希的 manifest/SBOM；未知 publisher、撤销身份、加文件或改字节均在执行前拒绝。已验代码被复制到单次临时根，以无网络 capability 的 Windows AppContainer 和单进程/CPU/内存/kill-on-close Job Object 运行；启动器在恢复线程前验 `TokenIsAppContainer=1`。一次一帧 IPC 不携带父进程凭据，超时/协议/worker 异常按精确签名身份持久 quarantine。真实恶意样例已证明能正常 import `socket/subprocess` 但不能读宿主文件、写外部文件、连本机 TCP 或创建子进程。此结论只覆盖该 Windows 代理路径，不把第三方字节宣传为“无病毒/无后门”，也不代替最终包 SBOM/漏洞/多引擎扫描。
 - 本地 GGUF：`gateway/local_model.py` 不再使用浮动 `resolve/master`。远程下载默认关闭；只有同时提供
   `NACHUAN_ENABLE_VERIFIED_MODEL_DOWNLOAD=1`、不可变 revision 和预审 SHA-256 时才下载，下载完成后先验
   SHA-256、GGUF 魔数和体积上限，匹配后才原子落盘。
@@ -220,7 +221,7 @@ pytest 自行 exit 0、9 个迁移模块 `py_compile` exit 0。晚期源码已�
 - 当前生产 `data/weixin_access.json` 不存在；旧 bridge 的 `access_locked` 普通文本静默返回且旧 Supervisor 误报 ready，直接解释“你好无回复”。当前源码已把锁定态写为 degraded/not-ready，并在不调用模型时显式回复 `/whoami` 配置指引；尚待新代码 live 重启、owner 精确白名单和真实收发，禁止用 production `ALLOW_ALL` 绕过。
 - 飞书旧 SDK INFO 日志曾把 WebSocket `access_key`/`ticket` 写入宽 ACL 的 `data/logs/feishu.out.log`。当前代码已补 SDK ERROR+脱敏、严格 access file、durable inbox/outbox、同 chat 顺序、claim fencing、重启续跑、终态有界维护/dead 墓碑和 Supervisor 业务 health；开放 P0/P1 转为历史日志受控清理、旧会话失效、live ACL/reparse、最终全量/构建、live 重启和真实账号 E2E，缺一仍默认关闭。
 - Telegram 正式包未包含、Supervisor 不管理，默认/production runner 在读取凭据或联网前 exit 78。它缺独立 scoped key 与 durable delivery/health；未来生产启用前必须重新做供应链、权限、网络和可靠性审计。
-- 同一 Windows SID 隔离仍是开放 P0：同 SID 恶意进程可使用 owner 权限读取用户文件和 DPAPI/safeStorage；当前用户 + SYSTEM ACL、HMAC/scoped key、净化环境和 Job Object 都不能替代独立低权限身份/AppContainer/VM。
+- 除 PK-006 Windows 第三方插件代理外，其他同一 Windows SID 外部进程隔离仍是开放 P0：同 SID 恶意进程可使用 owner 权限读取用户文件和 DPAPI/safeStorage；用户 + SYSTEM ACL、HMAC/scoped key、净化环境和普通 Job Object 不能替代独立低权限身份/AppContainer/VM。
 - `scripts/_archive` 仍保留会读取历史明文连接文件的旧探针。它们不是生产入口且不进 engine/Electron 包，但必须继续从正式源码/制品分发排除；若不再承担取证用途，应在保留必要证据后删除，不能把 archive 脚本当运维工具运行。
 
 ## 复核命令

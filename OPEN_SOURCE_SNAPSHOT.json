@@ -1,6 +1,6 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260826-57",
-  "file_count": 887,
+  "candidate_id": "nachuan-source-alpha-20260826-59",
+  "file_count": 895,
   "files": [
     {
       "path": ".claude/commands/xreview.md",
@@ -94,8 +94,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "f9d9c3cb505b699252baeef4b6effb7381d69cca20b1142121b9b30d724fb72e",
-      "size": 4335
+      "sha256": "2d7ded4f5358efcac9c72b13b11a273c06ccf867ec291dc262bff506d18201b7",
+      "size": 4519
     },
     {
       "path": "SECURITY.md",
@@ -151,6 +151,11 @@
       "path": "cli/engine_entrypoint.py",
       "sha256": "f2ce946888a8ad658ed29f9509035e4366eafe04955076f0e165a0e3550992dc",
       "size": 2436
+    },
+    {
+      "path": "cli/isolated_plugin_worker_entrypoint.py",
+      "sha256": "869958cecf8dcd0d073f7a15877e07c2550f75d88f46c9edc2975c4e7e3cda51",
+      "size": 5287
     },
     {
       "path": "cli/kimi_auth_probe_entrypoint.py",
@@ -1909,8 +1914,8 @@
     },
     {
       "path": "docs/NACHUAN_PLUGIN_KERNEL_STRATEGY.md",
-      "sha256": "51954b39a9664338dfc92751a5557a9f1ad818d1e5903888b0b73a3b8450a59e",
-      "size": 22059
+      "sha256": "bf9c252de32a4ca2adeb0eeb57332035e3d1595a499ac5ab49be12185fbcccfa",
+      "size": 24908
     },
     {
       "path": "docs/OPEN_SOURCE_STRATEGY_OPENCLAW_COMPARISON.md",
@@ -1924,8 +1929,8 @@
     },
     {
       "path": "docs/THIRD_PARTY_SECURITY.md",
-      "sha256": "1ffa0e6ba03371b4d3675b304c1b55d0855fae1a974537e8bf1dd34cf9bc6dc4",
-      "size": 46792
+      "sha256": "7923c15932f01cf50ad7eab3d58168ff928ba12efe2bc37088efa8300a0e2b29",
+      "size": 47676
     },
     {
       "path": "docs/adr/0001-unified-turn-lifecycle.md",
@@ -2014,13 +2019,13 @@
     },
     {
       "path": "engine.spec",
-      "sha256": "3014cd149c436a541b4b719f05a78e70ea9edab2299c2ee0a8e5418b1263ca05",
-      "size": 3594
+      "sha256": "37093e7da66bad5926c88ea3430b600bf625ba08e9a3c3d35a59885422931a54",
+      "size": 3650
     },
     {
       "path": "engine_main.py",
-      "sha256": "16124a2e98d91fdf6f6824b1839f1400cd3518c7dbc923827a85ecd75e021e56",
-      "size": 2928
+      "sha256": "033265f2b6e6493b0d513577bc7f2ca069fce2068110a531bae08a0c44f9ac4e",
+      "size": 4176
     },
     {
       "path": "gateway/__init__.py",
@@ -2688,6 +2693,16 @@
       "size": 4565
     },
     {
+      "path": "orchestrator/isolated_plugin.py",
+      "sha256": "a72b0af73e95d37c915a475af7e8b23942c9ac7bdd98dd7ea0679d2781ecb544",
+      "size": 20726
+    },
+    {
+      "path": "orchestrator/isolated_plugin_proxy.py",
+      "sha256": "ff80be214015823450be64142302815397039420c6255f9aec9f0008bd73a66b",
+      "size": 5825
+    },
+    {
       "path": "orchestrator/knowledge.py",
       "sha256": "67152037e388e55081c18785455eaecf03d52af70af0ffd46bec805dafafe5bd",
       "size": 17170
@@ -2801,6 +2816,11 @@
       "path": "orchestrator/webread.py",
       "sha256": "97973e1297be0031cc46c760d4628d28944829289737c7a13d76bdf4b8f96f01",
       "size": 5681
+    },
+    {
+      "path": "orchestrator/windows_appcontainer.py",
+      "sha256": "e8c8aeec9e56a7780a2558caa8454bd5826a37df491af5105d0ea79ac8dbafa3",
+      "size": 34686
     },
     {
       "path": "orchestrator/workflow_plugins.py",
@@ -3459,8 +3479,8 @@
     },
     {
       "path": "tests/test_engine_main.py",
-      "sha256": "8f2ede7a529d57cb54f0f00dc9cdd1eeba7d7c7876dd5269f073e6618e79668b",
-      "size": 6625
+      "sha256": "55ed063819c9df57fa47d2c755d552826af83e238082bdddb52970ae87d62d15",
+      "size": 9301
     },
     {
       "path": "tests/test_enterprise_authorization_facade.py",
@@ -3656,6 +3676,21 @@
       "path": "tests/test_intent.py",
       "sha256": "84b4dfbf410f4ea2454d06863e5e572c7280c5fd42b3e249b375561e9ab139e1",
       "size": 2536
+    },
+    {
+      "path": "tests/test_isolated_plugin_contract.py",
+      "sha256": "91b7681b5c0029d1148f44956023b95a13cc3d3a19f08a4090b1115c39b7b969",
+      "size": 7077
+    },
+    {
+      "path": "tests/test_isolated_plugin_proxy.py",
+      "sha256": "ecbd8dd74737f34ab48717b59bb7a06b58ed336e6a8e58fb6ed6a59512cbdaa9",
+      "size": 5151
+    },
+    {
+      "path": "tests/test_isolated_plugin_worker.py",
+      "sha256": "ed70e4d2dc38206c497ef31f1ba52896bb2164d161703523f88216196808ea53",
+      "size": 3352
     },
     {
       "path": "tests/test_kb_enterprise.py",
@@ -3979,8 +4014,8 @@
     },
     {
       "path": "tests/test_pip_packaging.py",
-      "sha256": "70f265924df0b2f99fa609ea798ca2be351dbe023ee7c62b9c6bd95637020a86",
-      "size": 13277
+      "sha256": "9caf50f5fd6eac03a9f2c1d35f47194bb487ea6f8f7504984b44e1ee2556f849",
+      "size": 13529
     },
     {
       "path": "tests/test_plugin_kernel.py",
@@ -4311,6 +4346,11 @@
       "path": "tests/test_weixin_turn_idempotency.py",
       "sha256": "2a3bc036219986b3dabc7cca67eeb46b97fb930c4d7e1e4920a2578b51e0a687",
       "size": 73098
+    },
+    {
+      "path": "tests/test_windows_appcontainer.py",
+      "sha256": "1e6c59e804b698834b561ef4db7d94294b678c8bb6423eca08c25d1b285c98bd",
+      "size": 7667
     },
     {
       "path": "tests/test_workflow_plugin_events.py",

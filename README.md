@@ -13,9 +13,11 @@
 模型、工具、工作流、RAG 组件、渠道和 UI 将逐步迁入稳定的能力缝隙；身份、租户、
 凭证、财务/幂等账本、企业 RAG 最终授权、审计真相和安装更新信任不能被插件绕过。
 
-当前 PK-001/PK-002 已提供严格插件 Manifest、Service/Event/Effect/Capability
-内核，以及由插件 service 构造的本地 EchoProvider 纵切。第三方和模型临时插件
-仍保持禁用，直到隔离 Worker、签名/SBOM、窄能力票据和卸载回滚验收完成。
+当前 PK-001～PK-006 已提供严格 Manifest、Service/Event/Tool/UI/Effect/Capability
+内核，以及 EchoProvider、受审 Skill、pipeline 事件、UI slot 等内置纵切。已验第三方
+Python bundle 可通过签名/SBOM 合同、单次有界 IPC、持久 quarantine 和 Windows
+AppContainer + Job Object 隔离代理运行，不导入主进程。该能力默认无第三方 bundle，
+也不等于插件市场、动态第三方 UI 或跨平台隔离已完成。
 
 ## 当前能力
 

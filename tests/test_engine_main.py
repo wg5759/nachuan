@@ -181,3 +181,79 @@ def test_installer_failure_returns_fixed_nonsecret_error(
     assert captured.out == ""
     assert captured.err == "NACHUAN_INSTALLATION_AUTHORITY_FAILED\n"
     assert "SECRET" not in captured.err
+
+
+def test_isolated_plugin_worker_argument_rejects_nonfrozen_or_unattested_callers(
+    monkeypatch,
+) -> None:
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert engine_main.run_engine_entrypoint(
+        [
+            engine_main.ISOLATED_PLUGIN_WORKER_ARGUMENT,
+            "plugin.py",
+            "1024",
+            "1024",
+            "500",
+            str(64 * 1024 * 1024),
+        ]
+    ) == 77
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(engine_main.os, "name", "nt")
+    fake_attestation = ModuleType("orchestrator.windows_appcontainer")
+    fake_attestation.current_process_is_nachuan_appcontainer = lambda: False  # type: ignore[attr-defined]
+    fake_attestation.fence_current_process_singleton = lambda **_kwargs: False  # type: ignore[attr-defined]
+    monkeypatch.setitem(
+        sys.modules,
+        "orchestrator.windows_appcontainer",
+        fake_attestation,
+    )
+    assert engine_main.run_engine_entrypoint(
+        [
+            engine_main.ISOLATED_PLUGIN_WORKER_ARGUMENT,
+            "plugin.py",
+            "1024",
+            "1024",
+            "500",
+            str(64 * 1024 * 1024),
+        ]
+    ) == 77
+    assert engine_main.run_engine_entrypoint(
+        [engine_main.ISOLATED_PLUGIN_WORKER_ARGUMENT, "plugin.py", "1024"]
+    ) == 64
+
+
+def test_attested_frozen_isolated_plugin_worker_dispatches_only_closed_arguments(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(engine_main.os, "name", "nt")
+    fake_attestation = ModuleType("orchestrator.windows_appcontainer")
+    fake_attestation.current_process_is_nachuan_appcontainer = lambda: True  # type: ignore[attr-defined]
+    fake_attestation.fence_current_process_singleton = lambda **_kwargs: True  # type: ignore[attr-defined]
+    calls: list[tuple[str, int, int]] = []
+    fake_worker = ModuleType("cli.isolated_plugin_worker_entrypoint")
+
+    def run(path: str, *, max_request: int, max_response: int) -> int:
+        calls.append((path, max_request, max_response))
+        return 23
+
+    fake_worker.run = run  # type: ignore[attr-defined]
+    monkeypatch.setitem(
+        sys.modules,
+        "orchestrator.windows_appcontainer",
+        fake_attestation,
+    )
+    monkeypatch.setitem(sys.modules, "cli.isolated_plugin_worker_entrypoint", fake_worker)
+
+    assert engine_main.run_engine_entrypoint(
+        [
+            engine_main.ISOLATED_PLUGIN_WORKER_ARGUMENT,
+            "plugin.py",
+            "2048",
+            "4096",
+            "500",
+            str(64 * 1024 * 1024),
+        ]
+    ) == 23
+    assert calls == [("plugin.py", 2048, 4096)]

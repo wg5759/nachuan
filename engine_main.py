@@ -11,9 +11,9 @@ from pathlib import Path
 
 from gateway.runtime_profile import enforce_frozen_store_profile
 
-
 INSTALLATION_PROVISION_ARGUMENT = "--nachuan-provision-installation-root"
 WEIXIN_BRIDGE_ARGUMENT = "--nachuan-weixin-bridge"
+ISOLATED_PLUGIN_WORKER_ARGUMENT = "--nachuan-isolated-plugin-worker"
 _EXIT_USAGE = 64
 _EXIT_UNAVAILABLE = 69
 _EXIT_REFUSED = 77
@@ -42,6 +42,37 @@ def run_engine_entrypoint(arguments: list[str] | None = None) -> int:
 
     args = list(sys.argv[1:] if arguments is None else arguments)
     if args:
+        if args[0] == ISOLATED_PLUGIN_WORKER_ARGUMENT:
+            if len(args) != 6:
+                return _EXIT_USAGE
+            if not bool(getattr(sys, "frozen", False)) or os.name != "nt":
+                return _EXIT_REFUSED
+            from orchestrator.windows_appcontainer import (
+                current_process_is_nachuan_appcontainer,
+                fence_current_process_singleton,
+            )
+
+            if not current_process_is_nachuan_appcontainer():
+                return _EXIT_REFUSED
+            try:
+                request_limit = int(args[2])
+                response_limit = int(args[3])
+                cpu_time_ms = int(args[4])
+                memory_bytes = int(args[5])
+            except ValueError:
+                return _EXIT_USAGE
+            if not fence_current_process_singleton(
+                cpu_time_ms=cpu_time_ms,
+                memory_bytes=memory_bytes,
+            ):
+                return _EXIT_REFUSED
+            from cli.isolated_plugin_worker_entrypoint import run
+
+            return run(
+                args[1],
+                max_request=request_limit,
+                max_response=response_limit,
+            )
         if args == [WEIXIN_BRIDGE_ARGUMENT]:
             # The signed engine payload is also the only reviewed Python
             # runtime available in an installed Desktop build. Reuse that

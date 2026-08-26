@@ -210,9 +210,13 @@ class TestPackageClosure:
         assert "gateway/sqlite_runtime.py" in names
         assert "orchestrator/durable_event_log.py" in names
         assert "orchestrator/plugin_kernel.py" in names
+        assert "orchestrator/isolated_plugin.py" in names
+        assert "orchestrator/isolated_plugin_proxy.py" in names
+        assert "orchestrator/windows_appcontainer.py" in names
         assert "orchestrator/tool_plugins.py" in names
         assert "orchestrator/ui_plugins.py" in names
         assert "orchestrator/workflow_plugins.py" in names
+        assert "cli/isolated_plugin_worker_entrypoint.py" in names
         assert "config/ui-slots.v1.json" in names
         assert any(
             name.startswith("gateway/web_ui/assets/") and name.endswith(".js")
