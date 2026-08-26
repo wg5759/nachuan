@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260827-72",
+  "candidate_id": "nachuan-source-alpha-20260827-73",
   "file_count": 910,
   "files": [
     {
@@ -3079,8 +3079,8 @@
     },
     {
       "path": "scripts/installed_subscription_first_turn.py",
-      "sha256": "b68add7b960ddc3803e587829f3fedd4c7d6025765e976e8e58361b4e6823da3",
-      "size": 9543
+      "sha256": "dee5ca5832a8e884a55e9c8f5f981d0761ca0a213f4ce00c9c0c8ae4e3bc9e4f",
+      "size": 9704
     },
     {
       "path": "scripts/kb_doctor.py",
@@ -3734,8 +3734,8 @@
     },
     {
       "path": "tests/test_installed_subscription_first_turn.py",
-      "sha256": "5fdca922cd7ce29e3d5a796419682b603f7c1e6253139d29e650d8dd20e4f342",
-      "size": 5921
+      "sha256": "3b1f0cdc58f151521aad79d7cca3bf31b12996b6ca2122cc3721955bea25bf3b",
+      "size": 6104
     },
     {
       "path": "tests/test_intent.py",
@@ -4556,6 +4556,6 @@
   "history_included": false,
   "license": "Apache-2.0",
   "schema": "nachuan.open-source-snapshot.v1",
-  "source_head": "63139011eaec9f00ec8e927783d3f110ab456fd5",
+  "source_head": "22716db89e7e61fafc332f04432664be5ae5e065",
   "source_worktree_dirty": true
 }
