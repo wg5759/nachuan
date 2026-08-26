@@ -98,13 +98,13 @@ describe('Connection Center subscription status', () => {
 
     expect(chooseHtml).toContain('DeepSeek API Key')
     expect(chooseHtml).toContain('Kimi API Key')
-    expect(chooseHtml).toContain('Codex / Kimi 订阅')
+    expect(chooseHtml).toContain('Codex / Kimi / Claude Code')
     expect(chooseHtml).toContain('本地模型')
     expect(chooseHtml).not.toMatch(/管理员|日志|发布|恢复/)
     expect(readyHtml).toContain('开始对话')
   })
 
-  it('shows one compact Codex/Kimi subscription surface without terminal details by default', async () => {
+  it('shows Codex, Kimi, and a truthful disabled Claude Code option without terminal details', async () => {
     const html = await renderConnectors([
       {
         id: 'codex',
@@ -141,6 +141,9 @@ describe('Connection Center subscription status', () => {
     expect(html).toContain('未安装')
     expect(html).toContain('先安装官方 Kimi Code 工具')
     expect(html).not.toContain('官方设备码登录')
+    expect(html).toContain('Claude Code')
+    expect(html).toContain('未启用')
+    expect(html).toContain('不会加入模型路由')
     expect(html).not.toContain('forged label')
     expect(html).not.toContain('unexpected')
     expect(html).not.toMatch(/api.?key|token|cookie|auth\.json|认证文件/i)

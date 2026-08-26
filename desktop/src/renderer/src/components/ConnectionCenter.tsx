@@ -332,13 +332,20 @@ export default function ConnectionCenter({
 
 type SubscriptionConnectorLoadState = 'loading' | 'ready' | 'error'
 
-const SUBSCRIPTION_CONNECTOR_ORDER = ['codex', 'kimi-code'] as const
+type SubscriptionDisplayId = SubscriptionConnector['id'] | 'claude-code'
+
+const SUBSCRIPTION_CONNECTOR_ORDER: readonly SubscriptionDisplayId[] = [
+  'codex',
+  'kimi-code',
+  'claude-code'
+]
 const SUBSCRIPTION_CONNECTOR_LABEL: Record<(typeof SUBSCRIPTION_CONNECTOR_ORDER)[number], string> = {
   codex: 'Codex',
-  'kimi-code': 'Kimi Code'
+  'kimi-code': 'Kimi Code',
+  'claude-code': 'Claude Code'
 }
 const SUBSCRIPTION_CONNECTOR_LOGIN_COMMAND: Record<
-  (typeof SUBSCRIPTION_CONNECTOR_ORDER)[number],
+  SubscriptionConnector['id'],
   string
 > = {
   codex: 'codex login --device-auth',
@@ -464,10 +471,18 @@ export function SubscriptionConnectorSection({
   renderAction?: (connector: SubscriptionConnector) => React.ReactNode
 }): React.ReactNode {
   const { t } = useTranslation()
-  const supported = SUBSCRIPTION_CONNECTOR_ORDER.flatMap((id) => {
-    const connector = connectors.find((candidate) => candidate?.id === id)
-    return connector ? [connector] : []
-  })
+  const supported: Array<{
+    id: SubscriptionDisplayId
+    connector: SubscriptionConnector | null
+  }> = SUBSCRIPTION_CONNECTOR_ORDER
+    .map((id) => ({
+      id,
+      connector: connectors.find((candidate) => candidate?.id === id) ?? null
+    }))
+    // Claude Code was explicitly removed from the active catalog for the
+    // current subscription period.  Keep the customer-visible option without
+    // inventing backend status or silently reactivating it in model routing.
+    .filter(({ id, connector }) => connector !== null || id === 'claude-code')
 
   return (
     <section
@@ -498,28 +513,30 @@ export function SubscriptionConnectorSection({
       )}
       {state === 'ready' && supported.length > 0 && (
         <div className="nachuan-subscription-grid">
-          {supported.map((connector) => (
+          {supported.map(({ id, connector }) => (
           <article
-            key={connector.id}
-            data-subscription-connector={connector.id}
+            key={id}
+            data-subscription-connector={id}
             className="nachuan-subscription-card"
           >
             <div className="nachuan-provider-card-head">
               <div className="nachuan-provider-identity">
                 <span className="nachuan-provider-mark" aria-hidden="true">
-                  {SUBSCRIPTION_CONNECTOR_LABEL[connector.id].slice(0, 1)}
+                  {SUBSCRIPTION_CONNECTOR_LABEL[id].slice(0, 1)}
                 </span>
                 <div>
-                  <div className="nachuan-provider-name">{SUBSCRIPTION_CONNECTOR_LABEL[connector.id]}</div>
+                  <div className="nachuan-provider-name">{SUBSCRIPTION_CONNECTOR_LABEL[id]}</div>
                   <div className="nachuan-provider-kind">{t('conn.subscription.accountType')}</div>
                 </div>
               </div>
-              <span className={`nachuan-connection-badge nachuan-connection-badge--${connector.state === 'ready' ? 'ready' : 'idle'}`}>
-                {t(SUBSCRIPTION_STATE_KEY[connector.state])}
+              <span className={`nachuan-connection-badge nachuan-connection-badge--${connector?.state === 'ready' ? 'ready' : 'idle'}`}>
+                {connector ? t(SUBSCRIPTION_STATE_KEY[connector.state]) : t('conn.subscription.states.disabled')}
               </span>
             </div>
-            <div className="nachuan-provider-description">{subscriptionNextStep(connector, t)}</div>
-            {renderAction?.(connector)}
+            <div className="nachuan-provider-description">
+              {connector ? subscriptionNextStep(connector, t) : t('conn.subscription.next.disabled')}
+            </div>
+            {connector ? renderAction?.(connector) : null}
           </article>
           ))}
         </div>

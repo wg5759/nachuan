@@ -434,7 +434,7 @@
       "hint": "Pick an account or local model you already have. Start chatting as soon as verification succeeds.",
       "deepseek": "DeepSeek API key",
       "kimiApi": "Kimi API key",
-      "subscription": "Codex / Kimi subscription",
+      "subscription": "Codex / Kimi / Claude Code",
       "local": "Local model",
       "all": "Other methods",
       "readyTitle": "A model is connected",
@@ -542,7 +542,7 @@
     "kimiFailureUnavailable": "The Kimi Code connector is unavailable. Check Diagnostics and do not submit repeatedly.",
     "subscription": {
       "title": "Personal subscriptions (official accounts)",
-      "hint": "Connect Codex and Kimi Code here. Sign-in credentials remain managed by the official tools.",
+      "hint": "Manage Codex, Kimi Code, and Claude Code here. Sign-in credentials remain with the official tools.",
       "accountType": "Personal subscription",
       "refresh": "Refresh status",
       "loading": "Reading public status…",
@@ -569,7 +569,8 @@
         "reauthRequired": "Sign-in required again",
         "entitlementDenied": "Subscription entitlement unavailable",
         "degraded": "Status degraded",
-        "unavailable": "Unavailable"
+        "unavailable": "Unavailable",
+        "disabled": "Not enabled"
       },
       "next": {
         "install": "Install the official {{provider}} tool first, then return here and refresh.",
@@ -581,7 +582,8 @@
         "installOfficial": "The current tool failed trust verification. Install the official {{provider}} tool.",
         "update": "Update the official {{provider}} tool to a supported version.",
         "entitlement": "Verify the subscription and usage entitlement in the official {{provider}} account.",
-        "retry": "Status is temporarily unavailable. Refresh later; update or restart the official tool only if it persists."
+        "retry": "Status is temporarily unavailable. Refresh later; update or restart the official tool only if it persists.",
+        "disabled": "This connector is currently disabled and cannot enter model routing. Enable it later when needed."
       }
     }
   },

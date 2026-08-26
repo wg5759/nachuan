@@ -434,7 +434,7 @@
       "hint": "只选你已经有的账号或本地模型；连接成功后直接开始对话。",
       "deepseek": "DeepSeek API Key",
       "kimiApi": "Kimi API Key",
-      "subscription": "Codex / Kimi 订阅",
+      "subscription": "Codex / Kimi / Claude Code",
       "local": "本地模型",
       "all": "其它方式",
       "readyTitle": "模型已经连接",
@@ -542,7 +542,7 @@
     "kimiFailureUnavailable": "Kimi Code 连接器暂不可用；请到诊断中心查看详情，不要连续重复提交。",
     "subscription": {
       "title": "个人订阅（官方账号）",
-      "hint": "Codex 和 Kimi Code 在这里统一连接；登录凭据仍由官方工具保管。",
+      "hint": "Codex、Kimi Code 和 Claude Code 在这里统一管理；登录凭据仍由官方工具保管。",
       "accountType": "个人订阅账号",
       "refresh": "刷新状态",
       "loading": "正在读取公开状态…",
@@ -569,7 +569,8 @@
         "reauthRequired": "需要重新登录",
         "entitlementDenied": "订阅权限不可用",
         "degraded": "状态异常",
-        "unavailable": "暂不可用"
+        "unavailable": "暂不可用",
+        "disabled": "未启用"
       },
       "next": {
         "install": "需要先安装官方 {{provider}} 工具，安装完成后回到这里刷新。",
@@ -581,7 +582,8 @@
         "installOfficial": "当前工具未通过信任校验，请改用官方 {{provider}} 工具。",
         "update": "请将官方 {{provider}} 工具更新到受支持版本。",
         "entitlement": "请在官方 {{provider}} 账户确认订阅与使用权限。",
-        "retry": "状态暂时异常，请稍后刷新；持续异常时再更新或重启官方工具。"
+        "retry": "状态暂时异常，请稍后刷新；持续异常时再更新或重启官方工具。",
+        "disabled": "当前未启用，不会加入模型路由；需要时再启用即可。"
       }
     }
   },
