@@ -91,8 +91,11 @@ def provider_factory_service(provider_type: str) -> str:
     return f"provider.factory.{normalized}"
 
 
-def build_builtin_provider_kernel() -> PluginKernel:
-    kernel = PluginKernel()
+def build_builtin_provider_kernel(
+    *,
+    durable_event_sink: Callable[[str, object], object] | None = None,
+) -> PluginKernel:
+    kernel = PluginKernel(durable_event_sink=durable_event_sink)
     kernel.services.define(ServiceDefinition(ECHO_FACTORY_SERVICE, "1"))
     kernel.services.define(ServiceDefinition(SKILL_BUNDLE_SERVICE, "1"))
 
@@ -103,6 +106,10 @@ def build_builtin_provider_kernel() -> PluginKernel:
         ctx.provide_service(ECHO_FACTORY_SERVICE, create_echo)
 
     kernel.mount(BUILTIN_ECHO_MANIFEST, apply)
+
+    from orchestrator.workflow_plugins import mount_builtin_pipeline_workflow
+
+    mount_builtin_pipeline_workflow(kernel)
 
     skill_bundle = build_reviewed_skill_bundle()
     if skill_bundle is None:

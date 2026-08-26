@@ -362,9 +362,13 @@ class _EventListener:
 
 
 class EventRegistry:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        durable_sink: Callable[[str, object], object] | None = None,
+    ) -> None:
         self._definitions: dict[str, EventDefinition] = {}
         self._listeners: dict[str, list[_EventListener]] = {}
+        self._durable_sink = durable_sink
         self._lock = threading.RLock()
 
     def define(self, definition: EventDefinition) -> None:
@@ -398,9 +402,17 @@ class EventRegistry:
 
     async def emit(self, name: str, payload: object) -> int:
         with self._lock:
-            if name not in self._definitions:
+            definition = self._definitions.get(name)
+            if definition is None:
                 raise EventContractError("event definition is missing")
             listeners = tuple(self._listeners.get(name, ()))
+            durable_sink = self._durable_sink
+        if definition.domain == "durable":
+            if durable_sink is None:
+                raise EventContractError("durable event sink is unavailable")
+            persisted = durable_sink(name, payload)
+            if inspect.isawaitable(persisted):
+                await persisted
         for listener in listeners:
             result = listener.callback(payload)
             if inspect.isawaitable(result):
@@ -802,6 +814,12 @@ class PluginContext:
         )
         self._record.scope.add(disposer)
 
+    async def emit(self, event: str, payload: object) -> int:
+        capability = f"event.emit:{event}"
+        permit = self.permit(capability)
+        self._kernel.require(permit, capability)
+        return await self._kernel.events.emit(event, payload)
+
     def permit(self, capability: str) -> CapabilityPermit:
         return self._kernel.broker.permit(
             self._record.manifest.plugin_id,
@@ -811,9 +829,13 @@ class PluginContext:
 
 
 class PluginKernel:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        durable_event_sink: Callable[[str, object], object] | None = None,
+    ) -> None:
         self.services = ServiceRegistry()
-        self.events = EventRegistry()
+        self.events = EventRegistry(durable_event_sink)
         self.broker = CapabilityBroker()
         self.tools = ToolRegistry(self.broker)
         self._active: dict[str, _PluginRecord] = {}

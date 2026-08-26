@@ -1,6 +1,6 @@
 # 纳川插件内核策略：吸收 DeepSeek Harness“一切皆插件”的精华
 
-> 状态：PK-001～PK-003 最小纵切已实施；PK-004～PK-008 待推进
+> 状态：PK-001～PK-004 最小纵切已实施；PK-005～PK-008 待推进
 > 日期：2026-08-26
 > 目标：在不破坏纳川现有安全账本、真实渠道和安装发行边界的前提下，把模型、工具、协作、知识、渠道和 UI 变成可组合能力
 
@@ -240,24 +240,27 @@ Bundle 是签名的插件组合，不复制源码：
 
 ## 8. 当前实现与剩余差距
 
-截至 2026-08-26，PK-001/PK-002/PK-003 最小纵切已经落地：`orchestrator/plugin_kernel.py`
+截至 2026-08-26，PK-001～PK-004 最小纵切已经落地：`orchestrator/plugin_kernel.py`
 提供严格 manifest、service/event registry、能力票据、借用租约、LIFO effect 回收、
 失败回滚、卸载和 quarantine；`EchoProvider` 已通过 `provider.factory.echo` 内置插件
 接入 legacy Router。`ToolRegistry` 新增闭集 schema、精确 `tool.execute:<name>` 能力、
 逐次验票、调用借用和卸载撤销；现有六份受审 Skill 已冻结为不带执行入口的
 `nachuan.skill-bundle.v1` 数据服务，`list_skills/load_skill` 由同一 bundle 工具插件提供。
 legacy Tool Agent 只从当前 Router 内核读取这两个工具的实时 schema 和执行入口；插件卸载后
-模型 schema 与执行能力同时消失。Router reload 会复用同一内核，关闭时按工具→bundle→provider
-逆序释放借用和内核，旧接口保持兼容。
+模型 schema 与执行能力同时消失。低风险 `pipeline` 已成为 `workflow.pipeline` 服务插件，
+由严格能力票据发出 turn/step/model/result 四类 durable event；SQLite 真相层使用精确 schema、
+绝对 WAL deadline、原子建库、容量上限和全局 SHA-256 链。事件只留执行标识、路由、状态、
+长度与内容摘要，不复制 prompt/instruction/output；没有持久 sink 时在首次模型调用前故障关闭。
+Router reload 会复用同一内核，关闭时先清 provider 与工作流借用，再关闭事件库，旧接口保持兼容。
 
 仍待统一迁移的部分包括：
 
 - 目前只有无外网、无密钥的 `EchoProvider` 完成插件纵切；其他 provider 仍由 Router 旧构造路径管理。
 - MCP registry 有注册表外形，但生产能力被整体禁用，尚无签名、隔离和权限合同。
 - 除 `list_skills/load_skill` 外，其他 `TOOLS` 仍是 legacy 静态列表，工具实现和分发仍集中在 `tool_agent.py`。
-- 工作流在 `gateway/app.py` 中逐个直接 import，新增流程必须改 Gateway。
+- 除 `pipeline` 外的工作流仍在 `gateway/app.py` 中逐个直接 import，新增流程仍需改 Gateway。
 - Renderer 工作区和设置面板大多硬编码，尚无签名 UI slot。
-- 大量 durable ledger 已很强，但会话、工具、插件和渠道尚未汇入统一事件模型。
+- `pipeline` 事件目前只重建执行拓扑与摘要，不能重建客户原文；其他会话、工具、插件和渠道也尚未汇入统一事件模型。
 
 因此继续采用旁路内核和 legacy adapter 渐进迁移，不做大爆炸重写。
 
@@ -294,11 +297,15 @@ legacy Tool Agent 只从当前 Router 内核读取这两个工具的实时 schem
 - 聚焦核心25项、相邻工具/Router/Store50项、管理/目录63项、依赖边界13项与工具/Skill/打包组合118项分区通过；去重后15个文件共224个用例均有绿色终态，wheel 合同确认携带 `plugin_kernel.py/tool_plugins.py/provider_plugins.py`。
 - 本机另发现未改动公开400f8fb也可复现的 `ConversationStore` 冷启动 WAL 锁等待；它发生在插件执行前，已单列为 SQLite 稳定性债务，不能拿来否定或冒充 PK-003 证据。
 
-### PK-004：工作流与事件日志
+### PK-004：工作流与事件日志（已完成最小纵切）
 
-- 先迁一个低风险协作流程；
-- turn/step/model/tool/result 进入统一 durable event；
-- 现有账本和恢复逻辑通过 adapter 接入，不重写真相源。
+- 低风险 `pipeline` 已迁为 `workflow.pipeline` 内置服务插件；legacy HTTP 路由只借用服务租约，不再直接调用实现；
+- 本流程不使用工具，因此如实只产生 turn/step/model/result，不伪造 tool 事件；以后真实工具调用必须使用闭集 tool 事件；
+- durable event 必须先落 `data/workflow-events.db` 再通知监听器，缺 sink 时首个模型调用前拒绝；落盘中断向 HTTP 投射 `retry_safe=false`；
+- 事件库是 append-only 精确 schema、全局哈希链、20 万事件/256 MiB 逻辑载荷/384 MiB 文件上限，并纳入 readiness、在线 SQLite 备份与数据生命周期清单；
+- 原始 prompt、instruction、output、content 在任意嵌套层级均拒绝入库，只保存 SHA-256、长度、路由和终态；这能审计拓扑和篡改，不能冒充完整内容恢复；
+- 直接调用 `run_pipeline` 的 legacy adapter 继续兼容；已有 Provider Call Ledger、会话库和任务账本均未重写真相源；
+- 聚焦事件/API/生命周期/备份/隐私/打包回归 126 项及 wheel 自包含合同通过；真实付费模型、渠道和长期归档轮换不属于本纵切证据。
 
 ### PK-005：Host/Main/Renderer 三面插件
 

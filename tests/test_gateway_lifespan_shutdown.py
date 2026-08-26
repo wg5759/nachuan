@@ -76,6 +76,7 @@ def test_clean_lifespan_generation_detaches_before_next_early_gate(
             pass
         detached = (
             "provider_call_ledger",
+            "workflow_event_log",
             "router",
             "store",
             "usage",
@@ -432,6 +433,10 @@ def test_startup_failure_before_yield_closes_every_constructed_resource(
         def close(self) -> None:
             events.append(self.name)
 
+    class CloseableEventLog(Closeable):
+        async def append(self, _name: str, _payload: object) -> None:
+            return None
+
     class CloseableRouter:
         async def aclose(self) -> None:
             events.append("router")
@@ -460,7 +465,16 @@ def test_startup_failure_before_yield_closes_every_constructed_resource(
         "configured_provider_call_ledger",
         lambda: CloseableProviderLedger(),
     )
-    monkeypatch.setattr(appmod, "Router", lambda *, store: CloseableRouter())
+    monkeypatch.setattr(
+        appmod,
+        "DurableWorkflowEventLog",
+        lambda _path: CloseableEventLog("workflow_event_log"),
+    )
+    monkeypatch.setattr(
+        appmod,
+        "Router",
+        lambda *, store, durable_event_sink: CloseableRouter(),
+    )
     monkeypatch.setattr(appmod, "UsageLogger", lambda _path: Closeable("usage"))
     monkeypatch.setattr(
         appmod,
@@ -489,6 +503,7 @@ def test_startup_failure_before_yield_closes_every_constructed_resource(
             "router",
             "usage",
             "conversations",
+            "workflow_event_log",
             "provider_call_ledger",
         }.issubset(events)
         assert target.state.gateway_shutdown_failures == ()

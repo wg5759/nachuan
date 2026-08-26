@@ -23,6 +23,7 @@ from orchestrator.plugin_kernel import (
     ToolDefinition,
     ToolNotFound,
 )
+from orchestrator.workflow_plugins import BUILTIN_PIPELINE_WORKFLOW_MANIFEST
 
 
 def _tool_manifest(*, capabilities: list[str]) -> PluginManifestV1:
@@ -112,6 +113,7 @@ async def test_builtin_skill_bundle_is_data_only_and_holds_dependency_lease():
     kernel = build_builtin_provider_kernel()
     assert kernel.active_plugin_ids() == (
         BUILTIN_ECHO_MANIFEST.plugin_id,
+        BUILTIN_PIPELINE_WORKFLOW_MANIFEST.plugin_id,
         BUILTIN_SKILL_BUNDLE_MANIFEST.plugin_id,
         BUILTIN_LIST_SKILLS_MANIFEST.plugin_id,
     )
@@ -139,6 +141,7 @@ async def test_builtin_skill_bundle_is_data_only_and_holds_dependency_lease():
     await kernel.unmount(BUILTIN_LIST_SKILLS_MANIFEST.plugin_id)
     await kernel.unmount(BUILTIN_SKILL_BUNDLE_MANIFEST.plugin_id)
     await kernel.unmount(BUILTIN_ECHO_MANIFEST.plugin_id)
+    await kernel.unmount(BUILTIN_PIPELINE_WORKFLOW_MANIFEST.plugin_id)
 
 
 def test_builtin_list_skills_manifest_binds_exact_tool_plugin_source():

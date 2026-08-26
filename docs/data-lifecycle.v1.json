@@ -102,6 +102,20 @@
       "incident_tier": "critical"
     },
     {
+      "id": "workflow_execution_event_truth",
+      "category": "security-and-operational",
+      "locations": ["data/workflow-events.db"],
+      "data": ["workflow and event identifiers", "turn step and model phases", "model route metadata", "input and result byte hashes and lengths", "append-only chain hashes and timestamps"],
+      "purpose": "reconstruct plugin workflow execution topology and detect event-history tampering without copying customer text",
+      "export_policy": "include_metadata_only",
+      "delete_policy": "retain_and_restrict",
+      "retention_rule": "bounded-200000-event-and-256MiB-log-capacity-pending-deployment-archive-policy",
+      "processors": ["local-engine"],
+      "customer_training": false,
+      "restore_policy": "restore-only-a-verified-complete-hash-chain-and-never-merge-unrelated-installation-history",
+      "incident_tier": "high"
+    },
+    {
       "id": "connections_and_provider_credentials",
       "category": "credentials",
       "locations": ["data/connections.json", "userData/config.json"],

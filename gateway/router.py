@@ -24,8 +24,8 @@ from gateway.connections import (
     ConnectionStore,
     normalize_base_url,
 )
-from gateway.model_identity import review_strength_from_identifier
 from gateway.media_call_metering import _consume_paid_media_dispatch_permit
+from gateway.model_identity import review_strength_from_identifier
 from gateway.provider_plugins import (
     build_builtin_provider_kernel,
     provider_factory_service,
@@ -36,7 +36,6 @@ from gateway.providers.perplexity import PerplexityProvider
 from gateway.providers.volcano import VolcanoProvider
 from gateway.runtime_profile import current_runtime_profile
 from orchestrator.plugin_kernel import PluginKernel, ServiceLease
-
 
 _LOG = logging.getLogger(__name__)
 _UNAVAILABLE_CONNECTION_REASONS: dict[str, str] = {}
@@ -448,6 +447,7 @@ class Router:
         kimi_worker: Any | None = None,
         kimi_environment: Mapping[str, str] | None = None,
         plugin_kernel: PluginKernel | None = None,
+        durable_event_sink: Callable[[str, object], object] | None = None,
     ):
         self._catalog = models_config if models_config is not None else load_models_config()
         self.store = store
@@ -460,7 +460,9 @@ class Router:
             os.environ if kimi_environment is None else kimi_environment
         )
         self._plugin_kernel = (
-            build_builtin_provider_kernel() if plugin_kernel is None else plugin_kernel
+            build_builtin_provider_kernel(durable_event_sink=durable_event_sink)
+            if plugin_kernel is None
+            else plugin_kernel
         )
         self._owns_plugin_kernel = plugin_kernel is None
         self._providers: dict[str, ChatProvider] = {}

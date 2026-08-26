@@ -14,6 +14,7 @@ from gateway.provider_plugins import (
 from gateway.router import Router
 from gateway.schemas import ChatCompletionRequest
 from orchestrator.plugin_kernel import PluginInUseError
+from orchestrator.workflow_plugins import BUILTIN_PIPELINE_WORKFLOW_MANIFEST
 
 
 def test_builtin_echo_manifest_is_bound_to_current_source():
@@ -58,6 +59,7 @@ async def test_default_router_owns_and_closes_its_builtin_plugin_kernel():
     owned_kernel = router.plugin_kernel
     assert owned_kernel.active_plugin_ids() == (
         BUILTIN_ECHO_MANIFEST.plugin_id,
+        BUILTIN_PIPELINE_WORKFLOW_MANIFEST.plugin_id,
         BUILTIN_SKILL_BUNDLE_MANIFEST.plugin_id,
         BUILTIN_LIST_SKILLS_MANIFEST.plugin_id,
     )
@@ -81,6 +83,7 @@ async def test_router_reload_reuses_kernel_and_keeps_old_generation_leased_until
     assert replacement.provider is not original.provider
     assert kernel.active_plugin_ids() == (
         BUILTIN_ECHO_MANIFEST.plugin_id,
+        BUILTIN_PIPELINE_WORKFLOW_MANIFEST.plugin_id,
         BUILTIN_SKILL_BUNDLE_MANIFEST.plugin_id,
         BUILTIN_LIST_SKILLS_MANIFEST.plugin_id,
     )

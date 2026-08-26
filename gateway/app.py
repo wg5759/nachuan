@@ -226,6 +226,10 @@ from orchestrator.agent import (
 )
 from orchestrator.approval import ApprovalStore, needs_approval, should_escalate
 from orchestrator.cases import CaseLibrary
+from orchestrator.durable_event_log import (
+    DurableWorkflowEventLog,
+    DurableWorkflowEventUnavailable,
+)
 from orchestrator.knowledge import KnowledgeBase, build_context as kb_context
 from orchestrator.studio import generate_plan, get_job, start_execution
 from orchestrator.hooks import HookGuard
@@ -252,6 +256,8 @@ from orchestrator.conductor import run_conductor_agent
 from orchestrator.history_compress import compress_history
 from orchestrator.orchestrated_agent import run_orchestrated_agent
 from orchestrator.tool_agent import TOOLS, run_tool_agent
+from orchestrator.plugin_kernel import ServiceNotFound
+from orchestrator.workflow_plugins import PIPELINE_WORKFLOW_SERVICE
 from orchestrator.workspace_guard import (
     WorkspaceBoundaryError,
     resolve_workspace,
@@ -265,7 +271,6 @@ from orchestrator.workflows.lapian import run_lapian
 from orchestrator.workflows.debate import run_debate
 from orchestrator.workflows.decompose import run_decompose
 from orchestrator.workflows.panel_judge import run_panel
-from orchestrator.workflows.pipeline import run_pipeline
 from scripts.sqlite_backup import backup_databases
 
 
@@ -1238,6 +1243,8 @@ async def _close_gateway_resources(
     if router_closed and getattr(target_app.state, "router", None) is router:
         target_app.state.router = None
         target_app.state.store = None
+    if router_closed:
+        close_state_sync("workflow_event_log", "workflow_event_log")
     close_state_sync("usage", "usage")
     close_state_sync("memory", "memory")
     close_state_sync("cases", "cases")
@@ -1480,9 +1487,15 @@ async def _lifespan_impl(app: FastAPI):
 
         task.add_done_callback(_finish_service)
 
-    store = ConnectionStore(Path(settings.usage_db_path).parent / "connections.json")
+    data_dir = Path(settings.usage_db_path).parent
+    workflow_event_log = DurableWorkflowEventLog(data_dir / "workflow-events.db")
+    app.state.workflow_event_log = workflow_event_log
+    store = ConnectionStore(data_dir / "connections.json")
     app.state.store = store
-    app.state.router = Router(store=store)
+    app.state.router = Router(
+        store=store,
+        durable_event_sink=workflow_event_log.append,
+    )
     # 本地 GGUF 冷启/验证最长可达 90s，绝不能阻塞网关、微信或健康检查。
     # 先建立云端 Router 并开放服务，再在后台启动受审 local；成功后热重载。
     import threading as _threading
@@ -1521,7 +1534,6 @@ async def _lifespan_impl(app: FastAPI):
     app.state.conversations = ConversationStore(
         db_path=str(Path(settings.usage_db_path).parent / "conversations.db")
     )  # 短期多轮记忆·持久化(引擎重启不丢上下文，飞书常驻机器人尤其需要)
-    data_dir = Path(settings.usage_db_path).parent
     # The ordinary chat surface remains diagnosable if this fails, while every
     # rights endpoint fails closed before parsing a request body. Production
     # readiness must treat None as a compliance-control failure.
@@ -2065,6 +2077,9 @@ def _database_readiness() -> dict[str, Any]:
         "knowledge": getattr(getattr(app.state, "kb", None), "_conn", None),
         "approvals": getattr(getattr(app.state, "approvals", None), "_conn", None),
         "ledger": getattr(getattr(app.state, "ledger", None), "_db", None),
+        "workflow_events": getattr(
+            getattr(app.state, "workflow_event_log", None), "_conn", None
+        ),
     }
     failed: list[str] = []
     for name, conn in handles.items():
@@ -9804,13 +9819,34 @@ async def orchestrate_pipeline(request: Request, api_key: str = Depends(require_
     body = await request.json()
     try:
         spec = PipelineWorkflowRequest.model_validate(body)
-        result = await run_pipeline(
-            app.state.router, prompt=spec.prompt, steps=[step.model_dump() for step in spec.steps]
-        )
+        try:
+            lease = app.state.router.plugin_kernel.borrow_service(
+                PIPELINE_WORKFLOW_SERVICE
+            )
+        except ServiceNotFound as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="流水线工作流插件当前不可用",
+            ) from exc
+        try:
+            service = lease.value
+            result = await service(
+                app.state.router,
+                prompt=spec.prompt,
+                steps=[step.model_dump() for step in spec.steps],
+            )
+        finally:
+            lease.release()
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail="流水线参数不符合资源限制") from exc
     except WorkflowOutputLimitError as exc:
         raise HTTPException(status_code=502, detail="流水线模型输出超过安全上限") from exc
+    except DurableWorkflowEventUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="流水线持久事件日志当前不可用",
+            headers={"X-Nachuan-Retry-Safe": "false"},
+        ) from exc
     return JSONResponse(result)
 
 

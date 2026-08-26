@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import ast
+import asyncio
 import json
 import sqlite3
 from contextlib import closing
@@ -11,6 +11,8 @@ from types import SimpleNamespace
 import pytest
 
 import gateway.app as gateway_app
+from orchestrator.durable_event_log import DurableWorkflowEventLog
+from orchestrator.workflows import pipeline
 
 
 def _test_app():
@@ -35,6 +37,16 @@ async def test_online_backup_captures_every_top_level_database_and_updates_healt
         second.execute("CREATE TABLE proof (value TEXT NOT NULL)")
         second.execute("INSERT INTO proof VALUES ('second')")
         second.commit()
+    workflow_events = DurableWorkflowEventLog(data_dir / "workflow-events.db")
+    workflow_events.append_sync(
+        pipeline.PIPELINE_TURN_EVENT.name,
+        {
+            "workflow_id": "a" * 32,
+            "phase": "started",
+            "prompt_sha256": "b" * 64,
+            "step_count": 1,
+        },
+    )
     nested = data_dir / "nested"
     nested.mkdir()
     with closing(sqlite3.connect(nested / "ignored.db")) as ignored:
@@ -43,6 +55,7 @@ async def test_online_backup_captures_every_top_level_database_and_updates_healt
     target_app = _test_app()
     await gateway_app._run_sqlite_backup_once(target_app, data_dir)
     first.close()
+    workflow_events.close()
 
     health = target_app.state.sqlite_backup_health
     snapshot = Path(health["snapshot_path"])
@@ -50,12 +63,17 @@ async def test_online_backup_captures_every_top_level_database_and_updates_healt
     assert health["status"] == "ok"
     assert health["last_success_at"].endswith("Z")
     assert health["last_error"] is None
-    assert health["database_count"] == 2
+    assert health["database_count"] == 3
     assert snapshot.parent == data_dir / "backup" / "sqlite"
     assert {item["name"] for item in manifest["databases"]} == {
         "memory.db",
         "usage.db",
+        "workflow-events.db",
     }
+    with closing(sqlite3.connect(snapshot / "workflow-events.db")) as backed_up:
+        assert backed_up.execute("SELECT COUNT(*) FROM workflow_events").fetchone() == (
+            1,
+        )
     assert not (snapshot / "ignored.db").exists()
 
 

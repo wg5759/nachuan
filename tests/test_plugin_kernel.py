@@ -16,7 +16,6 @@ from orchestrator.plugin_kernel import (
     ServiceNotFound,
 )
 
-
 _DIGEST = "a" * 64
 
 
@@ -68,7 +67,10 @@ def test_untrusted_plugin_cannot_mount_in_process():
 
 @pytest.mark.asyncio
 async def test_mount_borrow_emit_unmount_and_capability_revocation():
-    kernel = PluginKernel()
+    persisted: list[tuple[str, object]] = []
+    kernel = PluginKernel(
+        durable_event_sink=lambda name, payload: persisted.append((name, payload))
+    )
     kernel.services.define(ServiceDefinition("demo.service", "1"))
     kernel.events.define(EventDefinition("fact/demo", "durable"))
     seen: list[object] = []
@@ -84,6 +86,7 @@ async def test_mount_borrow_emit_unmount_and_capability_revocation():
     kernel.mount(_manifest(), apply)
     assert kernel.active_plugin_ids() == ("com.nachuan.test.demo",)
     assert await kernel.events.emit("fact/demo", {"value": 1}) == 1
+    assert persisted == [("fact/demo", {"value": 1})]
     assert seen == [{"value": 1}]
     kernel.require(permit_holder[0], "demo.read")
 
@@ -101,6 +104,7 @@ async def test_mount_borrow_emit_unmount_and_capability_revocation():
     with pytest.raises(ServiceNotFound):
         kernel.borrow_service("demo.service")
     assert await kernel.events.emit("fact/demo", {"value": 2}) == 0
+    assert persisted[-1] == ("fact/demo", {"value": 2})
     with pytest.raises(CapabilityDenied):
         kernel.require(permit_holder[0], "demo.read")
 

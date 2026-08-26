@@ -208,8 +208,10 @@ class TestPackageClosure:
         assert "cli/kimi_worker_entrypoint.py" in names
         assert "gateway/provider_plugins.py" in names
         assert "gateway/sqlite_runtime.py" in names
+        assert "orchestrator/durable_event_log.py" in names
         assert "orchestrator/plugin_kernel.py" in names
         assert "orchestrator/tool_plugins.py" in names
+        assert "orchestrator/workflow_plugins.py" in names
         assert any(
             name.startswith("gateway/web_ui/assets/") and name.endswith(".js")
             for name in names

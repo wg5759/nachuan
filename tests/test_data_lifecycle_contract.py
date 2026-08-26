@@ -4,7 +4,6 @@ import json
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = ROOT / "docs" / "data-lifecycle.v1.json"
 
@@ -112,6 +111,7 @@ def test_inventory_covers_known_persistent_authorities_and_content_stores() -> N
         "cases.db",
         "scoreboard.db",
         "ledger.db",
+        "workflow-events.db",
         "connections.json",
         "ilink_token.json",
         "weixin_access.json",
@@ -143,6 +143,13 @@ def test_inventory_covers_known_persistent_authorities_and_content_stores() -> N
     assert stores["connections_and_provider_credentials"]["export_policy"] == "exclude_secret"
     assert stores["channel_credentials_and_access"]["delete_policy"] == "revoke_then_erase"
     assert stores["usage_billing_and_provider_calls"]["delete_policy"] == "retain_and_restrict"
+    assert stores["workflow_execution_event_truth"]["export_policy"] == (
+        "include_metadata_only"
+    )
+    assert all(
+        "content" not in item and "message" not in item and "prompt" not in item
+        for item in stores["workflow_execution_event_truth"]["data"]
+    )
     assert stores["privacy_rights_requests_and_receipts"]["export_policy"] == (
         "include_metadata_only"
     )
