@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260826-67",
+  "candidate_id": "nachuan-source-alpha-20260826-68",
   "file_count": 909,
   "files": [
     {
@@ -24,8 +24,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "f41014fd87623c539d456b6c6a942991ce175f93c4fc9fd045f8669886c0ff54",
-      "size": 5158
+      "sha256": "f4ffe2fa0fa2d3cf2f1b9a37cd100b8608331653b69dfbce427646d2000fe642",
+      "size": 5179
     },
     {
       "path": ".github/workflows/finalize-early-access.yml",
