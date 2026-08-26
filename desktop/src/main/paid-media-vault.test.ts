@@ -3913,7 +3913,7 @@ describe('PaidMediaVault', { timeout: 120_000 }, () => {
     await expect(restarted.openAsset(reference)).rejects.toThrow(/digest|magic|unsupported/i)
   })
 
-  it('rejects changed bytes when millisecond cache identity collides', async () => {
+  it('rejects changed bytes when the complete metadata cache identity collides', async () => {
     const { root, vault } = fixture()
     await recordImageClaim(
       vault,
@@ -3936,7 +3936,6 @@ describe('PaidMediaVault', { timeout: 120_000 }, () => {
     const warmed = await vault.openAsset(asset.reference)
     await warmed.handle.close()
     const before = statSync(path)
-    const beforePrecise = statSync(path, { bigint: true })
     writeFileSync(path, Buffer.alloc(before.size, 0x41), { flag: 'r+' })
     utimesSync(path, before.atime, before.mtime)
     const after = statSync(path)
@@ -3945,14 +3944,17 @@ describe('PaidMediaVault', { timeout: 120_000 }, () => {
     expect(after.birthtimeMs).toBe(before.birthtimeMs)
     expect(after.size).toBe(before.size)
     expect(after.mtimeMs).toBe(before.mtimeMs)
-    expect(afterPrecise.ctimeNs).not.toBe(beforePrecise.ctimeNs)
     const cache = (
       vault as unknown as {
         verifiedAssets?: Map<
           string,
           {
-            mtimeMs?: number
-            ctimeMs?: number
+            dev: bigint
+            ino: bigint
+            birthtimeNs: bigint
+            size: bigint
+            mtimeNs: bigint
+            ctimeNs: bigint
           }
         >
       }
@@ -3961,8 +3963,12 @@ describe('PaidMediaVault', { timeout: 120_000 }, () => {
       const cached = cache.get(resolve(path))
       expect(cached).toBeDefined()
       Object.assign(cached!, {
-        mtimeMs: after.mtimeMs,
-        ctimeMs: after.ctimeMs
+        dev: afterPrecise.dev,
+        ino: afterPrecise.ino,
+        birthtimeNs: afterPrecise.birthtimeNs,
+        size: afterPrecise.size,
+        mtimeNs: afterPrecise.mtimeNs,
+        ctimeNs: afterPrecise.ctimeNs
       })
     }
 

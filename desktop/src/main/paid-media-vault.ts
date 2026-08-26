@@ -2124,13 +2124,6 @@ export class PaidMediaVault {
   >()
   private readonly cleanupFlights = new Map<string, Promise<boolean>>()
   private readonly hardenedPaths = new Map<string, HardenedPathIdentity>()
-  private readonly verifiedAssets = new Map<
-    string,
-    VerifiedAssetIdentity & {
-      sha256: string
-      mediaType: PaidMediaArchivedAsset['mediaType']
-    }
-  >()
   private readonly terminalArchiveFlights = new Map<
     string,
     { providerResultSha256: string; promise: Promise<PaidMediaTerminalArchiveResult> }
@@ -10112,7 +10105,6 @@ export class PaidMediaVault {
     ) {
       throw new PaidMediaVaultError('Paid media archive asset does not match its authority entry')
     }
-    const cached = this.verifiedAssets.get(resolve(located.path))
     this.dependencies.beforeAssetPin?.(located.path)
     const handle = await openFile(located.path, 'r')
     try {
@@ -10125,20 +10117,6 @@ export class PaidMediaVault {
       ) {
         throw new PaidMediaVaultError('Paid media archive asset changed before it was pinned')
       }
-      if (
-        cached?.sha256 === located.digest &&
-        cached.mediaType === located.mediaType &&
-        this.sameVerifiedAssetIdentity(cached, pinnedIdentity)
-      ) {
-        return {
-          handle,
-          byteLength: pinned.size,
-          mediaType: located.mediaType,
-          sha256: located.digest
-        }
-      }
-      if (cached) this.verifiedAssets.delete(resolve(located.path))
-
       let digest: string
       if (located.extension === 'mp4' || located.extension === 'webm') {
         await validateStoredVideoFile(handle, pinned.size, located.extension)
@@ -10200,11 +10178,6 @@ export class PaidMediaVault {
       if (digest !== located.digest) {
         throw new PaidMediaVaultError('Paid media archive asset digest does not match')
       }
-      this.verifiedAssets.set(resolve(located.path), {
-        ...afterIdentity,
-        sha256: located.digest,
-        mediaType: located.mediaType
-      })
       return {
         handle,
         byteLength: after.size,
@@ -10212,7 +10185,6 @@ export class PaidMediaVault {
         sha256: located.digest
       }
     } catch (error) {
-      this.verifiedAssets.delete(resolve(located.path))
       await handle.close().catch(() => undefined)
       throw error
     }

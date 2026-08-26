@@ -57,6 +57,7 @@ _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_EMBEDDING_ITEMS = 4_096
 _MAX_EMBEDDING_DIMENSION = 4_096
+_MAX_EMBEDDING_VALUES = 2_000_000
 _MAX_EMBEDDING_TEXT_BYTES = 64 * 1024 * 1024
 
 
@@ -264,32 +265,33 @@ class EnterpriseRagPluginRuntime:
         self._kernel = kernel
 
     def readiness_snapshot(self) -> dict[str, object]:
-        providers = {
-            "splitter": self._kernel.services.has_provider(
-                ENTERPRISE_RAG_SPLITTER_SERVICE
-            ),
-            "embedder": self._kernel.services.has_provider(
-                ENTERPRISE_RAG_EMBEDDER_SERVICE
-            ),
-            "candidates": self._kernel.services.has_provider(
-                ENTERPRISE_RAG_CANDIDATES_SERVICE
-            ),
-            "reranker": self._kernel.services.has_provider(
-                ENTERPRISE_RAG_RERANKER_SERVICE
-            ),
-            "dlp": self._kernel.services.has_provider(ENTERPRISE_RAG_DLP_SERVICE),
+        service_methods = {
+            "splitter": (ENTERPRISE_RAG_SPLITTER_SERVICE, "split"),
+            "embedder": (ENTERPRISE_RAG_EMBEDDER_SERVICE, "embed"),
+            "candidates": (ENTERPRISE_RAG_CANDIDATES_SERVICE, "search"),
+            "reranker": (ENTERPRISE_RAG_RERANKER_SERVICE, "rerank"),
+            "dlp": (ENTERPRISE_RAG_DLP_SERVICE, "scan"),
         }
-        dlp_mode = "unavailable"
-        if providers["dlp"]:
-            lease = self._kernel.borrow_service(ENTERPRISE_RAG_DLP_SERVICE)
+        providers: dict[str, bool] = {}
+        owners: dict[str, str] = {}
+        for component, (service, method) in service_methods.items():
             try:
-                dlp_mode = (
-                    "deny_all"
-                    if lease.owner_plugin_id == BUILTIN_ENTERPRISE_DLP_PLUGIN_ID
-                    else "configured"
-                )
+                lease = self._kernel.borrow_service(service)
+            except ServiceNotFound:
+                providers[component] = False
+                continue
+            try:
+                providers[component] = callable(getattr(lease.value, method, None))
+                owners[component] = lease.owner_plugin_id
             finally:
                 lease.release()
+        dlp_mode = "unavailable"
+        if providers["dlp"]:
+            dlp_mode = (
+                "deny_all"
+                if owners.get("dlp") == BUILTIN_ENTERPRISE_DLP_PLUGIN_ID
+                else "configured"
+            )
         components_ready = bool(
             all(providers.values()) and dlp_mode == "configured"
         )
@@ -360,6 +362,8 @@ class EnterpriseRagPluginRuntime:
         ):
             raise EnterpriseRagPluginError("embedding timeout is invalid")
         inputs = self._embedding_inputs(plan)
+        if len(inputs) * expected_dimension > _MAX_EMBEDDING_VALUES:
+            raise EnterpriseRagPluginError("embedding batch exceeds size limit")
         lease = self._borrow(ENTERPRISE_RAG_EMBEDDER_SERVICE, "embed")
         try:
             deadline = monotonic_clock() + float(timeout_seconds)

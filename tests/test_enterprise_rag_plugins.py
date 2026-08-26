@@ -297,6 +297,14 @@ def test_builtin_mount_defines_all_seams_but_keeps_search_and_embedding_disabled
             "api_enabled": False,
             "production_ready": False,
         }
+        _mount_service(
+            kernel,
+            plugin_id="com.nachuan.test.rag-embedder-invalid",
+            capability="enterprise.rag.embed",
+            service=ENTERPRISE_RAG_EMBEDDER_SERVICE,
+            value=object(),
+        )
+        assert runtime.readiness_snapshot()["components"]["embedder"] is False
     finally:
         runtime_lease.release()
 

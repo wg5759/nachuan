@@ -2529,7 +2529,11 @@ async def health(request: Request) -> dict[str, Any]:
             "sqlite_backup": _sqlite_backup_readiness(),
             "connection_store": connection_store,
             "enterprise_rag_plugins": _enterprise_rag_plugin_readiness(
-                request.app.state.router
+                getattr(
+                    getattr(getattr(request, "app", None), "state", None),
+                    "router",
+                    None,
+                )
             ),
             "paid_media_authority": _paid_media_authority_readiness(),
             "channel_media_requests": _channel_media_request_readiness(),

@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260826-63",
+  "candidate_id": "nachuan-source-alpha-20260826-65",
   "file_count": 897,
   "files": [
     {
@@ -1129,13 +1129,13 @@
     },
     {
       "path": "desktop/src/main/paid-media-vault.test.ts",
-      "sha256": "2a1443e08b22b75dcc4c8bc2e71cb08113acf6736aea21334218f13ea7ea9d42",
-      "size": 167410
+      "sha256": "a3fbebfefe6a9dbfb9e4af35618c28e1f8fcf57d653a56c458ad31f54df30cfb",
+      "size": 167555
     },
     {
       "path": "desktop/src/main/paid-media-vault.ts",
-      "sha256": "e13ac57cd7a2285a9a79c82b4a91e312c4c9c2399765f03c7b851d2a55f49e6e",
-      "size": 363871
+      "sha256": "64bb7bbd77a1c5cdc8c64f2957581db7b89e5d57e9886c08d5df44e03a7e40f9",
+      "size": 363008
     },
     {
       "path": "desktop/src/main/plugin-ui-ipc.test.ts",
@@ -1929,8 +1929,8 @@
     },
     {
       "path": "docs/THIRD_PARTY_SECURITY.md",
-      "sha256": "11718c3c0ca6d2931da6147b4590f96ea2cd78d60f48e48691d947775867c166",
-      "size": 48558
+      "sha256": "8f19ee983568db072ec26c0c10b2292d8de95b27ce4515f40ef8f53ce7c5b54b",
+      "size": 49145
     },
     {
       "path": "docs/adr/0001-unified-turn-lifecycle.md",
@@ -2049,8 +2049,8 @@
     },
     {
       "path": "gateway/app.py",
-      "sha256": "8d45df011d16661c2bb1a1f42e3c7cd85dfc129b2354f5efba8346c8006868d9",
-      "size": 427360
+      "sha256": "d1392e7c002dcf214653d1941a1dfde8cb71e7fb3f42480ad9407b41b3641eb3",
+      "size": 427493
     },
     {
       "path": "gateway/asr_nemotron.py",
@@ -2174,8 +2174,8 @@
     },
     {
       "path": "gateway/enterprise_rag_plugins.py",
-      "sha256": "4184a6bdbca82715e4dd6ba150ff805b9368967ae91b696377d1df2d81a3cca6",
-      "size": 26015
+      "sha256": "25658a79533f2ecf1287fdea3535fd6c3782fdcd1104fb78b3dcb8e5ad1effdc",
+      "size": 26332
     },
     {
       "path": "gateway/enterprise_retrieval.py",
@@ -3514,8 +3514,8 @@
     },
     {
       "path": "tests/test_enterprise_rag_plugins.py",
-      "sha256": "d4c2b70da3487b01053e072e2f80542039a35504706f8099e4eb91f9bca14172",
-      "size": 23048
+      "sha256": "d01dcc4ea56bc587dda82d34301f26dbad1b323a7b598d56d47ad6329b10ff18",
+      "size": 23372
     },
     {
       "path": "tests/test_enterprise_request_context.py",
