@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable, Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from gateway.auth import require_api_key
 from gateway.codex_subscription_worker import CodexSubscriptionWorker
+from gateway.kimi_subscription_login import (
+    KimiSubscriptionLoginController,
+    KimiSubscriptionLoginError,
+)
 from gateway.subscription_cli_discovery import SubscriptionCliDiscovery
 
 
@@ -48,10 +53,38 @@ class _DefaultRegistry:
         connectors = SubscriptionCliDiscovery(
             environment=environment
         ).list_public()
-        if connectors and connectors[0].get("state") == "installed_unprobed":
-            connectors[0]["state"] = CodexSubscriptionWorker(
-                environment=environment
-            ).probe_status()
+        pending: list[tuple[dict[str, object], Future[str]]] = []
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            for connector in connectors:
+                if connector.get("state") != "installed_unprobed":
+                    continue
+                if connector.get("id") == "codex":
+                    pending.append(
+                        (
+                            connector,
+                            executor.submit(
+                                CodexSubscriptionWorker(
+                                    environment=environment
+                                ).probe_status
+                            ),
+                        )
+                    )
+                elif connector.get("id") == "kimi-code":
+                    pending.append(
+                        (
+                            connector,
+                            executor.submit(
+                                KimiSubscriptionLoginController(
+                                    protected_overlay=environment
+                                ).probe_status
+                            ),
+                        )
+                    )
+            for connector, future in pending:
+                try:
+                    connector["state"] = future.result()
+                except KimiSubscriptionLoginError:
+                    connector["state"] = "unavailable"
         return connectors
 
 
