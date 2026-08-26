@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260827-70",
+  "candidate_id": "nachuan-source-alpha-20260827-71",
   "file_count": 909,
   "files": [
     {
@@ -1419,13 +1419,13 @@
     },
     {
       "path": "desktop/src/renderer/src/components/ConnectionCenter.subscription.test.tsx",
-      "sha256": "acac1a485a01b3fd668c9b78891240ed9d83cfd56651e68cf71ba1bf54b76bfe",
-      "size": 10090
+      "sha256": "beaae1651e1a84ffa4ba3dd0a3f8b797727e17836cadd284bf72b422b3af763c",
+      "size": 10235
     },
     {
       "path": "desktop/src/renderer/src/components/ConnectionCenter.tsx",
-      "sha256": "40062c5554b0d3859333532467c1844d1b2cd4b8666210de998a021d12f59f4d",
-      "size": 51626
+      "sha256": "367624f86cdb8a7814f584ef727ded1ef23e6c2f5ca2ca2040bd1aa05a8dee07",
+      "size": 52257
     },
     {
       "path": "desktop/src/renderer/src/components/CreativeDrawer.test.tsx",
@@ -1644,8 +1644,8 @@
     },
     {
       "path": "desktop/src/renderer/src/index.css",
-      "sha256": "14f1df2a47f32a940dd416d47fc53f6f147a9eff6a1153c3fc1c2a205f753532",
-      "size": 38584
+      "sha256": "544a077b1e586cfbe020859f63b7ea464bca741cfcfa475fbfe19f46951f75e4",
+      "size": 38692
     },
     {
       "path": "desktop/src/renderer/src/knowledge-refresh.test.ts",
@@ -1659,13 +1659,13 @@
     },
     {
       "path": "desktop/src/renderer/src/locales/en.json",
-      "sha256": "606772674c990ed380867236d682c34af1f9c32403225701de38ae49cb8b4e43",
-      "size": 34282
+      "sha256": "bf963bbb095b9862e135959d0cb964355eb1860de610f0da42b98f8d8e234572",
+      "size": 34446
     },
     {
       "path": "desktop/src/renderer/src/locales/zh.json",
-      "sha256": "547c7b623676fc8b2f835f1739b585b109b56a2c8bded1151dfe30881bec05b9",
-      "size": 33227
+      "sha256": "7b38456617a3aaabe5f1246a42ad6c1c65d72bbc723a4678cd2d3ef937f16235",
+      "size": 33377
     },
     {
       "path": "desktop/src/renderer/src/main.tsx",
@@ -2568,18 +2568,18 @@
       "size": 34659
     },
     {
-      "path": "gateway/web_ui/assets/index-BjWhLFqE.js",
-      "sha256": "08717f590a76885da49a21de5d737f2405827259744be4ee694dcb0116c637b5",
-      "size": 536568
+      "path": "gateway/web_ui/assets/index-BKMrZQmc.css",
+      "sha256": "c30fe61a306a0dc03b615bde821386cdffe05321c4c3ae119e5d7b96d5d9cef7",
+      "size": 64922
     },
     {
-      "path": "gateway/web_ui/assets/index-eVmgvpnO.css",
-      "sha256": "c3e78d685698f59f718b436d2635305def3b1e439e2da5f9c07c2a26839ef6e6",
-      "size": 64833
+      "path": "gateway/web_ui/assets/index-D97LdgRe.js",
+      "sha256": "f9fc8912539b453c41e38b88e983870a4bf65b214061f57a9c7e9fad1be2ae8f",
+      "size": 537027
     },
     {
       "path": "gateway/web_ui/index.html",
-      "sha256": "225e03f5fe35b7cf332187bbd105709b77e7727d10bcef3518d36492cc2a535f",
+      "sha256": "85ac381c3decb62c481060c73fa0d570c1dc2dbb6dc8586d4210f021d750a9a1",
       "size": 705
     },
     {
@@ -4551,6 +4551,6 @@
   "history_included": false,
   "license": "Apache-2.0",
   "schema": "nachuan.open-source-snapshot.v1",
-  "source_head": "df64cdb23c57ac6daeaeb6ef003d41f6e0a5af3e",
+  "source_head": "5ba529cb50f08caa15185fe4da5a6eadb37d0ccd",
   "source_worktree_dirty": true
 }
