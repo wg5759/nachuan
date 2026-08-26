@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260826-54",
+  "candidate_id": "nachuan-source-alpha-20260826-56",
   "file_count": 887,
   "files": [
     {
@@ -4124,8 +4124,8 @@
     },
     {
       "path": "tests/test_start_all_supervisor.py",
-      "sha256": "fa2e2a50097dd6d268b949ac8fe26edaa84344df45a1af85c1f75709c4ef165d",
-      "size": 70947
+      "sha256": "3c8c9ba49e0c590707935b9cb86abb22a67d3d301faf54893d4fe66d1e7f4c6d",
+      "size": 73519
     },
     {
       "path": "tests/test_start_zero_network_web_e2e.py",

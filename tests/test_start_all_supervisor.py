@@ -312,13 +312,72 @@ ThreadingHTTPServer(("127.0.0.1", int(os.environ["GATEWAY_PORT"])), Handler).ser
     for service in ("weixin", "feishu"):
         marker = data / f"{service}.started"
         markers.append(marker)
+        health_file = data / f"{service}_bridge_health.json"
+        health_document = (
+            {
+                "schema": "nachuan.weixin-bridge-health.v1",
+                "state": "healthy",
+                "ready": True,
+                "connected": True,
+                "fresh": True,
+                "pending_inbound": 0,
+                "pending_outbound": 0,
+                "dead_inbound": 0,
+                "dead_outbound": 0,
+                "oldest_processing_age_seconds": 0.0,
+                "consecutive_poll_failures": 0,
+                "last_error_code": "",
+                "access_configured": True,
+                "bridge_key_configured": True,
+                "engine_available": True,
+                "readiness_reasons": [],
+            }
+            if service == "weixin"
+            else {
+                "schema": "nachuan.feishu-bridge-health.v1",
+                "state": "healthy",
+                "ready": True,
+                "connected": True,
+                "fresh": True,
+                "pending_inbound": 0,
+                "pending_outbound": 0,
+                "dead_inbound": 0,
+                "dead_outbound": 0,
+                "consecutive_reconnect_failures": 0,
+                "last_connected_at": 0,
+                "last_event_received_at": 0,
+                "last_message_finished_at": 0,
+                "last_error_code": "",
+                "access_configured": True,
+                "bridge_key_configured": True,
+                "engine_available": True,
+                "readiness_reasons": [],
+            }
+        )
         (scripts / f"run_{service}{'_ilink' if service == 'weixin' else ''}_bridge.py").write_text(
             f"""
+import json
+import os
 from pathlib import Path
 import time
 
 Path({str(marker)!r}).write_text("started", encoding="ascii")
-time.sleep(120)
+health_path = Path({str(health_file)!r})
+document = {health_document!r}
+document["pid"] = os.getpid()
+deadline = time.monotonic() + 120
+while time.monotonic() < deadline:
+    now = time.time()
+    document["updated_at"] = now
+    document["heartbeat_at"] = now
+    document["fresh_until"] = now + 30
+    document["freshness_ttl_seconds"] = 30
+    if document["schema"] == "nachuan.feishu-bridge-health.v1":
+        document["last_connected_at"] = now
+    temporary = health_path.with_name(health_path.name + f".tmp.{{os.getpid()}}")
+    temporary.write_text(json.dumps(document), encoding="utf-8")
+    temporary.replace(health_path)
+    time.sleep(1)
 """.strip(),
             encoding="utf-8",
         )
@@ -601,11 +660,17 @@ def test_database_unready_keeps_configured_durable_bridges_fail_closed(
         log_file = root / "data" / "logs" / "supervisor.log"
 
         def database_unready_logged() -> bool:
-            log_text = (
-                log_file.read_text(encoding="utf-8-sig", errors="replace")
-                if log_file.is_file()
-                else ""
-            )
+            try:
+                log_text = (
+                    log_file.read_text(encoding="utf-8-sig", errors="replace")
+                    if log_file.is_file()
+                    else ""
+                )
+            except OSError:
+                # The supervisor owns this append-only log and Windows may
+                # briefly deny a concurrent reader.  A polling handshake must
+                # treat that as "not observed yet", never as product failure.
+                return False
             return "database_unready" in log_text
 
         _wait_for_offline_supervisor_handshake(
