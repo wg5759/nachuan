@@ -6,6 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from gateway.enterprise_rag_plugins import (
+    BUILTIN_ENTERPRISE_DLP_MANIFEST,
+    BUILTIN_ENTERPRISE_RERANKER_MANIFEST,
+    BUILTIN_ENTERPRISE_RUNTIME_MANIFEST,
+    BUILTIN_ENTERPRISE_SPLITTER_MANIFEST,
+)
 from gateway.provider_plugins import (
     BUILTIN_ECHO_MANIFEST,
     BUILTIN_LIST_SKILLS_MANIFEST,
@@ -23,8 +29,8 @@ from orchestrator.plugin_kernel import (
     ToolDefinition,
     ToolNotFound,
 )
-from orchestrator.workflow_plugins import BUILTIN_PIPELINE_WORKFLOW_MANIFEST
 from orchestrator.ui_plugins import BUILTIN_ORCHESTRATION_UI_MANIFEST
+from orchestrator.workflow_plugins import BUILTIN_PIPELINE_WORKFLOW_MANIFEST
 
 
 def _tool_manifest(*, capabilities: list[str]) -> PluginManifestV1:
@@ -116,6 +122,10 @@ async def test_builtin_skill_bundle_is_data_only_and_holds_dependency_lease():
         BUILTIN_ECHO_MANIFEST.plugin_id,
         BUILTIN_PIPELINE_WORKFLOW_MANIFEST.plugin_id,
         BUILTIN_ORCHESTRATION_UI_MANIFEST.plugin_id,
+        BUILTIN_ENTERPRISE_SPLITTER_MANIFEST.plugin_id,
+        BUILTIN_ENTERPRISE_RERANKER_MANIFEST.plugin_id,
+        BUILTIN_ENTERPRISE_DLP_MANIFEST.plugin_id,
+        BUILTIN_ENTERPRISE_RUNTIME_MANIFEST.plugin_id,
         BUILTIN_SKILL_BUNDLE_MANIFEST.plugin_id,
         BUILTIN_LIST_SKILLS_MANIFEST.plugin_id,
     )

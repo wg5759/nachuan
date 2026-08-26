@@ -115,6 +115,10 @@ def build_builtin_provider_kernel(
 
     mount_builtin_ui_plugins(kernel)
 
+    from gateway.enterprise_rag_plugins import mount_builtin_enterprise_rag_plugins
+
+    mount_builtin_enterprise_rag_plugins(kernel)
+
     skill_bundle = build_reviewed_skill_bundle()
     if skill_bundle is None:
         return kernel

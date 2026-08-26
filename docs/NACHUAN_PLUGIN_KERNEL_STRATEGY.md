@@ -1,6 +1,6 @@
 # 纳川插件内核策略：吸收 DeepSeek Harness“一切皆插件”的精华
 
-> 状态：PK-001～PK-006 最小纵切已实施；PK-007～PK-008 待推进
+> 状态：PK-001～PK-007 最小纵切已实施；PK-008 待推进
 > 日期：2026-08-26
 > 目标：在不破坏纳川现有安全账本、真实渠道和安装发行边界的前提下，把模型、工具、协作、知识、渠道和 UI 变成可组合能力
 
@@ -240,7 +240,7 @@ Bundle 是签名的插件组合，不复制源码：
 
 ## 8. 当前实现与剩余差距
 
-截至 2026-08-26，PK-001～PK-006 最小纵切已经落地：`orchestrator/plugin_kernel.py`
+截至 2026-08-26，PK-001～PK-007 最小纵切已经落地：`orchestrator/plugin_kernel.py`
 提供严格 manifest、service/event registry、能力票据、借用租约、LIFO effect 回收、
 失败回滚、卸载和 quarantine；`EchoProvider` 已通过 `provider.factory.echo` 内置插件
 接入 legacy Router。`ToolRegistry` 新增闭集 schema、精确 `tool.execute:<name>` 能力、
@@ -259,6 +259,9 @@ Renderer 再次验证闭集 DTO；Web 使用普通受保护只读端点保持同
 PK-006 增加签名第三方 bundle、闭集 SBOM、撤销集、持久 quarantine、单次有界 IPC 和
 Windows 真 AppContainer worker。第三方 Python 不被导入 Engine；内核只挂载内置代理，再按
 `id + version + artifact_sha256` 精确选择已验 bundle。
+PK-007 把企业 RAG 的语义分片、embedding、候选检索、授权后重排和 DLP 收敛为
+版本化 service seam。身份、tenant 硬边界、AuthzFacade、正文读取、撤权 fence、生成清单/收据和
+audit key 仍由可信调用方掌控；组件在一次操作全程持有内核租约，执行中不能卸载。
 
 仍待统一迁移的部分包括：
 
@@ -268,6 +271,7 @@ Windows 真 AppContainer worker。第三方 Python 不被导入 Engine；内核�
 - 除 `pipeline` 外的工作流仍在 `gateway/app.py` 中逐个直接 import，新增流程仍需改 Gateway。
 - 目前只有“多模型协作”工作区入口迁为 UI slot；其余工作区和设置面板仍是硬编码。
 - `pipeline` 事件目前只重建执行拓扑与摘要，不能重建客户原文；其他会话、工具、插件和渠道也尚未汇入统一事件模型。
+- 企业 RAG 的真实 embedding/向量候选、加密正文、ReBAC/ABAC、DLP、PostgreSQL RLS、连接器 outbox 和 RAG-ACL-008 尚未接入；公开 API 仍返回 `enterprise_rag_not_ready`。
 
 因此继续采用旁路内核和 legacy adapter 渐进迁移，不做大爆炸重写。
 
@@ -336,10 +340,18 @@ Windows 真 AppContainer worker。第三方 Python 不被导入 Engine；内核�
 - 内核中只挂载 builtin `isolated.plugin.execute` 代理，第三方 manifest 仍不能 in-process mount；服务借用期间禁止卸载，释放后注册和引用全部清理；
 - 当前本机证据为核心/worker/AppContainer/proxy 27 项与插件/发行相邻 89 项全绿，恶意样例确认插件能正常 import `socket/subprocess`，但不能读宿主哨兵文件、写外部文件、连本机 TCP 或拉起子进程。它不等于插件市场、Linux/macOS 隔离、出站白名单或动态第三方 UI 已完成。
 
-### PK-007：企业 RAG 插件组合
+### PK-007：企业 RAG 插件组合（已完成最小纵切）
 
-- 解析、embedding、检索、重排、DLP 可换；
-- 身份、租户硬隔离、正文前授权和撤权 epoch 仍由内核掌握。
+- 内核定义 `enterprise.rag.splitter/embedder/candidates/reranker/dlp/runtime` 六个 v1 service seam；默认只挂无网络 splitter、授权闭集原序 reranker、deny-all DLP 和组合 runtime，不挂假 embedding/候选后端；
+- splitter 每次只看一个已由内核按 `policy_id + classification + acl_digest` 分开的权限同质 block；返回必须完整重组原文且每片不超限，删字、改字或跨权限边界均拒绝；
+- embedding 只接收已通过 plan digest/payload/content hash 复验的瞬时分片；返回向量必须按原顺序精确回显 tenant/document/chunk/policy/epoch/classification/content hash/model/dimension，向量 batch digest 继承全部权限元数据；
+- candidate 插件只看可信 tenant id、query、分页和数量，只能返回候选 ID/元数据；跨 tenant、重复页、游标环、旧 epoch 或闭集漂移由可信 retriever 拒绝；
+- content reader 不是插件服务。候选先逐文档过 fence，再经内核 AuthzFacade 的 ReBAC∩ABAC 决策；只有 allow ID 才能读正文，重排插件只见已授权正文且必须原样返回完整 ID 排列；
+- 生成前/输出前每次重新借用 DLP，而 authorization、fence、route policy、audit key 仍由可信调用方注入。默认 DLP 永远 deny，未配真实扫描器时不会降级为未扫描生成；
+- 引用和全部曾用上下文在生成前及输出释放前都重验 Authz；PK-007 又补上“检索后、生成前新出现 pending/failed fence”检查，命中时在 DLP/输出释放前整次拒绝；
+- 每次组件调用全程持有 `ServiceLease`；执行中卸载被内核拒绝，异常后租约必释放、不回退 legacy 或个人知识库，且错误不透出插件内部细节；
+- `/health` 只报告六类组件是否挂载和 DLP 是 `deny_all/configured`，同时固定 `api_enabled=false/production_ready=false`；不用“插件存在”冒充企业 RAG 已上线。
+- 当前本机影响面 234 项全绿，wheel 确认携带组合模块；单独 PyInstaller Engine 冻结件真启动后 `/health` 实际返回 splitter/reranker/DLP/runtime 已挂、embedder/candidates 缺失、`dlp_mode=deny_all`、`api_enabled=false`、`production_ready=false`。该未签名冻结件只是本地打包闭包验收，不是正式二进制发布。
 
 ### PK-008：生态与兼容
 

@@ -1,6 +1,6 @@
 # 纳川企业级 RAG 全链路权限架构
 
-> 状态：RAG-ACL-001 身份边界至 RAG-ACL-007 本地撤权/fence 的七个纵切已实现；真实 ReBAC/ABAC/向量/加密正文/DLP 后端、外部连接器同步、PostgreSQL RLS 与真实验收仍未实现，不得宣称企业级权限已经上线
+> 状态：RAG-ACL-001 身份边界至 RAG-ACL-007 本地撤权/fence 的七个纵切已实现；PK-007 已将可替换 RAG 组件接入插件内核，但真实 ReBAC/ABAC/向量/加密正文/DLP 后端、外部连接器同步、PostgreSQL RLS 与真实验收仍未实现，不得宣称企业级权限已经上线
 > 日期：2026-08-24
 > 适用范围：纳川团队版、企业版、多租户云同步和外部知识源同步
 
@@ -298,7 +298,8 @@ kb_v2_audit_decisions
 5. **RAG-ACL-005：权限感知检索（本地代理纵切已完成）。** `EnterprisePermissionAwareRetriever` 只把可信 context 的 tenant 传入候选源，候选回传跨 tenant、分页重复或游标循环即熔断；按受限预算超量召回，逐页调用 ACL-004，对 allow 候选才向内容读取器请求正文，结果不足继续翻页。内容返回必须与授权 ID 闭包、tenant、索引 hash 和正文实算 hash 精确一致；仅授权正文可进入重排器，重排结果必须是完整排列，不能增删 ID。授权正文对象自身冻结并复核 hash，引用返回前重新按当前 epoch 授权；故障只返回空/通用不足，不读取未授权正文。真实向量库租户硬分区、加密对象读取、searchable 激活、外部重排路由与 API E2E 仍未实现。
 6. **RAG-ACL-006：生成防护（本地清单/门面纵切已完成）。** `EnterpriseGenerationGuard` 在生成前重新授权全部上下文，按最高密级、region、`local_model_only`、`no_training` 等义务校验冻结模型路由；不认识的义务拒绝。逐片上下文 DLP 后分别绑定原文 hash 与准备态 hash，授权主体范围、policy/corpus epoch、query、完整片段清单、DLP 版本、路由全策略和义务用受保护 audit key 生成 HMAC manifest。输出释放前复核 manifest/准备态闭包、全部曾参与生成的上下文和引用，随后执行输出 DLP/推断风险判定；脱敏后的最终字节、引用和 DLP 版本再生成 HMAC 回执。真实 DLP/推断检测器、模型调用适配、策略感知缓存、生产密钥托管与 API E2E 仍未实现。
 7. **RAG-ACL-007：撤权与同步（本地 metadata/outbox/fence 纵切已完成）。** `begin_document_revocation` 在同一 SQLite 事务内 CAS 提升 policy/corpus epoch、推进未受影响 metadata 到新 epoch、标记目标 document/chunks revoked、落 pending revoke outbox；旧 epoch 立即拒绝。pending/failed fence 跨后续 epoch 保留，只有当前 epoch 下显式 applied 才释放；失败事件可恢复后再 applied，历史不覆盖。检索代理把 fence checker 设为必需依赖，目标 pending/failed 时不进入 Authz 或正文读取，checker 故障整次检索拒绝。真实向量/对象/连接器 outbox 消费、漂移检测、跨进程并发、PostgreSQL 事务/RLS 和恢复审计仍未实现。
-8. **RAG-ACL-008：真实验收。** 多租户对抗、撤权并发、故障演练、长稳和独立安全评审。
+8. **PK-007：企业 RAG 插件组合（最小纵切已完成）。** `enterprise.rag.splitter/embedder/candidates/reranker/dlp/runtime` 六个 v1 service seam 已进入 `PluginKernel`。分片插件只能处理单个权限同质 block 并完整重组原文；embedding 输入先复验 plan/payload/hash，向量结果继承 tenant/document/policy/epoch/classification；candidate 插件只见 tenant/query 并只返回 ID/元数据；content reader、AuthzFacade、fence、route/audit key 仍由可信内核持有。重排只见授权正文，DLP 默认 deny-all；新 fence 在生成前和输出释放前都重验。真实组件与生产 API 仍不启用。
+9. **RAG-ACL-008：真实验收。** 多租户对抗、撤权并发、故障演练、长稳和独立安全评审。
 
 第一阶段不要改现有个人知识库的行为；企业功能走独立 API 与数据域，完成迁移验收后再决定是否统一。
 

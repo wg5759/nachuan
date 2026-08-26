@@ -207,6 +207,7 @@ class TestPackageClosure:
         assert "cli/kimi_auth_probe_entrypoint.py" in names
         assert "cli/kimi_worker_entrypoint.py" in names
         assert "gateway/provider_plugins.py" in names
+        assert "gateway/enterprise_rag_plugins.py" in names
         assert "gateway/sqlite_runtime.py" in names
         assert "orchestrator/durable_event_log.py" in names
         assert "orchestrator/plugin_kernel.py" in names

@@ -32,6 +32,7 @@ known vulnerabilities。当前 lock 仍须在发布提交中重新导出并生�
 ## 已实施的故障关闭策略
 
 - 第三方插件：PK-006 只接受三文件闭集、canonical JSON、Ed25519 签名与绑定入口哈希的 manifest/SBOM；未知 publisher、撤销身份、加文件或改字节均在执行前拒绝。已验代码被复制到单次临时根，以无网络 capability 的 Windows AppContainer 和单进程/CPU/内存/kill-on-close Job Object 运行；启动器在恢复线程前验 `TokenIsAppContainer=1` 与固定 SID。专用 CPython 缓存每次对完整标准库/DLL 闭集重算路径、大小和 SHA-256；可信 `ready` 帧之后才发客户请求并开始插件墙钟限额。一次一帧 IPC 不携带父进程凭据，超时/协议/worker 异常按精确签名身份持久 quarantine。真实恶意样例已证明能正常 import `socket/subprocess` 但不能读宿主文件、写外部文件、连本机 TCP 或创建子进程；真 PyInstaller 冻结 Engine 也已验内层单进程 Job。此结论只覆盖该 Windows 代理路径，不把第三方字节宣传为“无病毒/无后门”，也不代替最终包 SBOM/漏洞/多引擎扫描。
+- 企业 RAG 插件组合：PK-007 的 splitter/reranker/DLP/runtime 目前都是内置受信代码，embedder/candidate 无默认 provider，不会从环境扫描动态代码。分片插件不能改原文或跨权限同质边界；候选插件不获得正文；重排只获得已授权正文；DLP 默认 deny-all。tenant/Authz/content/fence/route/audit 对象不是插件 service，组件返回均由可信 runtime 做闭集/哈希/版本复验。这是源码组合边界，不是真实 ReBAC/ABAC、加密正文、向量库或 DLP 后端已准入；外部 RAG 组件在 PK-008 完成 typed isolated proxy/SDK 前不得 in-process 接入。
 - 本地 GGUF：`gateway/local_model.py` 不再使用浮动 `resolve/master`。远程下载默认关闭；只有同时提供
   `NACHUAN_ENABLE_VERIFIED_MODEL_DOWNLOAD=1`、不可变 revision 和预审 SHA-256 时才下载，下载完成后先验
   SHA-256、GGUF 魔数和体积上限，匹配后才原子落盘。

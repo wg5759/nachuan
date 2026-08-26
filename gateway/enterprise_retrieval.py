@@ -15,7 +15,6 @@ from .enterprise_authz import (
 )
 from .enterprise_context import EnterpriseRequestContext
 
-
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _MAX_QUERY_UTF8_BYTES = 64 * 1024
@@ -131,7 +130,7 @@ class EnterpriseAuthorizedReranker(Protocol):
         self,
         *,
         query: str,
-        chunks: tuple["EnterpriseAuthorizedChunk", ...],
+        chunks: tuple[EnterpriseAuthorizedChunk, ...],
     ) -> Sequence[str]: ...
 
 
@@ -191,6 +190,74 @@ class EnterpriseRetrievalResult:
     reason_codes: tuple[str, ...]
 
 
+class EnterpriseCitationAuthorizationGuard:
+    """Kernel-owned citation recheck; plugins never decide authorization."""
+
+    def __init__(
+        self,
+        *,
+        authorization: EnterpriseAuthorizationFacade,
+        fence_checker: EnterpriseScopeFenceChecker,
+    ) -> None:
+        if not isinstance(authorization, EnterpriseAuthorizationFacade):
+            raise EnterpriseRetrievalError("authorization is invalid")
+        if not callable(getattr(fence_checker, "is_scope_fenced", None)):
+            raise EnterpriseRetrievalError("fence_checker is invalid")
+        self._authorization = authorization
+        self._fences = fence_checker
+
+    def revalidate_citations(
+        self,
+        *,
+        context: EnterpriseRequestContext,
+        chunks: Iterable[EnterpriseAuthorizedChunk],
+    ) -> tuple[EnterpriseAuthorizedChunk, ...]:
+        candidates = tuple(chunks)
+        if not candidates:
+            return ()
+        if any(chunk.tenant_id != context.tenant_id for chunk in candidates):
+            raise EnterpriseRetrievalError("citation tenant boundary violated")
+        unfenced: list[EnterpriseAuthorizedChunk] = []
+        for chunk in candidates:
+            try:
+                fenced = self._fences.is_scope_fenced(
+                    tenant_id=context.tenant_id,
+                    resource_scope=chunk.document_id,
+                    expected_policy_epoch=context.policy_epoch,
+                )
+            except Exception:  # noqa: BLE001 -- dependency errors fail closed
+                raise EnterpriseRetrievalError(
+                    "citation fence check unavailable"
+                ) from None
+            if not isinstance(fenced, bool):
+                raise EnterpriseRetrievalError("citation fence result is invalid")
+            if not fenced:
+                unfenced.append(chunk)
+        if not unfenced:
+            return ()
+        resources = tuple(
+            EnterpriseAuthorizationResource(
+                tenant_id=chunk.tenant_id,
+                resource_type="chunk",
+                resource_id=chunk.chunk_id,
+                policy_id=chunk.policy_id,
+                policy_epoch=chunk.policy_epoch,
+                classification=chunk.classification,
+            )
+            for chunk in unfenced
+        )
+        decisions = self._authorization.batch_check(context, resources)
+        return tuple(
+            replace(
+                chunk,
+                decision_id=decision.decision_id,
+                obligations=decision.obligations,
+            )
+            for chunk, decision in zip(unfenced, decisions, strict=True)
+            if decision.allowed
+        )
+
+
 class EnterprisePermissionAwareRetriever:
     def __init__(
         self,
@@ -229,6 +296,10 @@ class EnterprisePermissionAwareRetriever:
         self._authorization = authorization
         self._content = content_reader
         self._fences = fence_checker
+        self._citation_guard = EnterpriseCitationAuthorizationGuard(
+            authorization=authorization,
+            fence_checker=fence_checker,
+        )
         self._reranker = reranker
         self._oversample_factor = oversample_factor
         self._max_pages = max_pages
@@ -288,7 +359,7 @@ class EnterprisePermissionAwareRetriever:
                         resource_scope=candidate.document_id,
                         expected_policy_epoch=context.policy_epoch,
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001 -- dependency errors fail closed
                     raise EnterpriseRetrievalError("policy fence check unavailable") from None
                 if not isinstance(fenced, bool):
                     raise EnterpriseRetrievalError("policy fence result is invalid")
@@ -344,31 +415,9 @@ class EnterprisePermissionAwareRetriever:
         context: EnterpriseRequestContext,
         chunks: Iterable[EnterpriseAuthorizedChunk],
     ) -> tuple[EnterpriseAuthorizedChunk, ...]:
-        candidates = tuple(chunks)
-        if not candidates:
-            return ()
-        if any(chunk.tenant_id != context.tenant_id for chunk in candidates):
-            raise EnterpriseRetrievalError("citation tenant boundary violated")
-        resources = tuple(
-            EnterpriseAuthorizationResource(
-                tenant_id=chunk.tenant_id,
-                resource_type="chunk",
-                resource_id=chunk.chunk_id,
-                policy_id=chunk.policy_id,
-                policy_epoch=chunk.policy_epoch,
-                classification=chunk.classification,
-            )
-            for chunk in candidates
-        )
-        decisions = self._authorization.batch_check(context, resources)
-        return tuple(
-            replace(
-                chunk,
-                decision_id=decision.decision_id,
-                obligations=decision.obligations,
-            )
-            for chunk, decision in zip(candidates, decisions, strict=True)
-            if decision.allowed
+        return self._citation_guard.revalidate_citations(
+            context=context,
+            chunks=chunks,
         )
 
     def _read_authorized_page(self, context, allowed):
@@ -435,6 +484,7 @@ __all__ = [
     "EnterpriseAuthorizedReranker",
     "EnterpriseCandidatePage",
     "EnterpriseCandidateSource",
+    "EnterpriseCitationAuthorizationGuard",
     "EnterpriseContentReader",
     "EnterpriseContentRecord",
     "EnterprisePermissionAwareRetriever",

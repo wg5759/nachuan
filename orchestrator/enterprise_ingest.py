@@ -10,8 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Iterable, Literal
+from typing import Literal, Protocol
 
 from .enterprise_knowledge import (
     EnterpriseChunkMetadata,
@@ -19,7 +20,6 @@ from .enterprise_knowledge import (
     EnterpriseKnowledgeError,
     EnterpriseKnowledgeStore,
 )
-
 
 _MAX_BLOCKS = 10_000
 _MAX_TOTAL_UTF8_BYTES = 64 * 1024 * 1024
@@ -112,15 +112,27 @@ class EnterpriseIngestPlan:
     plan_digest: str
 
 
+class EnterpriseSemanticSplitter(Protocol):
+    def split(self, *, text: str, max_chunk_chars: int) -> Sequence[str]: ...
+
+
 class EnterpriseSecureIngestPlanner:
-    def __init__(self, *, max_chunk_chars: int = 1_200):
+    def __init__(
+        self,
+        *,
+        max_chunk_chars: int = 1_200,
+        splitter: EnterpriseSemanticSplitter | None = None,
+    ):
         if (
             isinstance(max_chunk_chars, bool)
             or not isinstance(max_chunk_chars, int)
             or not 128 <= max_chunk_chars <= 16_384
         ):
             raise ValueError("max_chunk_chars is invalid")
+        if splitter is not None and not callable(getattr(splitter, "split", None)):
+            raise ValueError("splitter is invalid")
         self._max_chunk_chars = max_chunk_chars
+        self._splitter = splitter
 
     def plan_source_snapshot(
         self,
@@ -299,9 +311,9 @@ class EnterpriseSecureIngestPlanner:
         )
 
     @staticmethod
-    def stage_isolated(
-        store: EnterpriseKnowledgeStore, plan: EnterpriseIngestPlan
-    ) -> dict[str, object]:
+    def validate_plan(plan: EnterpriseIngestPlan) -> None:
+        if not isinstance(plan, EnterpriseIngestPlan):
+            raise EnterpriseKnowledgeError("ingest plan is invalid")
         if plan.status != "ready" or plan.reason_codes:
             raise EnterpriseKnowledgeError("quarantined ingest plan cannot be staged")
         if not plan.documents or len(plan.documents) != len(
@@ -343,6 +355,12 @@ class EnterpriseSecureIngestPlanner:
         )
         if expected_digest != plan.plan_digest:
             raise EnterpriseKnowledgeError("ingest plan digest changed")
+
+    @staticmethod
+    def stage_isolated(
+        store: EnterpriseKnowledgeStore, plan: EnterpriseIngestPlan
+    ) -> dict[str, object]:
+        EnterpriseSecureIngestPlanner.validate_plan(plan)
         return store.stage_document_family(
             tenant_id=plan.tenant_id,
             expected_policy_epoch=plan.policy_epoch,
@@ -453,6 +471,36 @@ class EnterpriseSecureIngestPlanner:
         )
 
     def _split_text(self, text: str) -> tuple[str, ...]:
+        if self._splitter is not None:
+            try:
+                result = self._splitter.split(
+                    text=text,
+                    max_chunk_chars=self._max_chunk_chars,
+                )
+            except Exception:  # noqa: BLE001 -- plugin details cannot cross the seam
+                raise EnterpriseKnowledgeError(
+                    "semantic splitter unavailable"
+                ) from None
+            if not isinstance(result, Sequence) or isinstance(result, (str, bytes)):
+                raise EnterpriseKnowledgeError("semantic splitter result is invalid")
+            parts = tuple(result)
+            if (
+                not parts
+                or len(parts) > 100_000
+                or any(
+                    not isinstance(part, str)
+                    or not part
+                    or len(part) > self._max_chunk_chars
+                    for part in parts
+                )
+                or "".join(parts) != text
+            ):
+                raise EnterpriseKnowledgeError(
+                    "semantic splitter changed source content"
+                )
+            for part in parts:
+                part.encode("utf-8", errors="strict")
+            return parts
         parts: list[str] = []
         start = 0
         while start < len(text):
@@ -511,5 +559,6 @@ __all__ = [
     "EnterpriseChunkPayload",
     "EnterpriseIngestPlan",
     "EnterpriseSecureIngestPlanner",
+    "EnterpriseSemanticSplitter",
     "EnterpriseSourceBlock",
 ]

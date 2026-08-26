@@ -2439,6 +2439,60 @@ def _channel_media_request_readiness() -> dict[str, Any]:
     }
 
 
+def _enterprise_rag_plugin_readiness(router: Any) -> dict[str, object]:
+    unavailable = {
+        "schema": "nachuan.enterprise-rag-plugin-readiness.v1",
+        "components": {
+            "splitter": False,
+            "embedder": False,
+            "candidates": False,
+            "reranker": False,
+            "dlp": False,
+        },
+        "dlp_mode": "unavailable",
+        "components_ready": False,
+        "api_enabled": False,
+        "production_ready": False,
+    }
+    try:
+        from gateway.enterprise_rag_plugins import ENTERPRISE_RAG_RUNTIME_SERVICE
+
+        lease = router.plugin_kernel.borrow_service(ENTERPRISE_RAG_RUNTIME_SERVICE)
+    except Exception:  # noqa: BLE001 -- readiness is closed and detail-free
+        return unavailable
+    try:
+        snapshot = lease.value.readiness_snapshot()
+    except Exception:  # noqa: BLE001 -- readiness is closed and detail-free
+        return unavailable
+    finally:
+        lease.release()
+    components = snapshot.get("components") if isinstance(snapshot, dict) else None
+    if (
+        not isinstance(snapshot, dict)
+        or set(snapshot)
+        != {
+            "schema",
+            "components",
+            "dlp_mode",
+            "components_ready",
+            "api_enabled",
+            "production_ready",
+        }
+        or snapshot.get("schema")
+        != "nachuan.enterprise-rag-plugin-readiness.v1"
+        or not isinstance(components, dict)
+        or set(components) != {"splitter", "embedder", "candidates", "reranker", "dlp"}
+        or any(not isinstance(value, bool) for value in components.values())
+        or snapshot.get("dlp_mode") not in {"unavailable", "deny_all", "configured"}
+        or any(
+            not isinstance(snapshot.get(field), bool)
+            for field in ("components_ready", "api_enabled", "production_ready")
+        )
+    ):
+        return unavailable
+    return snapshot
+
+
 @app.get("/health")
 async def health(request: Request) -> dict[str, Any]:
     # Supervisor 以随机 challenge 校验本次托管子进程的 boot token。proof 不泄露
@@ -2474,6 +2528,9 @@ async def health(request: Request) -> dict[str, Any]:
             "financial_ledger": financial_ledger,
             "sqlite_backup": _sqlite_backup_readiness(),
             "connection_store": connection_store,
+            "enterprise_rag_plugins": _enterprise_rag_plugin_readiness(
+                request.app.state.router
+            ),
             "paid_media_authority": _paid_media_authority_readiness(),
             "channel_media_requests": _channel_media_request_readiness(),
             "providers": _provider_readiness(),

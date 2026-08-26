@@ -5,6 +5,12 @@ from pathlib import Path
 
 import pytest
 
+from gateway.enterprise_rag_plugins import (
+    BUILTIN_ENTERPRISE_DLP_MANIFEST,
+    BUILTIN_ENTERPRISE_RERANKER_MANIFEST,
+    BUILTIN_ENTERPRISE_RUNTIME_MANIFEST,
+    BUILTIN_ENTERPRISE_SPLITTER_MANIFEST,
+)
 from gateway.provider_plugins import (
     BUILTIN_ECHO_MANIFEST,
     BUILTIN_LIST_SKILLS_MANIFEST,
@@ -62,6 +68,10 @@ async def test_default_router_owns_and_closes_its_builtin_plugin_kernel():
         BUILTIN_ECHO_MANIFEST.plugin_id,
         BUILTIN_PIPELINE_WORKFLOW_MANIFEST.plugin_id,
         BUILTIN_ORCHESTRATION_UI_MANIFEST.plugin_id,
+        BUILTIN_ENTERPRISE_SPLITTER_MANIFEST.plugin_id,
+        BUILTIN_ENTERPRISE_RERANKER_MANIFEST.plugin_id,
+        BUILTIN_ENTERPRISE_DLP_MANIFEST.plugin_id,
+        BUILTIN_ENTERPRISE_RUNTIME_MANIFEST.plugin_id,
         BUILTIN_SKILL_BUNDLE_MANIFEST.plugin_id,
         BUILTIN_LIST_SKILLS_MANIFEST.plugin_id,
     )
@@ -87,6 +97,10 @@ async def test_router_reload_reuses_kernel_and_keeps_old_generation_leased_until
         BUILTIN_ECHO_MANIFEST.plugin_id,
         BUILTIN_PIPELINE_WORKFLOW_MANIFEST.plugin_id,
         BUILTIN_ORCHESTRATION_UI_MANIFEST.plugin_id,
+        BUILTIN_ENTERPRISE_SPLITTER_MANIFEST.plugin_id,
+        BUILTIN_ENTERPRISE_RERANKER_MANIFEST.plugin_id,
+        BUILTIN_ENTERPRISE_DLP_MANIFEST.plugin_id,
+        BUILTIN_ENTERPRISE_RUNTIME_MANIFEST.plugin_id,
         BUILTIN_SKILL_BUNDLE_MANIFEST.plugin_id,
         BUILTIN_LIST_SKILLS_MANIFEST.plugin_id,
     )

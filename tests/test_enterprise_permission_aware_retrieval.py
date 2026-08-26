@@ -396,6 +396,34 @@ def test_citations_are_rechecked_against_the_current_policy_epoch() -> None:
     assert revalidated == ()
 
 
+def test_citations_are_rechecked_against_a_new_revocation_fence() -> None:
+    contents = {"one": "first"}
+    fences = _FenceChecker()
+    retriever, _source, authz, _reader = _retriever(
+        [
+            EnterpriseCandidatePage(
+                candidates=(_candidate("one", contents["one"]),),
+                next_cursor=None,
+            )
+        ],
+        {"one"},
+        contents,
+        fence_checker=fences,
+    )
+    original = retriever.retrieve(context=_context(), query="question", k=1)
+    authorization_calls_before = len(authz.calls)
+    fences.fenced.add("document-one")
+
+    revalidated = retriever.revalidate_citations(
+        context=_context(),
+        chunks=original.chunks,
+    )
+
+    assert revalidated == ()
+    assert len(authz.calls) == authorization_calls_before
+    assert fences.calls[-1] == ("tenant-a", "document-one", 7)
+
+
 def test_duplicate_candidates_across_pages_are_a_fail_closed_drift() -> None:
     contents = {"same": "text"}
     retriever, *_ = _retriever(
