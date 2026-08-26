@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260827-69",
+  "candidate_id": "nachuan-source-alpha-20260827-70",
   "file_count": 909,
   "files": [
     {
@@ -1314,8 +1314,8 @@
     },
     {
       "path": "desktop/src/renderer/src/App.tsx",
-      "sha256": "64bfbe7ae1f6fb6406042f17487850b43cccf853539a6fbb2277e5082503973b",
-      "size": 26990
+      "sha256": "36791427c248cb4c4f275e3da8c61c87bc6ca7f64637334e3efa883b9329d9b9",
+      "size": 26667
     },
     {
       "path": "desktop/src/renderer/src/api.engine-proxy.test.ts",
@@ -1384,13 +1384,13 @@
     },
     {
       "path": "desktop/src/renderer/src/components/AppHeader.test.tsx",
-      "sha256": "a4d12222422d57bfa0635517e3d0574a58d74a64749ee86fb342a09a6f14a8b4",
-      "size": 1749
+      "sha256": "3e3220e03b310ccc6fe70130a82bb733b348c9c87eb4fe73d7871bcc6348d137",
+      "size": 1622
     },
     {
       "path": "desktop/src/renderer/src/components/AppHeader.tsx",
-      "sha256": "f41ddd901c2d13a453b09b96516ee165e13bc2fc3eb7662d7abedbf17344e6c6",
-      "size": 5751
+      "sha256": "a8253f202204ac484e9e2f2f954ee91dbba791499fd39280c9df4f8b66e47750",
+      "size": 3858
     },
     {
       "path": "desktop/src/renderer/src/components/ApprovalCenter.tsx",
@@ -1419,13 +1419,13 @@
     },
     {
       "path": "desktop/src/renderer/src/components/ConnectionCenter.subscription.test.tsx",
-      "sha256": "6a080e3cd685805e8b6b383e99fae18ba632da65efa6f4b7493fab80a48dc981",
-      "size": 9244
+      "sha256": "acac1a485a01b3fd668c9b78891240ed9d83cfd56651e68cf71ba1bf54b76bfe",
+      "size": 10090
     },
     {
       "path": "desktop/src/renderer/src/components/ConnectionCenter.tsx",
-      "sha256": "d93e26202765e41bd6896c264aa079b5b6bd48b57fc252023cc9ed41d3ba3b6f",
-      "size": 46900
+      "sha256": "40062c5554b0d3859333532467c1844d1b2cd4b8666210de998a021d12f59f4d",
+      "size": 51626
     },
     {
       "path": "desktop/src/renderer/src/components/CreativeDrawer.test.tsx",
@@ -1644,8 +1644,8 @@
     },
     {
       "path": "desktop/src/renderer/src/index.css",
-      "sha256": "b73eaf16d0dd45a737e09ab16d6d05297886e8c49f562bac28f7861c565add10",
-      "size": 28347
+      "sha256": "14f1df2a47f32a940dd416d47fc53f6f147a9eff6a1153c3fc1c2a205f753532",
+      "size": 38584
     },
     {
       "path": "desktop/src/renderer/src/knowledge-refresh.test.ts",
@@ -1659,13 +1659,13 @@
     },
     {
       "path": "desktop/src/renderer/src/locales/en.json",
-      "sha256": "3e13d8f18f147c014d03b0c13e21e4c0c9042f66c5d4d470e1f5e0129940267c",
-      "size": 33889
+      "sha256": "606772674c990ed380867236d682c34af1f9c32403225701de38ae49cb8b4e43",
+      "size": 34282
     },
     {
       "path": "desktop/src/renderer/src/locales/zh.json",
-      "sha256": "089a458095aa396616a9bbe14063489d62263c481c43f25370ef08625d25e6ec",
-      "size": 32871
+      "sha256": "547c7b623676fc8b2f835f1739b585b109b56a2c8bded1151dfe30881bec05b9",
+      "size": 33227
     },
     {
       "path": "desktop/src/renderer/src/main.tsx",
@@ -2568,18 +2568,18 @@
       "size": 34659
     },
     {
-      "path": "gateway/web_ui/assets/index-BPaCKf_k.js",
-      "sha256": "063eec6fd5a17e48f83944f1abc11976946f27c48700a5af3423c83029a3d167",
-      "size": 535723
+      "path": "gateway/web_ui/assets/index-BjWhLFqE.js",
+      "sha256": "08717f590a76885da49a21de5d737f2405827259744be4ee694dcb0116c637b5",
+      "size": 536568
     },
     {
-      "path": "gateway/web_ui/assets/index-BYjTOCeC.css",
-      "sha256": "9f9d5c6f8f03176c0039c25d28bf92b560caeae96924e899d2f718846b69e674",
-      "size": 57654
+      "path": "gateway/web_ui/assets/index-eVmgvpnO.css",
+      "sha256": "c3e78d685698f59f718b436d2635305def3b1e439e2da5f9c07c2a26839ef6e6",
+      "size": 64833
     },
     {
       "path": "gateway/web_ui/index.html",
-      "sha256": "727a574ee0ca39ce21853ef8eb272b0cf4b60e88c38e54f1a34d14f4a5dab612",
+      "sha256": "225e03f5fe35b7cf332187bbd105709b77e7727d10bcef3518d36492cc2a535f",
       "size": 705
     },
     {
@@ -4551,6 +4551,6 @@
   "history_included": false,
   "license": "Apache-2.0",
   "schema": "nachuan.open-source-snapshot.v1",
-  "source_head": "5b8fa5e10c6d62e8a4a010d200cac6e6d0dd751d",
+  "source_head": "df64cdb23c57ac6daeaeb6ef003d41f6e0a5af3e",
   "source_worktree_dirty": true
 }
