@@ -9,6 +9,13 @@ import httpx
 from scripts import installed_subscription_first_turn as acceptance
 
 
+def test_acceptance_allows_the_product_loopback_host() -> None:
+    assert (
+        acceptance._gateway_url("http://127.77.77.77:8080")
+        == "http://127.77.77.77:8080"
+    )
+
+
 class _Response:
     def __init__(self, payload, status_code: int = 200):
         self.payload = payload

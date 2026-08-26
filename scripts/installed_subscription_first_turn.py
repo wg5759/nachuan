@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -46,9 +47,15 @@ class InstalledSubscriptionAcceptanceError(RuntimeError):
 
 def _gateway_url(value: str) -> str:
     parsed = urlsplit(value)
+    try:
+        loopback = parsed.hostname == "localhost" or ipaddress.ip_address(
+            parsed.hostname or ""
+        ).is_loopback
+    except ValueError:
+        loopback = False
     if (
         parsed.scheme != "http"
-        or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or not loopback
         or parsed.port is None
         or parsed.username
         or parsed.password
