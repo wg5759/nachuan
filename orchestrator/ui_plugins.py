@@ -51,7 +51,6 @@ def _regular_non_reparse(path: Path) -> bool:
         stat.S_ISREG(info.st_mode)
         and not stat.S_ISLNK(info.st_mode)
         and not reparse
-        and int(getattr(info, "st_nlink", 1)) == 1
     )
 
 

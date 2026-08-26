@@ -6,6 +6,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+import orchestrator.ui_plugins as ui_plugins
 from gateway.app import _public_fastapi_app
 from gateway.provider_plugins import build_builtin_provider_kernel
 from orchestrator.plugin_kernel import (
@@ -136,6 +137,28 @@ def test_builtin_ui_plugin_is_bound_to_exact_catalog_bytes() -> None:
         UI_SLOT_CATALOG_SHA256
     )
     assert load_builtin_ui_slots() == (_slot(),)
+
+
+def test_builtin_catalog_accepts_exact_package_manager_hardlink_and_hashes_bytes(
+    monkeypatch, tmp_path
+) -> None:
+    root = tmp_path / "site-packages"
+    config = root / "config"
+    cache = tmp_path / "package-cache"
+    config.mkdir(parents=True)
+    cache.mkdir()
+    cached = cache / "ui-slots.v1.json"
+    linked = config / "ui-slots.v1.json"
+    cached.write_bytes(UI_SLOT_CATALOG_PATH.read_bytes())
+    linked.hardlink_to(cached)
+    assert linked.stat().st_nlink == 2
+    monkeypatch.setattr(ui_plugins, "PROJECT_ROOT", root)
+    monkeypatch.setattr(ui_plugins, "UI_SLOT_CATALOG_PATH", linked)
+
+    assert ui_plugins.load_builtin_ui_slots() == (_slot(),)
+    cached.write_text("{}", encoding="utf-8")
+    with pytest.raises(UiSlotContractError, match="digest"):
+        ui_plugins.load_builtin_ui_slots()
 
 
 @pytest.mark.asyncio

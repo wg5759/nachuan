@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260826-56",
+  "candidate_id": "nachuan-source-alpha-20260826-57",
   "file_count": 887,
   "files": [
     {
@@ -1909,8 +1909,8 @@
     },
     {
       "path": "docs/NACHUAN_PLUGIN_KERNEL_STRATEGY.md",
-      "sha256": "352c96319d4c7a4c1eb49444bd61432cf5fdf7a6ebe6322e5235f1c0d51cbd5c",
-      "size": 21969
+      "sha256": "51954b39a9664338dfc92751a5557a9f1ad818d1e5903888b0b73a3b8450a59e",
+      "size": 22059
     },
     {
       "path": "docs/OPEN_SOURCE_STRATEGY_OPENCLAW_COMPARISON.md",
@@ -2784,8 +2784,8 @@
     },
     {
       "path": "orchestrator/ui_plugins.py",
-      "sha256": "cbcdf237d0c98f77e6470849fea49708438405828a87534cdcb3abed99335ee9",
-      "size": 4959
+      "sha256": "f4ac8b24f94e851f805ac5b6d5aa60c5f90509816fda3b2eaf6999fd58c9f53d",
+      "size": 4908
     },
     {
       "path": "orchestrator/undo_receipts.py",
@@ -4239,8 +4239,8 @@
     },
     {
       "path": "tests/test_ui_slot_plugins.py",
-      "sha256": "e42a939a12d622e1144aacc27098c18607314d34b6afc697fdd65f3268a68180",
-      "size": 5712
+      "sha256": "e5ef9141a69853b01c2f3ad44bd43fa6de814ee224cf4d0db6f721c37c9a8fff",
+      "size": 6579
     },
     {
       "path": "tests/test_undo_endpoint.py",

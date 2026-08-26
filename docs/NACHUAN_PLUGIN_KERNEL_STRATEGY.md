@@ -314,7 +314,7 @@ Renderer 再次验证闭集 DTO；Web 使用普通受保护只读端点保持同
 ### PK-005：Host/Main/Renderer 三面插件（已完成最小纵切）
 
 - 内核新增 `UiSlotDefinition/UiSlotRegistry`，slot 注册必须持精确 `ui.slot:<slot_id>` capability；重复 slot 或同 surface/component 阴影注册原子失败，卸载自动移除；
-- 当前闭集只有 `surface=workspace.menu`、`component=orchestrate`、`slot_id=workspace.orchestration`；catalog 绑定精确 SHA-256，拒绝 reparse、hardlink、未知字段和远程代码字段；
+- 当前闭集只有 `surface=workspace.menu`、`component=orchestrate`、`slot_id=workspace.orchestration`；catalog 绑定精确 SHA-256，拒绝 reparse、未知字段和远程代码字段；允许 uv/pip 产生的受哈希约束 hardlink，因为解析的正是同一次已验哈希字节；
 - Engine 提供内容无关 `nachuan.plugin-ui.snapshot.v1`，只含 slot、顺序、插件 id/version 和 artifact digest；内部路由不进入 OpenAPI；
 - Electron Main 固定选择 `plugin.ui.snapshot + GET + /internal/v1/desktop/session/plugin-ui-snapshot`，沿用挑战、同一 loopback socket、boot generation、nonce、HMAC 请求与签名响应；Renderer 不能选择 capability、target、method、header 或 body；
 - preload 只暴露无参数 `getPluginUiSnapshot()`；Main 和 Renderer 都用同一闭集解析器复验，通用 Renderer Engine 代理明确拒绝 `/v1/plugin-ui/snapshot`，renderer 无长期 key；
