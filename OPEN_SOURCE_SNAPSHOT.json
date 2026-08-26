@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260826-68",
+  "candidate_id": "nachuan-source-alpha-20260827-69",
   "file_count": 909,
   "files": [
     {
@@ -3119,8 +3119,8 @@
     },
     {
       "path": "scripts/run_weixin_ilink_bridge.py",
-      "sha256": "33c22119c9f77f884fa4f30028b5a2d519077efa4f786ded11b787785704e495",
-      "size": 306478
+      "sha256": "500792e35bdf31776eec0be4f7b9323c29262f4d243d40326c1f0af9d2ab2d16",
+      "size": 306867
     },
     {
       "path": "scripts/smoke.py",
@@ -4404,8 +4404,8 @@
     },
     {
       "path": "tests/test_weixin_ilink_bridge.py",
-      "sha256": "e4d8ffca02faab75d3579f529476826f72e72b4a42680dbc93ee931b0cb2926e",
-      "size": 277279
+      "sha256": "ccbd0ca1f7ae878d411144ead9678c6aec93908d5374246ef710578b43389391",
+      "size": 278291
     },
     {
       "path": "tests/test_weixin_state_family_guard.py",

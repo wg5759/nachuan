@@ -5772,6 +5772,41 @@ def test_inbound_finish_access_gate_obeys_total_wallclock_deadline(
         ).fetchone() == ("processing", "")
 
 
+def test_inbound_finish_early_deadline_error_never_enters_confirmation(monkeypatch):
+    bridge = _load_bridge()
+    monkeypatch.setattr(bridge._InboundClaimPolicy, "finish_timeout", 0.2)
+    confirmations = 0
+
+    class Storage:
+        def renew(self):
+            return True
+
+        def owns(self):
+            return True
+
+        def finish_before(self, _outcome, *, deadline_monotonic):
+            assert deadline_monotonic > time.monotonic()
+            raise bridge._OutboxFinishDeadlineExceeded("access gate exhausted")
+
+        def confirm_finish_before(self, _outcome, *, deadline_monotonic):
+            nonlocal confirmations
+            confirmations += 1
+            return False
+
+    session = bridge.ClaimLeaseSession(
+        storage=Storage(),
+        policy=bridge._InboundClaimPolicy(),
+    )
+    assert session.start() is True
+    try:
+        assert session.finish(object()) is False
+    finally:
+        session.close()
+
+    assert confirmations == 0
+    assert session.lost is True
+
+
 def test_inbound_finish_late_success_fails_closed_without_confirmation(monkeypatch):
     bridge = _load_bridge()
     monkeypatch.setattr(bridge._InboundClaimPolicy, "finish_timeout", 0.05)

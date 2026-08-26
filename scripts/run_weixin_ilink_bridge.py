@@ -931,6 +931,10 @@ class InboundFinishFenceLost(RuntimeError):
     """An inbound finish no longer owns a live durable claim."""
 
 
+class _OutboxFinishDeadlineExceeded(sqlite3.OperationalError):
+    """The shared finish deadline is exhausted and must never be retried."""
+
+
 class InboundSemanticConflict(RuntimeError):
     """One scoped provider event id was replayed with different semantics."""
 
@@ -2893,7 +2897,7 @@ def _remaining_outbox_finish_budget(
         raise ValueError("Weixin finish deadline must be finite")
     remaining = deadline - time.monotonic()
     if remaining <= 0:
-        raise sqlite3.OperationalError("Weixin finish deadline exceeded")
+        raise _OutboxFinishDeadlineExceeded("Weixin finish deadline exceeded")
     return remaining
 
 
@@ -4244,7 +4248,9 @@ class _PendingVideoClaimPolicy:
 
     @staticmethod
     def is_retryable(error: BaseException) -> bool:
-        return isinstance(error, (sqlite3.Error, OSError))
+        return isinstance(error, (sqlite3.Error, OSError)) and not isinstance(
+            error, _OutboxFinishDeadlineExceeded
+        )
 
     @staticmethod
     def fault(code: str, error: BaseException | None = None) -> None:
@@ -5557,7 +5563,7 @@ def _finish_inbound(
             remaining = _remaining_outbox_finish_budget(deadline_monotonic)
             access_lock_acquired = _ACCESS_LOCK.acquire(timeout=remaining)
         if not access_lock_acquired:
-            raise sqlite3.OperationalError(
+            raise _OutboxFinishDeadlineExceeded(
                 "Weixin finish access gate deadline exceeded"
             )
         access_lock_held = True
@@ -5965,7 +5971,9 @@ class _InboundClaimPolicy:
 
     @staticmethod
     def is_retryable(error: BaseException) -> bool:
-        return isinstance(error, (sqlite3.Error, OSError))
+        return isinstance(error, (sqlite3.Error, OSError)) and not isinstance(
+            error, _OutboxFinishDeadlineExceeded
+        )
 
     @staticmethod
     def fault(code: str, error: BaseException | None = None) -> None:
@@ -6877,7 +6885,9 @@ class _DeliveryClaimPolicy:
 
     @staticmethod
     def is_retryable(error: BaseException) -> bool:
-        return isinstance(error, (sqlite3.Error, OSError))
+        return isinstance(error, (sqlite3.Error, OSError)) and not isinstance(
+            error, _OutboxFinishDeadlineExceeded
+        )
 
     @staticmethod
     def fault(code: str, error: BaseException | None = None) -> None:
