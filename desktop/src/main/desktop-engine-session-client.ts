@@ -44,6 +44,7 @@ const ALLOWED_RESPONSE_HEADERS = new Set([
 ])
 
 export type DesktopEngineSessionCapability =
+  | 'plugin.ui.snapshot'
   | 'approval.list'
   | 'approval.resolve'
   | 'connection.save'
@@ -367,6 +368,17 @@ function validateClosedExchange(input: DesktopEngineSessionJsonExchangeInput): v
   const postJson = (): Record<string, unknown> => {
     if (input.method !== 'POST') closedManifestFailure()
     return strictRequestJson(input.body)
+  }
+
+  if (input.capability === 'plugin.ui.snapshot') {
+    if (
+      input.method !== 'GET' ||
+      input.target !== '/internal/v1/desktop/session/plugin-ui-snapshot'
+    ) {
+      closedManifestFailure()
+    }
+    emptyBody()
+    return
   }
 
   if (input.capability === 'approval.list') {

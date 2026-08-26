@@ -93,6 +93,7 @@ import { DesktopEngineSessionClient } from './desktop-engine-session-client'
 import { DesktopPrivilegedSession } from './desktop-privileged-session'
 import { RendererEngineProxy } from './renderer-engine-proxy'
 import { registerRendererEngineProxyIpc } from './renderer-engine-ipc'
+import { registerPluginUiIpc } from './plugin-ui-ipc'
 import { InstallationRootClient } from './installation-root-client'
 import { InstallationRootUpdaterAuthority } from './installation-root-updater'
 import {
@@ -1436,6 +1437,13 @@ function createWindow(): void {
 }
 
 registerRendererEngineProxyIpc(ipcMain, rendererEngineProxy, (event) => {
+  requireExpectedIpcSender(
+    event as unknown as Parameters<typeof requireExpectedIpcSender>[0],
+    mainWin
+  )
+})
+
+registerPluginUiIpc(ipcMain, desktopPrivilegedSession, (event) => {
   requireExpectedIpcSender(
     event as unknown as Parameters<typeof requireExpectedIpcSender>[0],
     mainWin

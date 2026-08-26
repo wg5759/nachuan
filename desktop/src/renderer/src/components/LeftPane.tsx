@@ -1,7 +1,8 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { clearConvSummary } from '../api'
+import { clearConvSummary, getPluginUiSnapshot } from '../api'
+import type { PluginUiSnapshot } from '../../../plugin-ui-contract'
 import { useAppStore, type ConversationKind, type ViewKey } from '../store'
 import {
   PrimaryNavigation,
@@ -38,16 +39,28 @@ function Glyph({ name }: { name: GlyphName }): React.ReactNode {
   return <svg {...common}><path d="M5 6.5A2.5 2.5 0 0 1 7.5 4h9A2.5 2.5 0 0 1 19 6.5v6a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 3v-3A2.5 2.5 0 0 1 4 12.5v-6Z" /></svg>
 }
 
-const workspaceViews: ViewKey[] = [
-  'brain',
-  'kb',
-  'studio',
-  'sync',
-  'mcp',
-  'orchestrate',
-  'usage',
-  'about'
+const coreWorkspaceViews: Array<{ view: ViewKey; order: number }> = [
+  { view: 'brain', order: 100 },
+  { view: 'kb', order: 200 },
+  { view: 'studio', order: 300 },
+  { view: 'sync', order: 400 },
+  { view: 'mcp', order: 500 },
+  { view: 'usage', order: 700 },
+  { view: 'about', order: 800 }
 ]
+
+export function workspaceViewsFromPluginSnapshot(
+  snapshot: PluginUiSnapshot | null
+): ViewKey[] {
+  const entries = [...coreWorkspaceViews]
+  for (const slot of snapshot?.slots ?? []) {
+    if (slot.surface === 'workspace.menu' && slot.component === 'orchestrate') {
+      entries.push({ view: 'orchestrate', order: slot.order })
+    }
+  }
+  entries.sort((left, right) => left.order - right.order || left.view.localeCompare(right.view))
+  return [...new Set(entries.map((entry) => entry.view))]
+}
 
 export default function LeftPane({
   activePrimary,
@@ -68,6 +81,23 @@ export default function LeftPane({
   const [editText, setEditText] = useState('')
   const [query, setQuery] = useState('')
   const [showArchived, setShowArchived] = useState(false)
+  const [workspaceViews, setWorkspaceViews] = useState<ViewKey[]>(() =>
+    workspaceViewsFromPluginSnapshot(null)
+  )
+
+  useEffect(() => {
+    let current = true
+    void getPluginUiSnapshot()
+      .then((snapshot) => {
+        if (current) setWorkspaceViews(workspaceViewsFromPluginSnapshot(snapshot))
+      })
+      .catch(() => {
+        if (current) setWorkspaceViews(workspaceViewsFromPluginSnapshot(null))
+      })
+    return () => {
+      current = false
+    }
+  }, [])
 
   const resolvedPrimary =
     activePrimary ??

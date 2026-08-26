@@ -66,6 +66,16 @@ describe('RendererEngineProxy', () => {
       })
     ).rejects.toThrow('Renderer Engine request is not permitted')
 
+    await expect(
+      proxy.request({
+        requestId: '11111111-1111-4111-8111-111111111112',
+        method: 'GET',
+        target: '/v1/plugin-ui/snapshot',
+        bodyKind: 'none',
+        responseKind: 'json'
+      })
+    ).rejects.toThrow('Renderer Engine request is not permitted')
+
     expect(session).not.toHaveBeenCalled()
     expect(runtimeKey).not.toHaveBeenCalled()
     expect(transport).not.toHaveBeenCalled()

@@ -24,8 +24,12 @@ _SERVICE_RE = re.compile(r"^[a-z][a-z0-9_.-]{2,127}$")
 _EVENT_RE = re.compile(r"^(?:fact|runtime|policy)/[a-z0-9][a-z0-9._/-]{1,126}$")
 _TOOL_RE = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
 _TOOL_ARGUMENT_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_UI_SLOT_RE = re.compile(r"^[a-z][a-z0-9_.-]{2,127}$")
+_UI_SLOT_SURFACES = frozenset({"workspace.menu"})
+_UI_SLOT_COMPONENTS = frozenset({"orchestrate"})
 _MAX_TOOL_SCHEMA_BYTES = 64 * 1024
 _MAX_TOOL_RESULT_CHARS = 2 * 1024 * 1024
+_MAX_UI_SLOTS = 64
 
 
 class PluginKernelError(RuntimeError):
@@ -81,6 +85,14 @@ class ToolConflict(PluginKernelError):
 
 
 class ToolNotFound(PluginKernelError):
+    pass
+
+
+class UiSlotContractError(PluginKernelError, ValueError):
+    pass
+
+
+class UiSlotConflict(PluginKernelError):
     pass
 
 
@@ -700,6 +712,122 @@ class ToolRegistry:
                 raise PluginInUseError("plugin tool is still borrowed")
 
 
+@dataclass(frozen=True, slots=True)
+class UiSlotDefinition:
+    slot_id: str
+    surface: str
+    component: str
+    order: int
+
+    def __post_init__(self) -> None:
+        if _UI_SLOT_RE.fullmatch(self.slot_id) is None:
+            raise UiSlotContractError("UI slot id is invalid")
+        if self.surface not in _UI_SLOT_SURFACES:
+            raise UiSlotContractError("UI slot surface is not allowed")
+        if self.component not in _UI_SLOT_COMPONENTS:
+            raise UiSlotContractError("UI slot component is not allowed")
+        if (
+            isinstance(self.order, bool)
+            or not isinstance(self.order, int)
+            or not 0 <= self.order <= 10_000
+        ):
+            raise UiSlotContractError("UI slot order is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class _UiSlotProvider:
+    plugin_id: str
+    plugin_version: str
+    artifact_sha256: str
+    generation: str
+    definition: UiSlotDefinition
+    permit: CapabilityPermit
+
+
+class UiSlotRegistry:
+    """Closed declarative slots; renderer code is never supplied by plugins."""
+
+    def __init__(self, broker: CapabilityBroker) -> None:
+        self._broker = broker
+        self._providers: dict[str, _UiSlotProvider] = {}
+        self._lock = threading.RLock()
+
+    @staticmethod
+    def capability_for(slot_id: str) -> str:
+        if _UI_SLOT_RE.fullmatch(slot_id) is None:
+            raise UiSlotContractError("UI slot id is invalid")
+        return f"ui.slot:{slot_id}"
+
+    def register(
+        self,
+        definition: UiSlotDefinition,
+        *,
+        manifest: PluginManifestV1,
+        generation: str,
+        permit: CapabilityPermit,
+    ) -> Callable[[], None]:
+        if not isinstance(definition, UiSlotDefinition):
+            raise UiSlotContractError("UI slot definition is invalid")
+        capability = self.capability_for(definition.slot_id)
+        self._broker.require(permit, capability)
+        if permit.plugin_id != manifest.plugin_id or permit.generation != generation:
+            raise CapabilityDenied("UI slot permit owner does not match")
+        with self._lock:
+            if len(self._providers) >= _MAX_UI_SLOTS:
+                raise UiSlotConflict("UI slot registry is full")
+            if definition.slot_id in self._providers or any(
+                item.definition.surface == definition.surface
+                and item.definition.component == definition.component
+                for item in self._providers.values()
+            ):
+                raise UiSlotConflict("UI slot already has a provider")
+            record = _UiSlotProvider(
+                manifest.plugin_id,
+                manifest.version,
+                manifest.artifact_sha256,
+                generation,
+                definition,
+                permit,
+            )
+            self._providers[definition.slot_id] = record
+
+        def dispose() -> None:
+            with self._lock:
+                if self._providers.get(definition.slot_id) is record:
+                    del self._providers[definition.slot_id]
+
+        return dispose
+
+    def snapshot(self) -> tuple[dict[str, object], ...]:
+        with self._lock:
+            providers = tuple(self._providers.values())
+        for provider in providers:
+            self._broker.require(
+                provider.permit,
+                self.capability_for(provider.definition.slot_id),
+            )
+        ordered = sorted(
+            providers,
+            key=lambda item: (
+                item.definition.surface,
+                item.definition.order,
+                item.definition.slot_id,
+            ),
+        )
+        return tuple(
+            {
+                "slot_id": item.definition.slot_id,
+                "surface": item.definition.surface,
+                "component": item.definition.component,
+                "order": item.definition.order,
+                "plugin_id": item.plugin_id,
+                "plugin_version": item.plugin_version,
+                "artifact_sha256": item.artifact_sha256,
+            }
+            for item in ordered
+        )
+
+
 class _EffectCloseError(RuntimeError):
     def __init__(self, count: int) -> None:
         self.count = count
@@ -805,6 +933,17 @@ class PluginContext:
         )
         self._record.scope.add(disposer)
 
+    def register_ui_slot(self, definition: UiSlotDefinition) -> None:
+        capability = self._kernel.ui_slots.capability_for(definition.slot_id)
+        permit = self.permit(capability)
+        disposer = self._kernel.ui_slots.register(
+            definition,
+            manifest=self._record.manifest,
+            generation=self._record.generation,
+            permit=permit,
+        )
+        self._record.scope.add(disposer)
+
     def listen(self, event: str, callback: Callable[[object], object]) -> None:
         disposer = self._kernel.events.listen(
             event,
@@ -838,6 +977,7 @@ class PluginKernel:
         self.events = EventRegistry(durable_event_sink)
         self.broker = CapabilityBroker()
         self.tools = ToolRegistry(self.broker)
+        self.ui_slots = UiSlotRegistry(self.broker)
         self._active: dict[str, _PluginRecord] = {}
         self._mount_order: list[str] = []
         self._quarantined: set[str] = set()
@@ -918,6 +1058,9 @@ class PluginKernel:
     def tool_schemas(self) -> tuple[dict[str, object], ...]:
         return self.tools.schemas()
 
+    def ui_slot_snapshot(self) -> tuple[dict[str, object], ...]:
+        return self.ui_slots.snapshot()
+
     def active_plugin_ids(self) -> tuple[str, ...]:
         return tuple(self._mount_order)
 
@@ -951,4 +1094,8 @@ __all__ = [
     "ToolLease",
     "ToolNotFound",
     "ToolRegistry",
+    "UiSlotConflict",
+    "UiSlotContractError",
+    "UiSlotDefinition",
+    "UiSlotRegistry",
 ]

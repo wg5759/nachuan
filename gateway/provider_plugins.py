@@ -1,4 +1,4 @@
-"""Built-in provider, reviewed-Skill bundle, and read-only tool plugins.
+"""Built-in provider, workflow, UI, reviewed-Skill, and read-only tool plugins.
 
 PK-002 migrates the no-network Echo provider.  PK-003 adds the exact reviewed
 Skill bundle as frozen data plus list/load tools behind revocable capabilities.
@@ -110,6 +110,10 @@ def build_builtin_provider_kernel(
     from orchestrator.workflow_plugins import mount_builtin_pipeline_workflow
 
     mount_builtin_pipeline_workflow(kernel)
+
+    from orchestrator.ui_plugins import mount_builtin_ui_plugins
+
+    mount_builtin_ui_plugins(kernel)
 
     skill_bundle = build_reviewed_skill_bundle()
     if skill_bundle is None:

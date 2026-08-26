@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 import json
 import time
+from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -19,7 +20,6 @@ from gateway.desktop_engine_session_protocol import (
     verify_response,
 )
 
-
 BOOT_TOKEN = "cd" * 32
 GENERATION = 17
 PID = 54_321
@@ -29,7 +29,7 @@ _MISSING_STATE = object()
 
 
 @pytest.fixture(autouse=True)
-def _restore_composed_gateway_verifiers():  # noqa: ANN201
+def _restore_composed_gateway_verifiers():
     """Keep wrapper composition tests from mutating the process-global app."""
 
     state = appmod._public_fastapi_app.state
@@ -397,6 +397,65 @@ async def test_main_equivalent_session_reaches_real_gateway_approval_route_witho
         expected_pid=PID,
         expected_port=PORT,
         expected_capability="approval.list",
+        status=status,
+        headers=headers,
+        body=body,
+    )
+
+
+@pytest.mark.asyncio
+async def test_main_plugin_ui_capability_reaches_real_snapshot_without_long_keys(
+    monkeypatch,
+) -> None:
+    slots = (
+        {
+            "slot_id": "workspace.orchestration",
+            "surface": "workspace.menu",
+            "component": "orchestrate",
+            "order": 600,
+            "plugin_id": "com.nachuan.ui.orchestration",
+            "plugin_version": "1.0.0",
+            "artifact_sha256": "a" * 64,
+        },
+    )
+    public = appmod._public_fastapi_app
+    monkeypatch.setattr(
+        public.state,
+        "router",
+        SimpleNamespace(
+            plugin_kernel=SimpleNamespace(ui_slot_snapshot=lambda: slots)
+        ),
+        raising=False,
+    )
+
+    def forbidden_long_key_lookup() -> object:
+        raise AssertionError("plugin UI session path read a long-lived credential")
+
+    monkeypatch.setattr(authmod, "get_settings", forbidden_long_key_lookup)
+    composed = _compose(public)
+    challenge = await _challenge(composed, nonce="51" * 32)
+    signed, messages = await _signed_request(
+        composed,
+        capability="plugin.ui.snapshot",
+        method="GET",
+        raw_path=b"/internal/v1/desktop/session/plugin-ui-snapshot",
+        challenge_nonce=challenge,
+        request_nonce="52" * 32,
+    )
+    status, headers, body = _response(messages)
+
+    assert status == 200
+    assert json.loads(body) == {
+        "schema": "nachuan.plugin-ui.snapshot.v1",
+        "slots": [dict(slots[0])],
+    }
+    verify_response(
+        boot_token=BOOT_TOKEN,
+        request_nonce=signed.nonce,
+        expected_generation=GENERATION,
+        expected_pid=PID,
+        expected_port=PORT,
+        expected_capability="plugin.ui.snapshot",
         status=status,
         headers=headers,
         body=body,

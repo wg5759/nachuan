@@ -36,6 +36,7 @@ export type RuntimeCapabilityManifest = ClientPortCapabilityManifest
 
 export type RuntimeCapabilityId =
   | 'engineProxy'
+  | 'pluginUi'
   | 'paidMediaOperations'
   | 'paidMediaAssetMaterialization'
   | 'approvals'
@@ -77,6 +78,7 @@ function capability(
 }
 
 const ENGINE_METHODS = ['engineRequest', 'engineStream', 'engineUpload', 'cancelEngineRequest'] as const
+const PLUGIN_UI_METHODS = ['getPluginUiSnapshot'] as const
 const PAID_MEDIA_METHODS = [
   'claimPaidMedia',
   'executePaidMedia',
@@ -122,6 +124,22 @@ export const CLIENT_PORT_CAPABILITIES: ClientPortCapabilityManifest = Object.fre
       surface('implemented', 'electron-ipc', ENGINE_METHODS),
       surface('implemented', 'same-origin-http', ENGINE_METHODS),
       surface('planned', 'team-session-http', ENGINE_METHODS, 'Team Web transport is not implemented.')
+    ),
+    pluginUi: capability(
+      'plugin-ui',
+      surface(
+        'implemented',
+        'electron-ipc-engine-session',
+        PLUGIN_UI_METHODS,
+        'Main selects the signed Engine capability and Renderer receives only a closed declarative snapshot.'
+      ),
+      surface('implemented', 'same-origin-http', PLUGIN_UI_METHODS),
+      surface(
+        'planned',
+        'team-session-http',
+        PLUGIN_UI_METHODS,
+        'Tenant-scoped plugin UI policy is not implemented.'
+      )
     ),
     paidMediaOperations: capability(
       'paid-media-authority',

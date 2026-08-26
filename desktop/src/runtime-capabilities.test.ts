@@ -8,6 +8,7 @@ import {
 
 const EXPECTED_CAPABILITY_IDS = [
   'engineProxy',
+  'pluginUi',
   'paidMediaOperations',
   'paidMediaAssetMaterialization',
   'approvals',
@@ -51,6 +52,9 @@ describe('renderer runtime capability declarations', () => {
       'implemented-with-preconditions'
     )
     expect(capabilities.channelRecovery.surfaces.electron.adapter).toBe(
+      'electron-ipc-engine-session'
+    )
+    expect(capabilities.pluginUi.surfaces.electron.adapter).toBe(
       'electron-ipc-engine-session'
     )
     expect(capabilities.channelRecovery.surfaces.localWeb.adapter).toBe(

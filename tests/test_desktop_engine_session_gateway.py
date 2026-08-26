@@ -336,6 +336,13 @@ async def test_challenge_then_privileged_json_uses_same_connection_and_injects_n
 @pytest.mark.parametrize(
     ("capability", "method", "raw_path", "query", "body"),
     [
+        (
+            "plugin.ui.snapshot",
+            "GET",
+            b"/internal/v1/desktop/session/plugin-ui-snapshot",
+            b"",
+            b"",
+        ),
         ("approval.list", "GET", b"/v1/approvals", b"user_id=a%20b", b""),
         (
             "approval.resolve",

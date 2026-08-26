@@ -1,6 +1,6 @@
 # 纳川插件内核策略：吸收 DeepSeek Harness“一切皆插件”的精华
 
-> 状态：PK-001～PK-004 最小纵切已实施；PK-005～PK-008 待推进
+> 状态：PK-001～PK-005 最小纵切已实施；PK-006～PK-008 待推进
 > 日期：2026-08-26
 > 目标：在不破坏纳川现有安全账本、真实渠道和安装发行边界的前提下，把模型、工具、协作、知识、渠道和 UI 变成可组合能力
 
@@ -240,7 +240,7 @@ Bundle 是签名的插件组合，不复制源码：
 
 ## 8. 当前实现与剩余差距
 
-截至 2026-08-26，PK-001～PK-004 最小纵切已经落地：`orchestrator/plugin_kernel.py`
+截至 2026-08-26，PK-001～PK-005 最小纵切已经落地：`orchestrator/plugin_kernel.py`
 提供严格 manifest、service/event registry、能力票据、借用租约、LIFO effect 回收、
 失败回滚、卸载和 quarantine；`EchoProvider` 已通过 `provider.factory.echo` 内置插件
 接入 legacy Router。`ToolRegistry` 新增闭集 schema、精确 `tool.execute:<name>` 能力、
@@ -252,6 +252,10 @@ legacy Tool Agent 只从当前 Router 内核读取这两个工具的实时 schem
 绝对 WAL deadline、原子建库、容量上限和全局 SHA-256 链。事件只留执行标识、路由、状态、
 长度与内容摘要，不复制 prompt/instruction/output；没有持久 sink 时在首次模型调用前故障关闭。
 Router reload 会复用同一内核，关闭时先清 provider 与工作流借用，再关闭事件库，旧接口保持兼容。
+PK-005 新增闭集 `UiSlotRegistry`，首个内置 `workspace.orchestration` slot 只允许映射到
+已编译的 `orchestrate` 组件；Host 不可下发 JS、HTML、URL 或文案。Electron Main 只能通过
+挑战后同一 socket 的 `plugin.ui.snapshot` HMAC 会话能力读取，preload 只暴露无参数只读 IPC，
+Renderer 再次验证闭集 DTO；Web 使用普通受保护只读端点保持同形 API。
 
 仍待统一迁移的部分包括：
 
@@ -259,7 +263,7 @@ Router reload 会复用同一内核，关闭时先清 provider 与工作流借�
 - MCP registry 有注册表外形，但生产能力被整体禁用，尚无签名、隔离和权限合同。
 - 除 `list_skills/load_skill` 外，其他 `TOOLS` 仍是 legacy 静态列表，工具实现和分发仍集中在 `tool_agent.py`。
 - 除 `pipeline` 外的工作流仍在 `gateway/app.py` 中逐个直接 import，新增流程仍需改 Gateway。
-- Renderer 工作区和设置面板大多硬编码，尚无签名 UI slot。
+- 目前只有“多模型协作”工作区入口迁为 UI slot；其余工作区和设置面板仍是硬编码。
 - `pipeline` 事件目前只重建执行拓扑与摘要，不能重建客户原文；其他会话、工具、插件和渠道也尚未汇入统一事件模型。
 
 因此继续采用旁路内核和 legacy adapter 渐进迁移，不做大爆炸重写。
@@ -305,13 +309,18 @@ Router reload 会复用同一内核，关闭时先清 provider 与工作流借�
 - 事件库是 append-only 精确 schema、全局哈希链、20 万事件/256 MiB 逻辑载荷/384 MiB 文件上限，并纳入 readiness、在线 SQLite 备份与数据生命周期清单；
 - 原始 prompt、instruction、output、content 在任意嵌套层级均拒绝入库，只保存 SHA-256、长度、路由和终态；这能审计拓扑和篡改，不能冒充完整内容恢复；
 - 直接调用 `run_pipeline` 的 legacy adapter 继续兼容；已有 Provider Call Ledger、会话库和任务账本均未重写真相源；
-- 聚焦事件/API/生命周期/备份/隐私/打包回归 126 项及 wheel 自包含合同通过；真实付费模型、渠道和长期归档轮换不属于本纵切证据。
+- 聚焦事件/API/生命周期/备份/隐私/打包回归 126 项及 wheel 自包含合同通过；候选53为880个声明文件，公开最终提交 `a237fc8` 的 Actions `32929332224` 为后端4139/40、Desktop1424/14、发行证据37、发行安全18全绿；本机社区版已升级至同提交，health/readiness均ok、数据库8/8、在线备份17库并包含事件库，四插件实挂且关闭归零。真实付费模型、渠道和长期归档轮换不属于本纵切证据。
 
-### PK-005：Host/Main/Renderer 三面插件
+### PK-005：Host/Main/Renderer 三面插件（已完成最小纵切）
 
-- 只开放闭集 UI slots；
-- Main 与 Engine 通过受挑战/签名会话能力；
-- Renderer 不持密钥和高权限对象。
+- 内核新增 `UiSlotDefinition/UiSlotRegistry`，slot 注册必须持精确 `ui.slot:<slot_id>` capability；重复 slot 或同 surface/component 阴影注册原子失败，卸载自动移除；
+- 当前闭集只有 `surface=workspace.menu`、`component=orchestrate`、`slot_id=workspace.orchestration`；catalog 绑定精确 SHA-256，拒绝 reparse、hardlink、未知字段和远程代码字段；
+- Engine 提供内容无关 `nachuan.plugin-ui.snapshot.v1`，只含 slot、顺序、插件 id/version 和 artifact digest；内部路由不进入 OpenAPI；
+- Electron Main 固定选择 `plugin.ui.snapshot + GET + /internal/v1/desktop/session/plugin-ui-snapshot`，沿用挑战、同一 loopback socket、boot generation、nonce、HMAC 请求与签名响应；Renderer 不能选择 capability、target、method、header 或 body；
+- preload 只暴露无参数 `getPluginUiSnapshot()`；Main 和 Renderer 都用同一闭集解析器复验，通用 Renderer Engine 代理明确拒绝 `/v1/plugin-ui/snapshot`，renderer 无长期 key；
+- Web shim 通过带 runtime authority 的 `/v1/plugin-ui/snapshot` 获取同一 DTO，不携带 approval key；Team Web 继续标 planned；
+- 现有 `OrchestratePane` 代码仍由正式构建编译，插件只能决定入口是否出现，不能携带或执行组件代码；slot 缺失或响应畸形时入口安全隐藏；
+- 聚焦 Python 144 项、Desktop 81 项、typecheck、Web/Electron build 与 wheel 自包含合同通过。当前只证明内置只读菜单 slot，不证明动态第三方 UI、安全 worker、热更新订阅或其他面板已插件化。
 
 ### PK-006：隔离第三方插件
 

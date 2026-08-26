@@ -46,6 +46,7 @@ _MAX_CHANNELS = 4096
 _SECURITY_PREFIX = HEADER_PREFIX.lower().encode("ascii")
 _CHALLENGE_RAW = CHALLENGE_PATH.encode("ascii")
 _SESSION_ROOT = b"/internal/v1/desktop/session"
+_PLUGIN_UI_SNAPSHOT = _SESSION_ROOT + b"/plugin-ui-snapshot"
 _APPROVALS = b"/v1/approvals"
 _APPROVAL_RESOLVE_RE = re.compile(rb"^/v1/approvals/([1-9][0-9]*)/resolve$")
 _CONNECTION_RE = re.compile(
@@ -469,6 +470,10 @@ def _reserved_path(raw_path: Any, decoded_path: Any) -> bool:
 
 
 def _route_policy(raw_path: bytes, query: bytes, method: str) -> _RoutePolicy | None:
+    if raw_path == _PLUGIN_UI_SNAPSHOT:
+        if method != "GET" or query:
+            return None
+        return _RoutePolicy("plugin.ui.snapshot", "GET", 0, False)
     if raw_path == _APPROVALS:
         if method != "GET":
             return None
@@ -518,7 +523,11 @@ def _route_policy(raw_path: bytes, query: bytes, method: str) -> _RoutePolicy | 
 
 
 def _validate_route_body(policy: _RoutePolicy, body: bytes) -> None:
-    if policy.capability in {"approval.list", "connection.delete"}:
+    if policy.capability in {
+        "approval.list",
+        "connection.delete",
+        "plugin.ui.snapshot",
+    }:
         if body:
             raise ValueError("body is forbidden for this route")
         return

@@ -30,6 +30,7 @@ type ExpectedExchange = Readonly<{
     | 'sync.run'
     | 'channel-recovery.inspect'
     | 'channel-recovery.close'
+    | 'plugin.ui.snapshot'
   method: 'GET' | 'POST' | 'DELETE'
   target: string
   body: string
@@ -99,8 +100,14 @@ describe('DesktopPrivilegedSession', () => {
     )
   })
 
-  it('sends all ten capabilities and eleven exact routes without any long-lived key header', async () => {
+  it('sends all eleven capabilities and twelve exact routes without any long-lived key header', async () => {
     const expected: ExpectedExchange[] = [
+      {
+        capability: 'plugin.ui.snapshot',
+        method: 'GET',
+        target: '/internal/v1/desktop/session/plugin-ui-snapshot',
+        body: ''
+      },
       {
         capability: 'approval.list',
         method: 'GET',
@@ -233,6 +240,7 @@ describe('DesktopPrivilegedSession', () => {
       new DesktopEngineSessionClient({ session: () => session, now: () => NOW })
     )
 
+    await api.pluginUiSnapshot()
     await api.listApprovals('owner / cn')
     await api.resolveApproval(7, 'revise', 'add evidence')
     await api.saveConnection('openai', {

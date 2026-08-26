@@ -41,6 +41,7 @@ _DESKTOP_SYNC_CAPABILITIES = {
     b"/v1/sync/toggle": "sync.toggle",
     b"/v1/sync/run": "sync.run",
 }
+_DESKTOP_PLUGIN_UI_SNAPSHOT = b"/internal/v1/desktop/session/plugin-ui-snapshot"
 
 
 def _desktop_session_failure() -> HTTPException:
@@ -61,6 +62,12 @@ def _expected_desktop_session_capability(request: Request) -> str | None:
         return None
     if method == "GET" and raw_path == b"/v1/approvals" and query:
         return "approval.list"
+    if (
+        method == "GET"
+        and raw_path == _DESKTOP_PLUGIN_UI_SNAPSHOT
+        and not query
+    ):
+        return "plugin.ui.snapshot"
     if (
         method == "POST"
         and not query

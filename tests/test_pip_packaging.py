@@ -211,7 +211,9 @@ class TestPackageClosure:
         assert "orchestrator/durable_event_log.py" in names
         assert "orchestrator/plugin_kernel.py" in names
         assert "orchestrator/tool_plugins.py" in names
+        assert "orchestrator/ui_plugins.py" in names
         assert "orchestrator/workflow_plugins.py" in names
+        assert "config/ui-slots.v1.json" in names
         assert any(
             name.startswith("gateway/web_ui/assets/") and name.endswith(".js")
             for name in names

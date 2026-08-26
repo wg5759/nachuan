@@ -2723,6 +2723,42 @@ async def orchestration_capabilities(
     return _orchestration_capabilities(app.state.router)
 
 
+def _plugin_ui_snapshot(router: Router) -> dict[str, object]:
+    try:
+        slots = router.plugin_kernel.ui_slot_snapshot()
+    except Exception as exc:  # noqa: BLE001 -- project only a fixed failure
+        raise HTTPException(
+            status_code=503,
+            detail="插件界面清单当前不可用",
+            headers={"Cache-Control": "no-store"},
+        ) from exc
+    if len(slots) > 64:
+        raise HTTPException(
+            status_code=503,
+            detail="插件界面清单当前不可用",
+            headers={"Cache-Control": "no-store"},
+        )
+    return {
+        "schema": "nachuan.plugin-ui.snapshot.v1",
+        "slots": [dict(item) for item in slots],
+    }
+
+
+@app.get("/v1/plugin-ui/snapshot")
+@app.get(
+    "/internal/v1/desktop/session/plugin-ui-snapshot",
+    include_in_schema=False,
+)
+async def plugin_ui_snapshot(
+    api_key: str = Depends(require_api_key),
+) -> JSONResponse:
+    del api_key
+    return JSONResponse(
+        _plugin_ui_snapshot(app.state.router),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/v1/models")
 async def list_models(_: str = Depends(require_api_key)) -> dict[str, Any]:
     router: Router = app.state.router

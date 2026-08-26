@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 import type { RuntimeCapabilityManifest } from '../../runtime-capabilities'
+import type { PluginUiSnapshot } from '../../plugin-ui-contract'
 
 export interface RendererEngineRequest {
   requestId: string
@@ -174,6 +175,7 @@ export interface DesktopAPI {
     readChunk: (offset: number, maximumBytes: number) => Uint8Array | Promise<Uint8Array>
   ) => Promise<RendererEngineResponse>
   cancelEngineRequest: (requestId: string) => void
+  getPluginUiSnapshot: () => Promise<PluginUiSnapshot>
   claimPaidMedia: (input: {
     path: PaidMediaPath
     encodedBody: string

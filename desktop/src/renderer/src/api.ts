@@ -1,5 +1,9 @@
 import type { ModelInfo, TokenUsage } from './store'
 import type { CatalogModel } from './env'
+import {
+  parsePluginUiSnapshot,
+  type PluginUiSnapshot
+} from '../../plugin-ui-contract'
 export type { CatalogModel } from './env'
 import {
   abandonUndispatchedPaidMediaOperation,
@@ -107,6 +111,10 @@ export async function apiGet<T = unknown>(path: string): Promise<T> {
       responseKind: 'json'
     })
   )
+}
+
+export async function getPluginUiSnapshot(): Promise<PluginUiSnapshot> {
+  return parsePluginUiSnapshot(await window.api.getPluginUiSnapshot())
 }
 
 type EngineHealthDocument = {

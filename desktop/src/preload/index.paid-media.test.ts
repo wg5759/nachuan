@@ -59,4 +59,18 @@ describe('paid media preload delivery proof', () => {
       }
     })
   })
+
+  it('exposes plugin UI only through the fixed no-input Main IPC', async () => {
+    invoke.mockResolvedValueOnce({
+      schema: 'nachuan.plugin-ui.snapshot.v1',
+      slots: []
+    })
+    await import('./index')
+
+    await (window as unknown as {
+      api: { getPluginUiSnapshot: () => Promise<unknown> }
+    }).api.getPluginUiSnapshot()
+
+    expect(invoke).toHaveBeenCalledWith('plugin-ui:snapshot')
+  })
 })

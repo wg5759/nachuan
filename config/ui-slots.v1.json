@@ -1,0 +1,11 @@
+{
+  "schema": "nachuan.ui-slot-catalog.v1",
+  "slots": [
+    {
+      "slot_id": "workspace.orchestration",
+      "surface": "workspace.menu",
+      "component": "orchestrate",
+      "order": 600
+    }
+  ]
+}

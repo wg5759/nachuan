@@ -213,6 +213,15 @@ export class DesktopPrivilegedSession {
     return response.body
   }
 
+  async pluginUiSnapshot(): Promise<unknown> {
+    return this.exchange({
+      capability: 'plugin.ui.snapshot',
+      method: 'GET',
+      target: '/internal/v1/desktop/session/plugin-ui-snapshot',
+      body: Buffer.alloc(0)
+    })
+  }
+
   async listApprovals(userId: string): Promise<unknown> {
     if (
       typeof userId !== 'string' ||

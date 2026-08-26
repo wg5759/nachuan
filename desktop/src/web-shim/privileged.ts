@@ -4,6 +4,7 @@
 // 审批 Key 未录入时头缺省，网关自行 401/503，错误经 WebHttpError 如实上抛（fail-closed）。
 
 import type { DesktopAPI } from '../renderer/src/env'
+import { parsePluginUiSnapshot } from '../plugin-ui-contract'
 import type { WebHttpClient } from './http'
 
 type PrivilegedApi = Pick<
@@ -18,6 +19,7 @@ type PrivilegedApi = Pick<
   | 'runSync'
   | 'inspectChannelRecovery'
   | 'closeChannelRecovery'
+  | 'getPluginUiSnapshot'
 >
 
 type ListApprovalsResult = Awaited<ReturnType<DesktopAPI['listApprovals']>>
@@ -189,6 +191,14 @@ export function createWebPrivilegedApi(http: WebHttpClient): PrivilegedApi {
   }
 
   const api: PrivilegedApi = {
+    getPluginUiSnapshot: async () =>
+      parsePluginUiSnapshot(
+        await http.requestJson<unknown>({
+          method: 'GET',
+          target: '/v1/plugin-ui/snapshot'
+        })
+      ),
+
     listApprovals: async (userId: string) =>
       http.requestJson<ListApprovalsResult>({
         method: 'GET',

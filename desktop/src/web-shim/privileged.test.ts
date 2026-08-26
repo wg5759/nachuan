@@ -39,6 +39,38 @@ beforeEach(() => {
 })
 
 describe('web-shim privileged api (double-header routes)', () => {
+  it('loads the public plugin UI snapshot with runtime authority only', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          schema: 'nachuan.plugin-ui.snapshot.v1',
+          slots: [
+            {
+              slot_id: 'workspace.orchestration',
+              surface: 'workspace.menu',
+              component: 'orchestrate',
+              order: 600,
+              plugin_id: 'com.nachuan.ui.orchestration',
+              plugin_version: '1.0.0',
+              artifact_sha256: 'a'.repeat(64)
+            }
+          ]
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    )
+
+    await expect(api().getPluginUiSnapshot()).resolves.toMatchObject({
+      schema: 'nachuan.plugin-ui.snapshot.v1'
+    })
+    const [target, init] = lastCall()
+    expect(target).toBe('/v1/plugin-ui/snapshot')
+    expect(init.method).toBe('GET')
+    const headers = init.headers as Record<string, string>
+    expect(headers['Authorization']).toBe('Bearer runtime-key')
+    expect(headers['X-Nachuan-Approval-Key']).toBeUndefined()
+  })
+
   it('listApprovals hits GET /v1/approvals with both credentials and encoded user id', async () => {
     fetchMock.mockResolvedValue(
       new Response('{"user_id":"u 1","pending":[]}', { status: 200 })

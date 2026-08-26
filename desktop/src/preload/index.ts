@@ -68,6 +68,7 @@ const api: DesktopAPI = {
   engineStream: rendererEngineBridge.stream,
   engineUpload: rendererEngineBridge.upload,
   cancelEngineRequest: rendererEngineBridge.cancel,
+  getPluginUiSnapshot: () => ipcRenderer.invoke('plugin-ui:snapshot'),
   claimPaidMedia: (input: unknown) => invokePaidMedia('paid-media:claim', input),
   executePaidMedia: (input: unknown) => invokePaidMedia('paid-media:execute', input),
   pollPaidVideo: (input: unknown) => invokePaidMedia('paid-media:poll-video', input),
