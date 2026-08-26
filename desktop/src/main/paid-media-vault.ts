@@ -664,10 +664,13 @@ interface HardenedPathIdentity {
   birthtimeMs: number
 }
 
-interface VerifiedAssetIdentity extends HardenedPathIdentity {
-  size: number
-  mtimeMs: number
-  ctimeMs: number
+interface VerifiedAssetIdentity {
+  dev: bigint
+  ino: bigint
+  birthtimeNs: bigint
+  size: bigint
+  mtimeNs: bigint
+  ctimeNs: bigint
 }
 
 export interface PaidMediaOpenAsset {
@@ -6091,13 +6094,15 @@ export class PaidMediaVault {
     if (before.size !== input.byteLength) {
       throw new PaidMediaVaultError('Paid media uncommitted stage asset length conflicts')
     }
-    const identity = this.verifiedAssetIdentity(before)
+    const identity = this.verifiedAssetIdentity(lstatSync(input.path, { bigint: true }))
     const handle = await openFile(input.path, 'r')
     try {
       const pinned = await handle.stat()
+      const pinnedIdentity = this.verifiedAssetIdentity(await handle.stat({ bigint: true }))
       if (
         !pinned.isFile() ||
-        !this.sameVerifiedAssetIdentity(identity, this.verifiedAssetIdentity(pinned))
+        BigInt(pinned.size) !== pinnedIdentity.size ||
+        !this.sameVerifiedAssetIdentity(identity, pinnedIdentity)
       ) {
         throw new PaidMediaVaultError('Paid media uncommitted stage asset changed before pin')
       }
@@ -6120,13 +6125,12 @@ export class PaidMediaVault {
       }
       image.finish()
       const after = await handle.stat()
+      const afterIdentity = this.verifiedAssetIdentity(await handle.stat({ bigint: true }))
       if (
         byteLength !== input.byteLength ||
         hash.digest('hex') !== input.sha256 ||
-        !this.sameVerifiedAssetIdentity(
-          this.verifiedAssetIdentity(pinned),
-          this.verifiedAssetIdentity(after)
-        )
+        BigInt(after.size) !== afterIdentity.size ||
+        !this.sameVerifiedAssetIdentity(pinnedIdentity, afterIdentity)
       ) {
         throw new PaidMediaVaultError('Paid media uncommitted stage asset evidence conflicts')
       }
@@ -10069,12 +10073,14 @@ export class PaidMediaVault {
     }
   }
 
-  private verifiedAssetIdentity(info: Stats): VerifiedAssetIdentity {
+  private verifiedAssetIdentity(info: BigIntStats): VerifiedAssetIdentity {
     return {
-      ...this.pathIdentity(info, false),
+      dev: info.dev,
+      ino: info.ino,
+      birthtimeNs: info.birthtimeNs,
       size: info.size,
-      mtimeMs: info.mtimeMs,
-      ctimeMs: info.ctimeMs
+      mtimeNs: info.mtimeNs,
+      ctimeNs: info.ctimeNs
     }
   }
 
@@ -10083,10 +10089,12 @@ export class PaidMediaVault {
     right: VerifiedAssetIdentity
   ): boolean {
     return (
-      this.samePathIdentity(left, right) &&
+      left?.dev === right.dev &&
+      left.ino === right.ino &&
+      left.birthtimeNs === right.birthtimeNs &&
       left?.size === right.size &&
-      left.mtimeMs === right.mtimeMs &&
-      left.ctimeMs === right.ctimeMs
+      left.mtimeNs === right.mtimeNs &&
+      left.ctimeNs === right.ctimeNs
     )
   }
 
@@ -10097,7 +10105,7 @@ export class PaidMediaVault {
     if (before.size < 1 || before.size > located.maxBytes) {
       throw new PaidMediaVaultError('Paid media archive asset exceeds its size limit')
     }
-    const identity = this.verifiedAssetIdentity(before)
+    const identity = this.verifiedAssetIdentity(lstatSync(located.path, { bigint: true }))
     if (
       registered &&
       (registered.byteLength !== before.size || registered.sha256 !== located.digest)
@@ -10109,8 +10117,12 @@ export class PaidMediaVault {
     const handle = await openFile(located.path, 'r')
     try {
       const pinned = await handle.stat()
-      const pinnedIdentity = this.verifiedAssetIdentity(pinned)
-      if (!pinned.isFile() || !this.sameVerifiedAssetIdentity(identity, pinnedIdentity)) {
+      const pinnedIdentity = this.verifiedAssetIdentity(await handle.stat({ bigint: true }))
+      if (
+        !pinned.isFile() ||
+        BigInt(pinned.size) !== pinnedIdentity.size ||
+        !this.sameVerifiedAssetIdentity(identity, pinnedIdentity)
+      ) {
         throw new PaidMediaVaultError('Paid media archive asset changed before it was pinned')
       }
       if (
@@ -10178,8 +10190,11 @@ export class PaidMediaVault {
         digest = hash.digest('hex')
       }
       const after = await handle.stat()
-      const afterIdentity = this.verifiedAssetIdentity(after)
-      if (!this.sameVerifiedAssetIdentity(pinnedIdentity, afterIdentity)) {
+      const afterIdentity = this.verifiedAssetIdentity(await handle.stat({ bigint: true }))
+      if (
+        BigInt(after.size) !== afterIdentity.size ||
+        !this.sameVerifiedAssetIdentity(pinnedIdentity, afterIdentity)
+      ) {
         throw new PaidMediaVaultError('Paid media archive asset changed during verification')
       }
       if (digest !== located.digest) {

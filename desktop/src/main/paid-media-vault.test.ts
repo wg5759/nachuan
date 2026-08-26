@@ -14,7 +14,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { PaidMediaSafeStorage } from './paid-media-ledger'
@@ -3913,7 +3913,7 @@ describe('PaidMediaVault', { timeout: 120_000 }, () => {
     await expect(restarted.openAsset(reference)).rejects.toThrow(/digest|magic|unsupported/i)
   })
 
-  it('invalidates a verified cache entry after same-inode bytes change with mtime restored', async () => {
+  it('rejects changed bytes when millisecond cache identity collides', async () => {
     const { root, vault } = fixture()
     await recordImageClaim(
       vault,
@@ -3936,14 +3936,35 @@ describe('PaidMediaVault', { timeout: 120_000 }, () => {
     const warmed = await vault.openAsset(asset.reference)
     await warmed.handle.close()
     const before = statSync(path)
+    const beforePrecise = statSync(path, { bigint: true })
     writeFileSync(path, Buffer.alloc(before.size, 0x41), { flag: 'r+' })
     utimesSync(path, before.atime, before.mtime)
     const after = statSync(path)
+    const afterPrecise = statSync(path, { bigint: true })
     expect(after.ino).toBe(before.ino)
     expect(after.birthtimeMs).toBe(before.birthtimeMs)
     expect(after.size).toBe(before.size)
     expect(after.mtimeMs).toBe(before.mtimeMs)
-    expect(after.ctimeMs).not.toBe(before.ctimeMs)
+    expect(afterPrecise.ctimeNs).not.toBe(beforePrecise.ctimeNs)
+    const cache = (
+      vault as unknown as {
+        verifiedAssets?: Map<
+          string,
+          {
+            mtimeMs?: number
+            ctimeMs?: number
+          }
+        >
+      }
+    ).verifiedAssets
+    if (cache) {
+      const cached = cache.get(resolve(path))
+      expect(cached).toBeDefined()
+      Object.assign(cached!, {
+        mtimeMs: after.mtimeMs,
+        ctimeMs: after.ctimeMs
+      })
+    }
 
     await expect(vault.openAsset(asset.reference)).rejects.toThrow(/digest|magic|changed/i)
   })

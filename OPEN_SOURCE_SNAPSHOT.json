@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260826-52",
+  "candidate_id": "nachuan-source-alpha-20260826-53",
   "file_count": 880,
   "files": [
     {
@@ -1119,13 +1119,13 @@
     },
     {
       "path": "desktop/src/main/paid-media-vault.test.ts",
-      "sha256": "d47c00deb949c45ba4f0369b4e508a58eb862706a0bc6264136ed89d5052d432",
-      "size": 166868
+      "sha256": "2a1443e08b22b75dcc4c8bc2e71cb08113acf6736aea21334218f13ea7ea9d42",
+      "size": 167410
     },
     {
       "path": "desktop/src/main/paid-media-vault.ts",
-      "sha256": "630d8fe9d3f8ae42ae4700d1665f49cbbe7da27ea4e32170d09fe195a6a9b31a",
-      "size": 363259
+      "sha256": "e13ac57cd7a2285a9a79c82b4a91e312c4c9c2399765f03c7b851d2a55f49e6e",
+      "size": 363871
     },
     {
       "path": "desktop/src/main/renderer-engine-boundary.test.ts",
