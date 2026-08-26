@@ -9,7 +9,7 @@ import re
 import sqlite3
 import stat
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -532,7 +532,11 @@ class IsolatedPluginBroker:
         self,
         bundle: VerifiedIsolatedPluginBundle,
         request: Mapping[str, object],
+        *,
+        output_validator: Callable[[object], object] | None = None,
     ) -> object:
+        if output_validator is not None and not callable(output_validator):
+            raise TypeError("plugin output validator is invalid")
         identity = bundle.manifest.identity()
         if identity in self._quarantined or (
             self._state_store is not None
@@ -564,8 +568,19 @@ class IsolatedPluginBroker:
                 raise IsolatedPluginWorkerError("plugin worker response is not closed")
             if response.get("schema") != "nachuan.isolated-plugin.result.v1" or response.get("ok") is not True:
                 raise IsolatedPluginWorkerError("plugin worker did not complete")
-            _canonical_json(response.get("output"))
-            return response["output"]
+            output = response.get("output")
+            _canonical_json(output)
+            if output_validator is not None:
+                try:
+                    output = output_validator(output)
+                except IsolatedPluginContractError:
+                    raise
+                except Exception as exc:
+                    raise IsolatedPluginContractError(
+                        "plugin worker output failed trusted validation"
+                    ) from exc
+                _canonical_json(output)
+            return output
         except IsolatedPluginContractError:
             self._quarantine(identity, "contract")
             raise

@@ -1,8 +1,9 @@
 """One-command local Web bootstrap for the pip-installed Nachuan CLI.
 
 The owner credentials are stable DPAPI-protected values.  They are injected
-only into the in-process Engine and printed to the owner's interactive terminal
-for the Web login gate; they never enter argv, a URL, or an application log.
+only into the in-process Engine.  A short-lived, single-use browser bootstrap
+capability is placed in a URL fragment and exchanged for host-only HttpOnly
+cookies; the long-lived credentials are never printed or placed in a URL.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from gateway.secure_store import (
     read_protected_json,
     write_protected_json_if_absent,
 )
+from gateway.local_web_session import BOOTSTRAP_ENV, LOCAL_WEB_HOST
 
 
 _SCHEMA = "nachuan.local-owner-credentials/v1"
@@ -38,6 +40,9 @@ _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{43,86}")
 _RUNTIME_PATTERN = re.compile(r"nc-runtime-v1-[A-Za-z0-9_-]{43,86}")
 _APPROVAL_PATTERN = re.compile(r"nc-approval-v1-[A-Za-z0-9_-]{43,86}")
 _PAID_PATTERN = re.compile(r"sk-paid-media-[0-9a-f]{64}")
+_WEB_BOOTSTRAP_PATTERN = re.compile(
+    r"nc-web-bootstrap-v1-[A-Za-z0-9_-]{43,86}"
+)
 _ENVIRONMENT_NAMES = (
     "GATEWAY_API_KEYS",
     "APPROVAL_ADMIN_KEY",
@@ -45,6 +50,7 @@ _ENVIRONMENT_NAMES = (
     "NACHUAN_GATEWAY_KEY",
     "GATEWAY_HOST",
     "GATEWAY_PORT",
+    BOOTSTRAP_ENV,
 )
 
 
@@ -295,27 +301,39 @@ def _assert_loopback_port_available(port: int) -> None:
     try:
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        probe.bind(("127.0.0.1", port))
+        probe.bind((LOCAL_WEB_HOST, port))
     except OSError as exc:
         raise LocalWebStartError(
-            f"127.0.0.1:{port} is already in use; refusing to start a second Engine"
+            f"{LOCAL_WEB_HOST}:{port} is already in use; refusing to start a second Engine"
         ) from exc
     finally:
         probe.close()
 
 
-def _open_when_ready(base_url: str) -> None:
-    health_url = f"{base_url}/health"
-    with httpx.Client(timeout=1.0, trust_env=False) as client:
+def _open_when_ready(
+    health_base_url: str,
+    browser_base_url: str,
+    bootstrap_token: str,
+    *,
+    client_factory: Callable[..., Any] = httpx.Client,
+    browser_open: Callable[[str], Any] = webbrowser.open,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    if _WEB_BOOTSTRAP_PATTERN.fullmatch(bootstrap_token) is None:
+        return
+    health_url = f"{health_base_url}/health"
+    with client_factory(timeout=1.0, trust_env=False) as client:
         for _attempt in range(120):
             try:
                 response = client.get(health_url)
             except httpx.HTTPError:
                 response = None
             if response is not None and response.status_code == 200:
-                webbrowser.open(f"{base_url}/")
+                browser_open(
+                    f"{browser_base_url}/#nachuan-bootstrap={bootstrap_token}"
+                )
                 return
-            time.sleep(0.25)
+            sleep(0.25)
 
 
 def _restore_environment(
@@ -340,6 +358,7 @@ def serve_local_web(
     environment: MutableMapping[str, str] | None = None,
     engine_main: Callable[[], None] | None = None,
     port_guard: Callable[[int], None] = _assert_loopback_port_available,
+    bootstrap_token_factory: Callable[[], str] = lambda: secrets.token_urlsafe(32),
 ) -> int:
     """Run the packaged Engine in-process until the user stops the command."""
 
@@ -352,6 +371,12 @@ def serve_local_web(
     ):
         raise LocalWebStartError("local paid capability is invalid")
     port_guard(port)
+    try:
+        bootstrap_token = f"nc-web-bootstrap-v1-{bootstrap_token_factory()}"
+    except Exception as exc:  # noqa: BLE001 -- ambiguous browser authority fails closed
+        raise LocalWebStartError("local Web bootstrap generation failed") from exc
+    if _WEB_BOOTSTRAP_PATTERN.fullmatch(bootstrap_token) is None:
+        raise LocalWebStartError("local Web bootstrap generation returned invalid entropy")
     target_environment = os.environ if environment is None else environment
     previous = {
         name: (name in target_environment, str(target_environment.get(name, "")))
@@ -363,24 +388,24 @@ def serve_local_web(
             "APPROVAL_ADMIN_KEY": credentials.approval_key,
             "NACHUAN_PAID_MEDIA_API_KEY": paid_capability.key,
             "NACHUAN_GATEWAY_KEY": credentials.runtime_key,
-            "GATEWAY_HOST": "127.0.0.1",
+            "GATEWAY_HOST": LOCAL_WEB_HOST,
             "GATEWAY_PORT": str(port),
+            BOOTSTRAP_ENV: bootstrap_token,
         }
     )
-    base_url = f"http://127.0.0.1:{port}"
+    health_base_url = f"http://{LOCAL_WEB_HOST}:{port}"
+    base_url = health_base_url
     credential_path = local_owner_credentials_path(data_dir)
     out.write(f"纳川本地 Web：{base_url}/\n")
-    out.write(f"运行时 Key：{credentials.runtime_key}\n")
-    out.write(f"审批 Key：{credentials.approval_key}\n")
     out.write(f"DPAPI 受保护凭据：{credential_path}\n")
-    out.write("首次打开或新标签页时录入以上两项；密钥不会进入浏览器地址。\n")
+    out.write("浏览器会自动安全登录；以后新标签页无需再次输入账号或 Key。\n")
     out.write("保持本窗口运行；按 Ctrl+C 停止纳川。\n")
     out.flush()
 
     if open_browser:
         threading.Thread(
             target=_open_when_ready,
-            args=(base_url,),
+            args=(health_base_url, base_url, bootstrap_token),
             name="nachuan-local-web-opener",
             daemon=True,
         ).start()

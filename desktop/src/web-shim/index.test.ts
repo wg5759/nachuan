@@ -79,4 +79,30 @@ describe('Web renderer API installation', () => {
     expect(browserWindow.api).toBe(staleApi)
     expect(fetchImpl).not.toHaveBeenCalled()
   })
+
+  it('probes a durable local Web session before asking a fresh tab for keys', async () => {
+    const browserWindow: {
+      api?: { runtimeKind?: unknown }
+      location: { hash: string; reload(): void }
+      history: { replaceState(data: unknown, unused: string, url?: string): void }
+    } = {
+      location: { hash: '', reload: vi.fn() },
+      history: { replaceState: vi.fn() }
+    }
+    const fetchImpl = vi.fn(async (target: string) => {
+      expect(target).toBe('/v1/local-web/session')
+      return new Response(JSON.stringify({ authenticated: true, approval: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    })
+    vi.stubGlobal('window', browserWindow)
+    vi.stubGlobal('fetch', fetchImpl)
+    vi.stubGlobal('sessionStorage', memoryStorage())
+    vi.stubGlobal('localStorage', memoryStorage())
+
+    await import('./index')
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1))
+    expect(browserWindow.api?.runtimeKind).toBe('web')
+  })
 })

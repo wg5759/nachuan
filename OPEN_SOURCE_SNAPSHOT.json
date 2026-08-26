@@ -1,6 +1,6 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260826-65",
-  "file_count": 897,
+  "candidate_id": "nachuan-source-alpha-20260826-67",
+  "file_count": 909,
   "files": [
     {
       "path": ".claude/commands/xreview.md",
@@ -94,8 +94,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "761a0c55110acc91a359b96d3cd5629b17830b7799a00874bae4e182f63d4ff0",
-      "size": 4831
+      "sha256": "283284c7007682c31868476d4958b588e4396a3c46dcd64e6d06c024f6301f83",
+      "size": 5783
     },
     {
       "path": "SECURITY.md",
@@ -174,13 +174,13 @@
     },
     {
       "path": "cli/local_web_start.py",
-      "sha256": "2bc5ea343a9cf13d512888dd16ea8fe5b3c8205d72385b05ff54536b0a28656b",
-      "size": 13609
+      "sha256": "ed235ef6fecae23420b6f0cf5c3466c545358bdbc99b65737dee76ff8396dab4",
+      "size": 14765
     },
     {
       "path": "cli/nachuan.py",
-      "sha256": "e96808fbb59055326e9b94f0405e8927f43c0457c6948ed02ef96d28eab3d871",
-      "size": 24713
+      "sha256": "e85d7d7d7b964b760e772b362cc874b6c184d9c8e4de5fba4cf32c230d733536",
+      "size": 24716
     },
     {
       "path": "cli/paid_media_operator.py",
@@ -204,8 +204,8 @@
     },
     {
       "path": "config/open-source-manifest.v1.json",
-      "sha256": "b80131ce5a56059ba3b29e93950e8c441a37e699b8ad1dda939f02aeb001c87c",
-      "size": 3145
+      "sha256": "b87dff9936e341a43ab95f823624e40d8d0b6e4d54125363bafd2138693bd5c6",
+      "size": 3198
     },
     {
       "path": "config/store-runtime-profile.v1.json",
@@ -1779,8 +1779,8 @@
     },
     {
       "path": "desktop/src/web-shim/credentials.ts",
-      "sha256": "e0811dd9570efc7c8a1b8e8096a6bc4d7bf5f73c002c41d02ee4d3ebc5a47fc4",
-      "size": 2923
+      "sha256": "f904b95a1ea7ba37c953908039fe29dba8257a2a5ed8809cfc90c74270cba8bd",
+      "size": 2939
     },
     {
       "path": "desktop/src/web-shim/electron-only.test.ts",
@@ -1809,28 +1809,28 @@
     },
     {
       "path": "desktop/src/web-shim/gate.ts",
-      "sha256": "553fe824f560f50ff990666bfb449c8b892d5c014e50e9527b555ee03788ae2a",
-      "size": 7579
+      "sha256": "43321faf7e6fbf8e3047d0cc7b166ca1966e6e83dbe7cbef6f142be0a460ec3c",
+      "size": 7894
     },
     {
       "path": "desktop/src/web-shim/http.test.ts",
-      "sha256": "de2bb8811481276bed5aef0e14566a35f4739ece419e9c9bb903b89055970701",
-      "size": 9176
+      "sha256": "59947fbdd43f80df22a84a8b00816ceafb5efb339c7a06060001f1916fbd2837",
+      "size": 9313
     },
     {
       "path": "desktop/src/web-shim/http.ts",
-      "sha256": "2204876b25a2d580b86a1e64e3c1dd11ced79d96818f40481747e0d74865c9b1",
-      "size": 6668
+      "sha256": "935d56f2811e5a3f3b5766e5a25a22ffd37c7355ee7f986552554c56fa68b99f",
+      "size": 7003
     },
     {
       "path": "desktop/src/web-shim/index.test.ts",
-      "sha256": "b22cd10d949a84b4476dbf2afe9e5603fb2842cd29d7cd1a75a4a4a70556fcfc",
-      "size": 2377
+      "sha256": "af23b8a819a0d19a19355d35ac2be87d733d20b9c03ced0692efe64848f5ebc1",
+      "size": 3401
     },
     {
       "path": "desktop/src/web-shim/index.ts",
-      "sha256": "32c8e167ae4ee9bd76c7bbedad1517b194e0b199374b3cb8043e54817a29c5b6",
-      "size": 2174
+      "sha256": "a2c03f6b4f035b1ef2fc351053740e132c649224dbfe5397c99a3081d75882ce",
+      "size": 2534
     },
     {
       "path": "desktop/src/web-shim/paid-media.test.ts",
@@ -1851,6 +1851,16 @@
       "path": "desktop/src/web-shim/privileged.ts",
       "sha256": "b6a0e8a1bcff9c7af8d277815b4e9faf552aa9e60e7335990df8b889cc783cb0",
       "size": 12721
+    },
+    {
+      "path": "desktop/src/web-shim/session.test.ts",
+      "sha256": "faee39036da9a36b4b160052ceb91836a02dec2f2b266394001e7c28451c09d2",
+      "size": 2866
+    },
+    {
+      "path": "desktop/src/web-shim/session.ts",
+      "sha256": "51dcc49f45e176ed6b7ae2108140ac945acb441915ef579c4547396b9775316c",
+      "size": 3012
     },
     {
       "path": "desktop/third-party-notices/Apache-2.0-google-LICENSE",
@@ -1914,8 +1924,13 @@
     },
     {
       "path": "docs/NACHUAN_PLUGIN_KERNEL_STRATEGY.md",
-      "sha256": "78024dd55eb971e68189c0b9a4d12f5a43ce77922cbbefba0ac1059e2b33746b",
-      "size": 28209
+      "sha256": "944880d3c28762037ff66c521d89a0e4e361962561e3f5dfc5d3a961b604f459",
+      "size": 30626
+    },
+    {
+      "path": "docs/NACHUAN_PLUGIN_SDK.md",
+      "sha256": "c4a7b807702719a6a7f019e73ee613babb0805c9b42ed206df002c5bc3c2bfa7",
+      "size": 4676
     },
     {
       "path": "docs/OPEN_SOURCE_STRATEGY_OPENCLAW_COMPARISON.md",
@@ -1929,8 +1944,8 @@
     },
     {
       "path": "docs/THIRD_PARTY_SECURITY.md",
-      "sha256": "8f19ee983568db072ec26c0c10b2292d8de95b27ce4515f40ef8f53ce7c5b54b",
-      "size": 49145
+      "sha256": "3bce72642834063de6bf14aad6cab0df7d5f6100423e3a845dac55bb5511b9ed",
+      "size": 50937
     },
     {
       "path": "docs/adr/0001-unified-turn-lifecycle.md",
@@ -1994,8 +2009,8 @@
     },
     {
       "path": "docs/adr/0013-cli-local-web-distribution.md",
-      "sha256": "5e3b54cef16e708efb0eeb28bb8a021130c556cca99bde870ec618e64652b56e",
-      "size": 4327
+      "sha256": "cefb58fee40a53e821d8430e0f1d9d629b9dc2ff2276f2b2eec10b5d5e95dbc1",
+      "size": 4447
     },
     {
       "path": "docs/adr/0014-user-owned-subscriptions-web-first-team-server.md",
@@ -2049,8 +2064,8 @@
     },
     {
       "path": "gateway/app.py",
-      "sha256": "d1392e7c002dcf214653d1941a1dfde8cb71e7fb3f42480ad9407b41b3641eb3",
-      "size": 427493
+      "sha256": "d3cc3a215b1be15e54051c6cd8bc39237233fa0be517e990d10020f2b543b093",
+      "size": 430242
     },
     {
       "path": "gateway/asr_nemotron.py",
@@ -2074,8 +2089,8 @@
     },
     {
       "path": "gateway/auth.py",
-      "sha256": "77d1f6baaaa2a88f623f199d82ea77442eb9d5123f8c362ccc691fc41ee18967",
-      "size": 15638
+      "sha256": "b113c32570da11874bdcae8a31ff4192a31701599daca1e6567491208c0d5091",
+      "size": 17656
     },
     {
       "path": "gateway/body_limit.py",
@@ -2266,6 +2281,11 @@
       "path": "gateway/local_model.py",
       "sha256": "9d2d8d5aa75767da8a1f3e39f9b9ddc0a908d4dd5c8cd174e5852ddb11fbc0f2",
       "size": 37527
+    },
+    {
+      "path": "gateway/local_web_session.py",
+      "sha256": "c044de4b8b0f16d1dd015705f8ddbb78754bf666003f574d9f65aa87103bf600",
+      "size": 12078
     },
     {
       "path": "gateway/local_web_ui.py",
@@ -2544,8 +2564,8 @@
     },
     {
       "path": "gateway/web_ui/api-shim.js",
-      "sha256": "2e433c0cb5389b7891d9002b33a08a538defd976a8c944eab148886ab2f00ac6",
-      "size": 33093
+      "sha256": "eae8e537c602975131ff46cd6d28c2ef3c9fa5004044f5a1f2902aaaba94af59",
+      "size": 34659
     },
     {
       "path": "gateway/web_ui/assets/index-BPaCKf_k.js",
@@ -2581,6 +2601,26 @@
       "path": "install.ps1",
       "sha256": "49b5c1d83ae2efb848bab33cfbf9d5876349bc5e755a377c61d701ffcf8e996b",
       "size": 23256
+    },
+    {
+      "path": "nachuan_sdk/__init__.py",
+      "sha256": "ab82790067d9c2ff0b5cfbc42bc3ef0e1ddef797bffc2388c16d658748a7df8a",
+      "size": 814
+    },
+    {
+      "path": "nachuan_sdk/bridges.py",
+      "sha256": "02a68336e0e50b62b4750563a7eeb9d1374213af7e15b2df8e0b59fa3176fec7",
+      "size": 19355
+    },
+    {
+      "path": "nachuan_sdk/bundle.py",
+      "sha256": "61b7dd6cf316acc3b9c41eea9dc498c1cdf750a97e9957f564408fa7cea68911",
+      "size": 7932
+    },
+    {
+      "path": "nachuan_sdk/py.typed",
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
     },
     {
       "path": "node-runtime-lock.json",
@@ -2653,6 +2693,11 @@
       "size": 15419
     },
     {
+      "path": "orchestrator/ecosystem_bridge.py",
+      "sha256": "6aeaaa119b6a60269b27631c53a2bef8b8c39deaa2773dc96ec53db02ba53eee",
+      "size": 8030
+    },
+    {
       "path": "orchestrator/embedder.py",
       "sha256": "0e6dad5d1a1b401227b92c7413c421e5f546a535f03df8960ef2a2e4d471f2d7",
       "size": 8043
@@ -2699,13 +2744,13 @@
     },
     {
       "path": "orchestrator/isolated_plugin.py",
-      "sha256": "e0157edc2f04d0e741d963e188152071e9e480b34efa194142a9d879389c18fd",
-      "size": 23613
+      "sha256": "910ffb6fb5aa731f9bc1d14713c40a7e1b337fa818e67809285a575164cbe116",
+      "size": 24298
     },
     {
       "path": "orchestrator/isolated_plugin_proxy.py",
-      "sha256": "ff80be214015823450be64142302815397039420c6255f9aec9f0008bd73a66b",
-      "size": 5825
+      "sha256": "9dee11799cd7a23c4aa158d7613b3a8ff5b422b21f8c17787864634b3b875a66",
+      "size": 6529
     },
     {
       "path": "orchestrator/knowledge.py",
@@ -2889,8 +2934,8 @@
     },
     {
       "path": "pyproject.toml",
-      "sha256": "981c229fe435ce22c3b00112fc464d21a984c9cfc94fa1167418371353b14318",
-      "size": 4096
+      "sha256": "383f62ebe4fcf7b7cb986fca539c915171530fd67bed439434aa8d1e57f249bc",
+      "size": 4142
     },
     {
       "path": "scripts/__init__.py",
@@ -3349,8 +3394,8 @@
     },
     {
       "path": "tests/test_cli.py",
-      "sha256": "50e29aa53b98910b122ce78672a587a2aeac1b5e21d4e422cc5bf5679a89d925",
-      "size": 19207
+      "sha256": "81cb922f57fe0ec73d0e73f39f46c74453a99e25c7ede092448e953161de7e6e",
+      "size": 19210
     },
     {
       "path": "tests/test_cli_hub_security.py",
@@ -3476,6 +3521,11 @@
       "path": "tests/test_durable_turn_recovery_admin.py",
       "sha256": "650b36bd4e4282e5b2e99de196555b3d5f97f8334954621dade2eaf1efe3b7e2",
       "size": 14781
+    },
+    {
+      "path": "tests/test_ecosystem_plugin_bridges.py",
+      "sha256": "893eec02b88bea9211d568026562833c3c01856bf3f0d5547906a84a919f0f95",
+      "size": 11708
     },
     {
       "path": "tests/test_embedder.py",
@@ -3818,9 +3868,14 @@
       "size": 1682
     },
     {
+      "path": "tests/test_local_web_session.py",
+      "sha256": "40e864ec9982f991af734c6a89b91dba26ea51c517e4a075135bb916337d6651",
+      "size": 6156
+    },
+    {
       "path": "tests/test_local_web_start.py",
-      "sha256": "7efe09e7f5c78fe6d6caa7ca216467ac958824555c68824ab90c6fbe6b853fc4",
-      "size": 9148
+      "sha256": "21438cd8972da3415641e84645ce1847e359d42c1e710d4200cacd05cc5a1608",
+      "size": 10318
     },
     {
       "path": "tests/test_local_web_ui.py",
@@ -3891,6 +3946,11 @@
       "path": "tests/test_mutating_endpoint_capabilities.py",
       "sha256": "b8c68e035f0bd1ea6a3e9ccaafe153845e7c297a1c94de59e2c867c483d1acd4",
       "size": 15794
+    },
+    {
+      "path": "tests/test_nachuan_plugin_sdk.py",
+      "sha256": "3cc3e9a55d85aee4d18b4fa06937b41690eeac545a1ef8e049e583617dc95e6b",
+      "size": 4350
     },
     {
       "path": "tests/test_neural_coordinator.py",
@@ -4024,8 +4084,8 @@
     },
     {
       "path": "tests/test_pip_packaging.py",
-      "sha256": "cb381b64a9a5a40be427dbc8409dcb5b1b95ef95fdec6e2982ca4e491d1a86f6",
-      "size": 13589
+      "sha256": "08c27e536b9577e23a0aa112b8394159b76b18a30358caea7c79ad75db58cfea",
+      "size": 14036
     },
     {
       "path": "tests/test_plugin_kernel.py",
@@ -4409,8 +4469,8 @@
     },
     {
       "path": "安装与维护/README.md",
-      "sha256": "1e42385b97b5ac1a874dbae6461856e3260d3fa54484f82fc762fd5bebb021da",
-      "size": 10628
+      "sha256": "5fa59dd5d656e20f55a6aac450f98b9c3670eb83b5055d0e7a3d136294413b0e",
+      "size": 10704
     },
     {
       "path": "安装与维护/supabase-kb_docs-补status列-20260813.sql",

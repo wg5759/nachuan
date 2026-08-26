@@ -79,6 +79,7 @@ packages = [
     "gateway.web_ui.assets",
     "orchestrator",
     "orchestrator.workflows",
+    "nachuan_sdk",
     "bridge",
     "cli",
     "scripts",
@@ -94,6 +95,7 @@ build_py = "packaging_build.CleanBuildPy"
 [tool.setuptools.package-data]
 config = ["*.yaml", "*.json"]
 gateway = ["web_ui/*", "web_ui/assets/*"]
+nachuan_sdk = ["py.typed"]
 skills = [
     "trusted-manifest.json",
     "ATTRIBUTION.md",

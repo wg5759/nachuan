@@ -1,8 +1,7 @@
 // ADR-0013 Web 形态：登录闸。
-// 无运行时 Key（首次接入）或鉴权 401（已存 Key 被网关拒绝）时，在页面注入
-// 极简密钥录入视图：运行时 Key 必填、审批 Key 选填但付费/管理操作需要；验证（GET /v1/models 2xx）
-// 通过后存当前标签页 sessionStorage 并重载应用。绝不清动其他业务数据，
-// 密钥不回显（password 输入）、不打日志、不进 URL。
+// HttpOnly 本机会话不可用或鉴权 401 时才注入高级回退视图；验证通过后既保存
+// 当前标签页回退值，也尝试换取持久 HttpOnly Cookie。绝不清动其他业务数据，
+// 长期 Key 不回显、不打日志、不进 URL。
 
 import type { CredentialStore } from './credentials'
 
@@ -12,6 +11,8 @@ export interface LoginGateDeps {
   readonly credentials: CredentialStore
   /** 用候选运行时 Key 探测 GET /v1/models；2xx 视为网关接受。 */
   readonly verify: (runtimeKey: string) => Promise<boolean>
+  /** 可选：把手工验证成功的两把 Key 升级为 HttpOnly 持久会话。 */
+  readonly persist?: (runtimeKey: string, approvalKey: string | null) => Promise<boolean>
   /** 密钥保存成功后的应用重放（生产为 location.reload()，测试注入替身）。 */
   readonly reload: () => void
   /** 测试注入替身；缺省取全局 document。 */
@@ -48,7 +49,7 @@ export interface GateDocument {
 
 const REASON_TEXT: Record<LoginGateReason, string> = {
   missing:
-    '首次接入：请输入本机网关运行时 Key；付费媒体、审批、连接与同步还需独立审批 Key。',
+    '通常会自动安全登录。若浏览器数据被清除或不是从纳川入口打开，可重新启动纳川，或由高级用户输入本机 Key。',
   unauthorized: '当前标签页的访问密钥被网关拒绝，请重新录入。'
 }
 
@@ -163,11 +164,13 @@ export function createLoginGate(deps: LoginGateDeps): LoginGate {
       setError('')
       void deps
         .verify(runtimeKey)
-        .then((accepted) => {
+        .then(async (accepted) => {
           if (!accepted) {
             setError('网关未接受该运行时 Key（GET /v1/models 未返回 2xx）')
             return
           }
+          const approvalCandidate =
+            approvalInput.value.trim() || deps.credentials.getApprovalKey()
           try {
             deps.credentials.save(
               runtimeKey,
@@ -176,6 +179,9 @@ export function createLoginGate(deps: LoginGateDeps): LoginGate {
           } catch (error) {
             setError(error instanceof Error ? error.message : String(error))
             return
+          }
+          if (deps.persist && approvalCandidate) {
+            await deps.persist(runtimeKey, approvalCandidate)
           }
           api.hide()
           deps.reload()

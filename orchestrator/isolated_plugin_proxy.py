@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from orchestrator.isolated_plugin import (
@@ -76,7 +76,10 @@ class IsolatedPluginProxyService:
             )
         )
 
-    def execute(self, request: Mapping[str, object]) -> object:
+    def _resolve_request(
+        self,
+        request: Mapping[str, object],
+    ) -> tuple[VerifiedIsolatedPluginBundle, dict[str, object]]:
         if not isinstance(request, Mapping) or set(request) != {
             "plugin_id",
             "version",
@@ -103,7 +106,25 @@ class IsolatedPluginProxyService:
             or artifact != bundle.manifest.artifact_sha256
         ):
             raise IsolatedPluginContractError("isolated plugin identity does not match")
-        return self._broker.execute(bundle, dict(plugin_input))
+        return bundle, dict(plugin_input)
+
+    def execute(self, request: Mapping[str, object]) -> object:
+        bundle, plugin_input = self._resolve_request(request)
+        return self._broker.execute(bundle, plugin_input)
+
+    def execute_validated(
+        self,
+        request: Mapping[str, object],
+        validator: Callable[[object], object],
+    ) -> object:
+        if not callable(validator):
+            raise TypeError("isolated plugin result validator is invalid")
+        bundle, plugin_input = self._resolve_request(request)
+        return self._broker.execute(
+            bundle,
+            plugin_input,
+            output_validator=validator,
+        )
 
 
 def mount_isolated_plugin_proxy(

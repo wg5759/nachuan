@@ -1,6 +1,6 @@
 # 纳川插件内核策略：吸收 DeepSeek Harness“一切皆插件”的精华
 
-> 状态：PK-001～PK-007 最小纵切已实施；PK-008 待推进
+> 状态：PK-001～PK-008 最小纵切已实施；真实生态发行与生产验收待推进
 > 日期：2026-08-26
 > 目标：在不破坏纳川现有安全账本、真实渠道和安装发行边界的前提下，把模型、工具、协作、知识、渠道和 UI 变成可组合能力
 
@@ -240,7 +240,7 @@ Bundle 是签名的插件组合，不复制源码：
 
 ## 8. 当前实现与剩余差距
 
-截至 2026-08-26，PK-001～PK-007 最小纵切已经落地：`orchestrator/plugin_kernel.py`
+截至 2026-08-26，PK-001～PK-008 最小纵切已经落地：`orchestrator/plugin_kernel.py`
 提供严格 manifest、service/event registry、能力票据、借用租约、LIFO effect 回收、
 失败回滚、卸载和 quarantine；`EchoProvider` 已通过 `provider.factory.echo` 内置插件
 接入 legacy Router。`ToolRegistry` 新增闭集 schema、精确 `tool.execute:<name>` 能力、
@@ -262,6 +262,9 @@ Windows 真 AppContainer worker。第三方 Python 不被导入 Engine；内核�
 PK-007 把企业 RAG 的语义分片、embedding、候选检索、授权后重排和 DLP 收敛为
 版本化 service seam。身份、tenant 硬边界、AuthzFacade、正文读取、撤权 fence、生成清单/收据和
 audit key 仍由可信调用方掌控；组件在一次操作全程持有内核租约，执行中不能卸载。
+PK-008 新增公开 Python `nachuan_sdk`、确定性签名三文件 bundle 构建器、固定上游 commit 的
+DeepSeek Harness/OpenClaw 数据投影，以及必须依赖 `isolated.plugin.execute` 的闭集 bridge runtime。
+外部模块、Skill 正文、Hook、MCP、HTTP/RPC、工具和 UI 都不会因此进入宿主执行面。
 
 仍待统一迁移的部分包括：
 
@@ -272,6 +275,7 @@ audit key 仍由可信调用方掌控；组件在一次操作全程持有内核�
 - 目前只有“多模型协作”工作区入口迁为 UI slot；其余工作区和设置面板仍是硬编码。
 - `pipeline` 事件目前只重建执行拓扑与摘要，不能重建客户原文；其他会话、工具、插件和渠道也尚未汇入统一事件模型。
 - 企业 RAG 的真实 embedding/向量候选、加密正文、ReBAC/ABAC、DLP、PostgreSQL RLS、连接器 outbox 和 RAG-ACL-008 尚未接入；公开 API 仍返回 `enterprise_rag_not_ready`。
+- SDK 当前只发行 `transform.json` 三文件包和两类只读投影；公共插件市场、真实第三方 publisher 准入/轮换、自动下载/升级、Linux/macOS sandbox、动态第三方 UI、出站域白名单及 OpenClaw/Cordis 原生能力迁移仍未完成。
 
 因此继续采用旁路内核和 legacy adapter 渐进迁移，不做大爆炸重写。
 
@@ -353,11 +357,14 @@ audit key 仍由可信调用方掌控；组件在一次操作全程持有内核�
 - `/health` 只报告六类组件是否挂载和 DLP 是 `deny_all/configured`，同时固定 `api_enabled=false/production_ready=false`；不用“插件存在”冒充企业 RAG 已上线。
 - 当前本机影响面 234 项全绿，wheel 确认携带组合模块；单独 PyInstaller Engine 冻结件真启动后 `/health` 实际返回 splitter/reranker/DLP/runtime 已挂、embedder/candidates 缺失、`dlp_mode=deny_all`、`api_enabled=false`、`production_ready=false`。该未签名冻结件只是本地打包闭包验收，不是正式二进制发布。
 
-### PK-008：生态与兼容
+### PK-008：生态与兼容（已完成最小纵切）
 
-- 提供 Nachuan SDK；
-- 可选 DeepSeek Harness bridge、OpenClaw bundle/skill bridge；
-- 外部生态插件始终运行在隔离 worker，不直接导入主进程。
+- 新 `nachuan_sdk` 是带 `py.typed` 的版本化 Python API；`build_signed_transform_bundle` 只生成 `manifest.json/plugin.py/sbom.json`，目标必须不存在，先在同父目录 staging 自验 Ed25519、SBOM、限额和文件闭集，再原子发布。签名私钥只作为内存对象传入，从不序列化；相同源码/spec/key 生成相同字节和回执；
+- DeepSeek Harness bridge 绑定官方 `deepseek-ai/deepseek-harness@b150a551...`，只解析有界 Cordis `name/config` 清单。alias、自定义 YAML tag、绝对/逃逸/URL 路径、重复项和未知字段均拒绝；config 只留摘要，`apply(ctx)`、Service/inject 和 client plugin 全部标 unsupported；
+- OpenClaw bridge 绑定官方 `openclaw/openclaw@6f0395ec...`，按当前 `id + configSchema` 原生 manifest 和 `skills/<id>/SKILL.md` 直接子目录形态生成摘要计划。Skill 正文、description、schema 值和未知字段值不进入宿主投影；原生 runtime、Hook、MCP、子进程、HTTP/RPC、工具、channel/provider 和 prompt 挂载均不执行；
+- `ecosystem.bridge.project` 只有在已挂 `isolated.plugin.execute` 时才能 mount，并全生命周期借用代理；外部 worker 必须按精确 `id + version + artifact_sha256` 执行，只能返回原 ecosystem 和原组件 ID。改 plan digest、加组件、加 `code` 或开放字段会被可信 validator 拒绝，并在 broker 内按精确签名身份 quarantine；
+- `/health` 只报告 SDK API v1、两类 `projection_only` bridge 以及代理/runtime 是否实挂；`marketplace_enabled=false`、`production_ready=false` 固定不变。默认安装不扫描目录、不下载插件、不信任 publisher、不挂 bridge worker；
+- 当前本机 SDK/bridge/PK-001～007 相邻和 wheel/sdist 闭包回归 100 项全绿。该证据只证明最小源码纵切，不等于插件市场或真实生态插件已发布、安装、启用和长期验收。
 
 ## 10. 验收门
 

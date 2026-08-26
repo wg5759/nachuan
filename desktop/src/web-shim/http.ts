@@ -1,7 +1,8 @@
 // ADR-0013 Web 形态：同源网关 HTTP 客户端。
 //
 // 所有 window.api 的出站请求都经此单点：
-// - 自动附带 Authorization: Bearer <runtime key>（从标签页 sessionStorage 读，见 credentials.ts）；
+// - 正常路径附带同源会话头并由 HttpOnly Cookie 鉴权；手工回退时才附带
+//   Authorization: Bearer <runtime key>（从标签页 sessionStorage 读）；
 // - includeApprovalKey 时附带 X-Nachuan-Approval-Key（审批/连接/同步等双头路由）；
 // - 只接受同源相对路径（"/" 开头且非 "//"），从类型上排除跨域与 key 泄漏面；
 // - `/v1/models` 首次 401 或其他请求连续 401 达到阈值时回调
@@ -62,6 +63,8 @@ export interface WebHttpClientDeps {
   readonly fetchImpl?: typeof fetch
   /** 连续 401 触发登录闸的阈值，默认 2。 */
   readonly unauthorizedThreshold?: number
+  /** 首个业务请求前完成一次性 bootstrap 或持久 Cookie 探测。 */
+  readonly beforeRequest?: () => Promise<void>
 }
 
 function checkedTarget(target: unknown): string {
@@ -120,7 +123,7 @@ export function createWebHttpClient(deps: WebHttpClientDeps): WebHttpClient {
   }
 
   function buildHeaders(input: WebHttpRequest): Record<string, string> {
-    const headers: Record<string, string> = {}
+    const headers: Record<string, string> = { 'X-Nachuan-Web-Session': '1' }
     const runtimeKey = deps.credentials.getRuntimeKey()
     if (runtimeKey) headers['Authorization'] = `Bearer ${runtimeKey}`
     if (input.includeApprovalKey) {
@@ -133,11 +136,14 @@ export function createWebHttpClient(deps: WebHttpClientDeps): WebHttpClient {
 
   async function open(input: WebHttpRequest): Promise<Response> {
     const target = checkedTarget(input?.target)
+    if (deps.beforeRequest) await deps.beforeRequest()
     const response = await doFetch(target, {
       method: input.method,
       headers: buildHeaders(input),
       body: input.body ?? null,
-      signal: input.signal ?? null
+      signal: input.signal ?? null,
+      credentials: 'same-origin',
+      cache: 'no-store'
     })
     noteStatus(
       response.status,

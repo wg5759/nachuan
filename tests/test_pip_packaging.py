@@ -131,6 +131,7 @@ class TestPackageClosure:
             "gateway.web_ui.assets",
             "orchestrator",
             "orchestrator.workflows",
+            "nachuan_sdk",
             "bridge",
             "cli",
             "scripts",
@@ -208,12 +209,18 @@ class TestPackageClosure:
         assert "cli/kimi_worker_entrypoint.py" in names
         assert "gateway/provider_plugins.py" in names
         assert "gateway/enterprise_rag_plugins.py" in names
+        assert "gateway/local_web_session.py" in names
         assert "gateway/sqlite_runtime.py" in names
         assert "orchestrator/durable_event_log.py" in names
         assert "orchestrator/plugin_kernel.py" in names
         assert "orchestrator/isolated_plugin.py" in names
         assert "orchestrator/isolated_plugin_proxy.py" in names
+        assert "orchestrator/ecosystem_bridge.py" in names
         assert "orchestrator/windows_appcontainer.py" in names
+        assert "nachuan_sdk/__init__.py" in names
+        assert "nachuan_sdk/bundle.py" in names
+        assert "nachuan_sdk/bridges.py" in names
+        assert "nachuan_sdk/py.typed" in names
         assert "orchestrator/tool_plugins.py" in names
         assert "orchestrator/ui_plugins.py" in names
         assert "orchestrator/workflow_plugins.py" in names
@@ -224,6 +231,8 @@ class TestPackageClosure:
             for name in names
         )
         assert "/v1/paid-media/web/read-asset" in web_shim
+        assert "/v1/local-web/session/bootstrap" in web_shim
+        assert "X-Nachuan-Web-Session" in web_shim
         assert "resolvePaidMediaAsset" in web_shim
         assert "releasePaidMediaAsset" in web_shim
         assert packaged_web_files == source_web_files, {

@@ -3,8 +3,8 @@
 // 纪律：
 // - key 只经 Authorization / X-Nachuan-Approval-Key 头出站，绝不进 URL query、不打日志；
 // - 本模块只读写自己名下的两个 sessionStorage 项，绝不清动其他业务数据；
-//   sessionStorage 跨同一标签页 reload 保留，但关闭标签页即失效，避免把长期密钥
-//   明文落入 durable localStorage；
+//   sessionStorage 只作为手工高级回退；正常本地 Web 使用 host-only HttpOnly Cookie，
+//   新标签页无需把长期密钥暴露给 JavaScript；
 // - 存储不可用（隐私模式等）时读取返回 null、保存显式报错，不静默吞。
 
 const RUNTIME_KEY_ITEM = 'nachuan.web.runtimeKey'

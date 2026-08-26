@@ -13,7 +13,7 @@
 
 ## 决策
 
-1. **主分发形态**改为：pip 包（引擎 + `nachuan` CLI）+ 网关静态托管的本地 Web UI。Web UI 只监听 `127.0.0.1`，复用现有网关随机 runtime key 鉴权，安全模型与今日 Electron + bundled engine 完全同构。
+1. **主分发形态**改为：pip 包（引擎 + `nachuan` CLI）+ 网关静态托管的本地 Web UI。Web UI 只监听专属 `127/8` 回环地址（当前 `127.77.77.77`），复用现有网关随机 runtime key 鉴权；长期 Key 由 DPAPI 保存，短期单次 fragment 只负责换取 host-only HttpOnly/SameSite Cookie，不把 Key交给页面 JavaScript。
 2. **Electron 桌面端冻结**为可选壳：代码与测试资产保留、不再主动投入；商店 SKU、Authenticode/Ed25519 双轨更新、NSIS 安装器、ASAR 最终字节门禁、electronFuses 整章废弃。相关文档（README 商店边界节、`PACKAGING.md` 安装器与双轨更新合同）标注废弃并指向本 ADR。`docs/自动更新机制.md` 描述的是上游依赖巡检器，与发布通道无关，继续有效。
 3. **威胁模型对齐 CLI 行业默认**：引擎/CLI 以用户身份运行是预期行为，同 SID 不再是「必须 AppContainer/LocalService」的 P0。危险能力（agent exec、宿主文件工具、MCP/插件、浏览器写动作、正式 xreview、Telegram）维持现状 fail-closed，不因分发形态变化而解禁。
 4. **付费媒体确认链迁入网关**：确认交互与账本归属网关（预算闸、幂等、provider choke point、append-only 账本原本就在网关侧），Web UI 只做展示与确认弹窗；Electron main 的 paid-media 代理/确认框层随壳冻结，不再作为安全边界维护。`X-Nachuan-Paid-Media-Key`、Idempotency-Key、人工确认前置等机制不变，只换呈现层。

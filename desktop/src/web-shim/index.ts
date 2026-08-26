@@ -14,6 +14,7 @@ import { createWebPrivilegedApi } from './privileged'
 import { createWebPaidMediaApi } from './paid-media'
 import { createWebElectronOnlyApi } from './electron-only'
 import { createLoginGate } from './gate'
+import { establishLocalWebSession, persistLocalWebSession } from './session'
 
 export function installWebShim(): DesktopAPI {
   const existing = (window as unknown as { api?: DesktopAPI }).api
@@ -23,6 +24,7 @@ export function installWebShim(): DesktopAPI {
   }
 
   const credentials = createCredentialStore()
+  const sessionReady = establishLocalWebSession()
   const gate = createLoginGate({
     credentials,
     verify: async (runtimeKey: string) => {
@@ -36,12 +38,17 @@ export function installWebShim(): DesktopAPI {
         return false
       }
     },
+    persist: (runtimeKey, approvalKey) =>
+      persistLocalWebSession(runtimeKey, approvalKey),
     reload: () => {
       window.location.reload()
     }
   })
   const http = createWebHttpClient({
     credentials,
+    beforeRequest: async () => {
+      await sessionReady
+    },
     onConsecutiveUnauthorized: () => gate.show('unauthorized')
   })
   const api: DesktopAPI = {
@@ -54,7 +61,9 @@ export function installWebShim(): DesktopAPI {
   }
   assertRuntimeApiMatchesDeclaration(api, WEB_RUNTIME_CAPABILITIES)
   ;(window as unknown as { api: DesktopAPI }).api = api
-  if (!credentials.getRuntimeKey()) gate.show('missing')
+  void sessionReady.then((authenticated) => {
+    if (!authenticated && !credentials.getRuntimeKey()) gate.show('missing')
+  })
   return api
 }
 

@@ -48,6 +48,8 @@ describe('web-shim http client', () => {
     const [target, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
     expect(target).toBe('/v1/models')
     expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer runtime-key')
+    expect((init.headers as Record<string, string>)['X-Nachuan-Web-Session']).toBe('1')
+    expect(init.credentials).toBe('same-origin')
     expect((init.headers as Record<string, string>)['X-Nachuan-Approval-Key']).toBeUndefined()
   })
 

@@ -13,7 +13,7 @@
 模型、工具、工作流、RAG 组件、渠道和 UI 将逐步迁入稳定的能力缝隙；身份、租户、
 凭证、财务/幂等账本、企业 RAG 最终授权、审计真相和安装更新信任不能被插件绕过。
 
-当前 PK-001～PK-007 已提供严格 Manifest、Service/Event/Tool/UI/Effect/Capability
+当前 PK-001～PK-008 已提供严格 Manifest、Service/Event/Tool/UI/Effect/Capability
 内核，以及 EchoProvider、受审 Skill、pipeline 事件、UI slot 等内置纵切。已验第三方
 Python bundle 可通过签名/SBOM 合同、单次有界 IPC、持久 quarantine 和 Windows
 AppContainer + Job Object 隔离代理运行，不导入主进程。该能力默认无第三方 bundle，
@@ -21,6 +21,9 @@ AppContainer + Job Object 隔离代理运行，不导入主进程。该能力默
 企业 RAG 已将权限同质分片、embedding、候选检索、授权后重排和 DLP 收敛为插件服务缝隙；
 身份、tenant 边界、正文前授权、撤权 fence 和审计仍不可插件化。真实 embedding/向量/加密正文/
 ReBAC/ABAC/DLP 未配齐前，企业查询 API 继续故障关闭。
+公开 Python `nachuan_sdk` 现可确定性生成签名三文件隔离包，并把固定提交的 DeepSeek Harness
+组合清单或 OpenClaw manifest/Skill 变成内容寻址投影。它不会直接执行上游插件代码或 Skill，
+也不会自动下载、信任、启用或升级第三方插件；插件市场仍未上线。
 
 ## 当前能力
 
@@ -52,7 +55,9 @@ nachuan doctor      # 离线检查源码闭包、运行时哈希与三版本同�
 nachuan uninstall   # 默认保留用户数据
 ```
 
-默认仅监听 `127.0.0.1`。首次启动生成的本地运行凭证不得提交到仓库、日志或问题单。
+默认仅监听专属回环 `127.77.77.77`。启动器自动用短期单次 fragment 换取 host-only HttpOnly Cookie；
+长期运行凭证不显示在终端、不进入 URL 或页面 JavaScript。以后刷新、重开浏览器和新标签页均无需重复输入；
+浏览器数据被清空或凭据轮换时，从纳川启动入口重新打开即可。任何凭证仍不得提交到仓库、日志或问题单。
 当前仍是 source alpha，适合技术用户自托管试用，不等同于已签名普通客户桌面版。
 
 从源码参与开发仍要求 Node.js 24.14.0 和 npm 11.12.1；见 `CONTRIBUTING.md`。
@@ -82,6 +87,12 @@ uv run python scripts/verify_distribution_contract.py
 要求不可伪造的 RequestContext、租户硬隔离、权限同质分片、ReBAC/ABAC、模型前
 终检、撤权 epoch、策略感知缓存、输出 DLP 和引用复核。详见
 `docs/ENTERPRISE_RAG_AUTHORIZATION_ARCHITECTURE.md`。
+
+## Plugin SDK
+
+SDK API、构建示例、DeepSeek Harness/OpenClaw 兼容范围和明确禁区见
+`docs/NACHUAN_PLUGIN_SDK.md`。第三方代码只有转换为精确签名的纳川 bundle 并通过隔离代理后
+才可执行；bridge 返回值不能注册宿主工具、服务、Hook、路由、渠道、provider 或 UI。
 
 ## 安全与贡献
 

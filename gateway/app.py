@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import os
@@ -2493,6 +2494,43 @@ def _enterprise_rag_plugin_readiness(router: Any) -> dict[str, object]:
     return snapshot
 
 
+def _plugin_ecosystem_readiness(router: Any) -> dict[str, object]:
+    snapshot: dict[str, object] = {
+        "schema": "nachuan.plugin-ecosystem-readiness.v1",
+        "sdk_api_version": "unavailable",
+        "bridges": {
+            "deepseek_harness": "unavailable",
+            "openclaw": "unavailable",
+        },
+        "isolated_proxy_ready": False,
+        "bridge_runtime_ready": False,
+        "marketplace_enabled": False,
+        "production_ready": False,
+    }
+    try:
+        from nachuan_sdk import SDK_API_VERSION
+        from orchestrator.ecosystem_bridge import ECOSYSTEM_BRIDGE_SERVICE
+        from orchestrator.isolated_plugin_proxy import ISOLATED_PLUGIN_SERVICE
+
+        kernel = router.plugin_kernel
+        snapshot.update(
+            sdk_api_version=SDK_API_VERSION,
+            bridges={
+                "deepseek_harness": "projection_only",
+                "openclaw": "projection_only",
+            },
+            isolated_proxy_ready=kernel.services.has_provider(
+                ISOLATED_PLUGIN_SERVICE
+            ),
+            bridge_runtime_ready=kernel.services.has_provider(
+                ECOSYSTEM_BRIDGE_SERVICE
+            ),
+        )
+    except Exception:  # noqa: BLE001 -- optional ecosystem status stays closed
+        return snapshot
+    return snapshot
+
+
 @app.get("/health")
 async def health(request: Request) -> dict[str, Any]:
     # Supervisor 以随机 challenge 校验本次托管子进程的 boot token。proof 不泄露
@@ -2529,6 +2567,13 @@ async def health(request: Request) -> dict[str, Any]:
             "sqlite_backup": _sqlite_backup_readiness(),
             "connection_store": connection_store,
             "enterprise_rag_plugins": _enterprise_rag_plugin_readiness(
+                getattr(
+                    getattr(getattr(request, "app", None), "state", None),
+                    "router",
+                    None,
+                )
+            ),
+            "plugin_ecosystem": _plugin_ecosystem_readiness(
                 getattr(
                     getattr(getattr(request, "app", None), "state", None),
                     "router",
@@ -10879,10 +10924,46 @@ _public_fastapi_app = app
 # ADR-0013：CLI + 本地 Web 分发形态。catch-all 必须在全部 API 路由之后注册；
 # 未配置 NACHUAN_WEB_UI_DIR 时使用 wheel 内 gateway/web_ui；显式无效覆盖仍 fail-closed。
 from gateway.local_web_ui import mount_local_web_ui
+from gateway.local_web_session import (
+    BOOTSTRAP_ENV as LOCAL_WEB_BOOTSTRAP_ENV,
+    LocalWebSessionManager,
+    register_local_web_session_routes,
+)
 from gateway.paid_media_web import PaidMediaWebLedger, register_paid_media_web_routes
 from gateway.paid_media_web_archive import PaidMediaWebAssetArchive
 
 register_paid_media_web_routes(_public_fastapi_app)
+_local_web_settings = get_settings()
+_local_web_runtime_keys = tuple(
+    sorted(
+        key
+        for key in _local_web_settings.api_keys
+        if re.fullmatch(r"nc-runtime-v1-[A-Za-z0-9_-]{43,86}", key)
+    )
+)
+_local_web_approval_key = str(
+    _local_web_settings.approval_admin_key or ""
+).strip()
+_local_web_bootstrap_token = str(
+    os.environ.get(LOCAL_WEB_BOOTSTRAP_ENV) or ""
+).strip()
+try:
+    _local_web_session_manager = (
+        LocalWebSessionManager(
+            runtime_key=_local_web_runtime_keys[0],
+            approval_key=_local_web_approval_key,
+            bootstrap_token=_local_web_bootstrap_token,
+            port=_local_web_settings.gateway_port,
+        )
+        if len(_local_web_runtime_keys) == 1
+        else None
+    )
+except (TypeError, ValueError):
+    _local_web_session_manager = None
+register_local_web_session_routes(
+    _public_fastapi_app,
+    manager=_local_web_session_manager,
+)
 mount_local_web_ui(_public_fastapi_app)
 app = _compose_gateway_asgi_app(
     _public_fastapi_app,
@@ -10909,7 +10990,10 @@ def main() -> None:
     host = settings.gateway_host or "127.0.0.1"
     # 安全护栏：绑非本机地址(0.0.0.0/局域网 IP) 却用默认/空 key = 局域网内任何人可带**公开的默认 key**
     # 打 /v1/agent/exec 在本机执行任意命令。拒启，逼用户先设真 key（桌面 app 走 127.0.0.1+随机 key，不受影响）。
-    _loopback = host in {"127.0.0.1", "localhost", "::1"}
+    try:
+        _loopback = host == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        _loopback = False
     _weak = (not settings.api_keys) or ("sk-local-dev-changeme" in settings.api_keys)
     if not _loopback and _weak:
         raise SystemExit(

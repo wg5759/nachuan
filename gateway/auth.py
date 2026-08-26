@@ -16,6 +16,11 @@ from gateway.desktop_engine_session_gateway import (
     DesktopEngineSessionGatewayApp,
 )
 from gateway.durable_media_requests import hash_media_principal
+from gateway.local_web_session import (
+    LocalWebSessionRejected,
+    local_web_approval_cookie,
+    local_web_runtime_cookie,
+)
 from gateway.paid_media_engine_session_gateway import (
     SESSION_STATE_KEY as PAID_MEDIA_SESSION_STATE_KEY,
     PaidMediaEngineSessionGatewayApp,
@@ -132,7 +137,31 @@ async def require_api_key(
             raise _desktop_session_failure()
         return desktop_credential
 
-    keys = get_settings().api_keys | desktop_engine_keys()
+    settings = get_settings()
+    keys = settings.api_keys | desktop_engine_keys()
+    try:
+        web_cookie = local_web_runtime_cookie(
+            request,
+            set(keys),
+            port=int(getattr(settings, "gateway_port", 8080) or 8080),
+        )
+    except LocalWebSessionRejected:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="本机 Web 会话无效；请从纳川启动入口重新打开",
+            headers={"Cache-Control": "no-store"},
+        ) from None
+    if web_cookie is not None:
+        if authorization is not None:
+            if not authorization.lower().startswith("bearer ") or not hmac.compare_digest(
+                authorization.split(" ", 1)[1].strip(), web_cookie
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="本机 Web 会话与 Bearer Token 冲突",
+                    headers={"Cache-Control": "no-store"},
+                )
+        return web_cookie
     if not keys:
         if os.getenv("NACHUAN_ALLOW_ANONYMOUS_LOCAL") == "1":
             return "anonymous"
@@ -373,6 +402,28 @@ async def require_approval_admin_key(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="审批管理员 Key 与运行时 API Key 重叠；拒绝审批操作",
         )
+    try:
+        web_cookie = local_web_approval_cookie(
+            request,
+            configured,
+            port=int(getattr(settings, "gateway_port", 8080) or 8080),
+        )
+    except LocalWebSessionRejected:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="本机 Web 审批会话无效；请从纳川启动入口重新打开",
+            headers={"Cache-Control": "no-store"},
+        ) from None
+    if web_cookie:
+        candidate_header = (x_nachuan_approval_key or "").strip()
+        if candidate_header and not hmac.compare_digest(candidate_header, configured):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="本机 Web 会话与审批 Key 冲突",
+                headers={"Cache-Control": "no-store"},
+            )
+        return "approval-admin"
+
     candidate = (x_nachuan_approval_key or "").strip()
     if not candidate:
         raise HTTPException(

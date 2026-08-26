@@ -41,7 +41,7 @@ from gateway.kimi_subscription_login import (
 )
 from cli import paid_media_operator
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8080"
+DEFAULT_BASE_URL = "http://127.77.77.77:8080"
 EXIT_OK = 0
 EXIT_USAGE = 64
 EXIT_UNAVAILABLE = 69

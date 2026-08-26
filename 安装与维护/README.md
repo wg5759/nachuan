@@ -12,7 +12,7 @@
 - `查看免费签名与交付状态.cmd`：打开免费开源签名路线、当前批准状态和客户交付边界；不把“已开源”误报成
   “已获 Windows 证书”。
 - **pip 包 + CLI（ADR-0013 主分发形态）**：构建 `python -m build --wheel --no-isolation`（产物在 `dist\*.whl`），安装 `pip install dist\llm_aggregator-0.2.0-py3-none-any.whl`。装完：
-  - `nachuan start`：一命令启动本地引擎 + Web 界面（仅绑 127.0.0.1，首次原子生成 runtime/approval 两枚随机 Key 并以当前用户 DPAPI+ACL 保护，自动打开浏览器；Key 只显示在 owner 当前终端，不进 argv/URL/日志）。`--no-open` 只起服务，`--port` 换端口。
+  - `nachuan start`：一命令启动本地引擎 + Web 界面（仅绑专属回环 `127.77.77.77`；runtime/approval Key 由当前用户 DPAPI+ACL 保护，启动器用120秒单次 fragment 自动换取 host-only HttpOnly Cookie，长期 Key 不显示在终端、不进 argv/URL/页面脚本/日志；以后新标签页无需再输入）。`--no-open` 只起服务，`--port` 换端口。
   - `nachuan status|models|chat "消息"|ui`：健康、模型目录、单条聊天、打印 Web 地址。
   - `nachuan codex bind|status|logout|unbind`、`nachuan kimi bind|login|status|logout|unbind`：用户自有订阅连接的绑定/登录/状态/退出/解绑（只驱动官方 CLI，不抓 Cookie）。
   - 它与 Supervisor 多服务（微信/飞书桥）是两种形态：CLI 是单人本地 Web；渠道长驻仍走下方 Supervisor。

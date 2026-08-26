@@ -13,6 +13,7 @@ from cli.local_web_start import (
     load_or_create_local_owner_credentials,
     load_or_create_local_paid_media_capability,
     serve_local_web,
+    _open_when_ready,
 )
 
 
@@ -289,8 +290,11 @@ def test_serve_sets_engine_environment_without_putting_keys_in_a_url(
     assert observed["GATEWAY_API_KEYS"] == credentials.runtime_key
     assert observed["APPROVAL_ADMIN_KEY"] == credentials.approval_key
     assert observed["NACHUAN_PAID_MEDIA_API_KEY"] == paid_capability.key
-    assert observed["GATEWAY_HOST"] == "127.0.0.1"
+    assert observed["GATEWAY_HOST"] == "127.77.77.77"
     assert observed["GATEWAY_PORT"] == "18080"
+    assert observed["NACHUAN_LOCAL_WEB_BOOTSTRAP_TOKEN"].startswith(
+        "nc-web-bootstrap-v1-"
+    )
     assert environment == {
         "GATEWAY_API_KEYS": "old-runtime",
         "APPROVAL_ADMIN_KEY": "old-approval",
@@ -298,10 +302,44 @@ def test_serve_sets_engine_environment_without_putting_keys_in_a_url(
         "GATEWAY_HOST": "localhost",
     }
     rendered = output.getvalue()
-    assert credentials.runtime_key in rendered
-    assert credentials.approval_key in rendered
+    assert credentials.runtime_key not in rendered
+    assert credentials.approval_key not in rendered
     assert paid_capability.key not in rendered
     assert "NACHUAN_PAID_MEDIA_API_KEY" not in rendered
-    assert "http://127.0.0.1:18080/" in rendered
+    assert "http://127.77.77.77:18080/" in rendered
     assert "?" not in rendered
     assert "#" not in rendered
+    assert "浏览器会自动安全登录" in rendered
+
+
+def test_ready_opener_keeps_long_lived_keys_out_of_the_url_and_uses_one_time_fragment() -> None:
+    requested: list[str] = []
+    opened: list[str] = []
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def get(self, url: str):
+            requested.append(url)
+            return type("Response", (), {"status_code": 200})()
+
+    token = f"nc-web-bootstrap-v1-{'B' * 43}"
+    _open_when_ready(
+        "http://127.77.77.77:18080",
+        "http://127.77.77.77:18080",
+        token,
+        client_factory=lambda **_kwargs: Client(),
+        browser_open=lambda url: opened.append(url),
+        sleep=lambda _seconds: None,
+    )
+
+    assert requested == ["http://127.77.77.77:18080/health"]
+    assert opened == [
+        f"http://127.77.77.77:18080/#nachuan-bootstrap={token}"
+    ]
+    assert "nc-runtime-v1-" not in opened[0]
+    assert "nc-approval-v1-" not in opened[0]

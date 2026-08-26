@@ -212,7 +212,7 @@ class TestUi:
     def test_prints_url(self):
         code, out, _ = _invoke(["ui"], handler=_ok_json({}))
         assert code == EXIT_OK
-        assert "http://127.0.0.1:8080/" in out
+        assert "http://127.77.77.77:8080/" in out
         assert "wheel 内置 Web UI" in out
         assert "404" not in out
 
