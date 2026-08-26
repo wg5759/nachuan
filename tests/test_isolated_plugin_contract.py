@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -194,3 +195,20 @@ def test_quarantine_survives_broker_restart_and_is_exact_identity(tmp_path) -> N
     with pytest.raises(IsolatedPluginQuarantined):
         restarted.execute(bundle, {"value": 1})
     assert restarted.quarantined_identities() == (bundle.manifest.identity(),)
+    assert state.is_quarantined(
+        (bundle.manifest.plugin_id, "1.0.1", bundle.manifest.artifact_sha256)
+    ) is False
+
+
+def test_quarantine_store_rejects_schema_shadowing(tmp_path) -> None:
+    path = tmp_path / "plugins.sqlite3"
+    SQLiteIsolatedPluginStateStore(path)
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("CREATE TABLE shadow (value TEXT)")
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(IsolatedPluginContractError, match="authority"):
+        SQLiteIsolatedPluginStateStore(path)

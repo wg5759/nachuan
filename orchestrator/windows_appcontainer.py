@@ -6,7 +6,9 @@ import ctypes
 import hashlib
 import msvcrt
 import os
+import platform
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -43,6 +45,10 @@ _PROFILE_MONIKER = "Nachuan.IsolatedPlugin.Worker.V1"
 _READY_FRAME = b'{"schema":"nachuan.isolated-plugin.ready.v1"}'
 _MAX_CONTROL_FRAME_BYTES = 256
 _PACKAGED_STARTUP_TIMEOUT_MS = 30_000
+_RUNTIME_MARKER = ".nachuan-runtime-fingerprint"
+_MAX_RUNTIME_FILES = 5_000
+_MAX_RUNTIME_BYTES = 256 * 1024 * 1024
+_RuntimeRecord = tuple[str, int, str, Path]
 _TOKEN_QUERY = 0x0008
 _TOKEN_IS_APP_CONTAINER = 29
 _TOKEN_APP_CONTAINER_SID = 31
@@ -269,7 +275,24 @@ def _profile(moniker: str) -> tuple[int, str]:
         _userenv.CreateAppContainerProfile(moniker, moniker, moniker, None, 0, ctypes.byref(sid))
     ) & 0xFFFFFFFF
     if hr == _ERROR_ALREADY_EXISTS_HRESULT:
-        hr = int(_userenv.DeriveAppContainerSidFromAppContainerName(moniker, ctypes.byref(sid))) & 0xFFFFFFFF
+        delete_hr = int(_userenv.DeleteAppContainerProfile(moniker)) & 0xFFFFFFFF
+        if delete_hr != 0:
+            raise IsolatedPluginWorkerError(
+                "stale AppContainer profile cannot be cleared"
+            )
+        if sid.value:
+            _advapi32.FreeSid(sid)
+        sid = wintypes.LPVOID()
+        hr = int(
+            _userenv.CreateAppContainerProfile(
+                moniker,
+                moniker,
+                moniker,
+                None,
+                0,
+                ctypes.byref(sid),
+            )
+        ) & 0xFFFFFFFF
     if hr != 0 or not sid.value:
         raise IsolatedPluginWorkerError("AppContainer profile is unavailable")
     text = wintypes.LPWSTR()
@@ -311,47 +334,145 @@ def _grant(path: Path, sid: str, rights: str, *, recursive: bool = True) -> None
     _acl_grants.add(key)
 
 
-def _source_runtime() -> tuple[Path, Path, str]:
+def _source_runtime() -> tuple[Path, Path, tuple[_RuntimeRecord, ...], str]:
     executable = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
     base = Path(sys.base_prefix).resolve()
     runtime_dll = base / f"python{sys.version_info.major}{sys.version_info.minor}.dll"
     if not executable.is_file() or not runtime_dll.is_file():
         raise IsolatedPluginWorkerError("isolated plugin Python runtime is unavailable")
-    fingerprint = hashlib.sha256(
-        executable.read_bytes() + runtime_dll.read_bytes()
-    ).hexdigest()
-    return base, executable, fingerprint
+    inventory, fingerprint = _runtime_inventory(
+        base,
+        executable.name,
+        closed=False,
+    )
+    return base, executable, inventory, fingerprint
+
+
+def _runtime_file_digest(path: Path) -> tuple[int, str]:
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        raise IsolatedPluginWorkerError("isolated plugin runtime file is unavailable") from exc
+    reparse = int(getattr(info, "st_file_attributes", 0)) & int(
+        getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    )
+    if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode) or reparse:
+        raise IsolatedPluginWorkerError("isolated plugin runtime file is invalid")
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+    except OSError as exc:
+        raise IsolatedPluginWorkerError("isolated plugin runtime file cannot be read") from exc
+    return int(info.st_size), digest.hexdigest()
+
+
+def _runtime_inventory(
+    root: Path,
+    executable_name: str,
+    *,
+    closed: bool,
+) -> tuple[tuple[_RuntimeRecord, ...], str]:
+    selected: list[Path] = []
+    allowed_top = {executable_name, "python3.dll"}
+    for item in root.iterdir():
+        if item.is_file() and (
+            item.name in allowed_top
+            or item.name.startswith("python") and item.suffix.casefold() == ".dll"
+            or item.name.startswith("vcruntime") and item.suffix.casefold() == ".dll"
+        ):
+            selected.append(item)
+        elif item.name in {"DLLs", "Lib"} and item.is_dir():
+            for path in item.rglob("*"):
+                try:
+                    info = os.lstat(path)
+                except OSError as exc:
+                    raise IsolatedPluginWorkerError(
+                        "isolated plugin runtime entry is unavailable"
+                    ) from exc
+                reparse = int(getattr(info, "st_file_attributes", 0)) & int(
+                    getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+                )
+                if stat.S_ISDIR(info.st_mode) and not reparse:
+                    continue
+                if "__pycache__" in path.parts or path.suffix.casefold() == ".pyc":
+                    if closed:
+                        raise IsolatedPluginWorkerError(
+                            "isolated plugin runtime cache is not closed"
+                        )
+                    continue
+                selected.append(path)
+        elif closed and item.name != _RUNTIME_MARKER:
+            raise IsolatedPluginWorkerError("isolated plugin runtime cache is not closed")
+    records: list[tuple[str, int, str, Path]] = []
+    total = 0
+    for path in selected:
+        relative = path.relative_to(root).as_posix()
+        size, digest = _runtime_file_digest(path)
+        total += size
+        records.append((relative, size, digest, path))
+    records.sort(key=lambda item: item[0])
+    if (
+        not records
+        or len(records) > _MAX_RUNTIME_FILES
+        or total > _MAX_RUNTIME_BYTES
+        or executable_name not in {item[0] for item in records}
+    ):
+        raise IsolatedPluginWorkerError("isolated plugin runtime inventory is invalid")
+    fingerprint = hashlib.sha256()
+    for relative, size, digest, _path in records:
+        fingerprint.update(relative.encode("utf-8"))
+        fingerprint.update(b"\0")
+        fingerprint.update(str(size).encode("ascii"))
+        fingerprint.update(b"\0")
+        fingerprint.update(bytes.fromhex(digest))
+    return tuple(records), fingerprint.hexdigest()
 
 
 def _materialize_runtime(cache_root: Path) -> Path:
-    source_root, source_executable, fingerprint = _source_runtime()
+    _source_root, source_executable, source_inventory, fingerprint = _source_runtime()
     cache_root.mkdir(parents=True, exist_ok=True)
     name = (
         f"cpython-{sys.version_info.major}.{sys.version_info.minor}."
         f"{sys.version_info.micro}-{fingerprint[:16]}"
     )
     destination = cache_root.resolve() / name
-    marker = destination / ".nachuan-runtime-fingerprint"
+    marker = destination / _RUNTIME_MARKER
     executable = destination / source_executable.name
-    if marker.is_file() and marker.read_text(encoding="ascii") == fingerprint and executable.is_file():
-        return executable
+    if marker.is_file() and marker.read_text(encoding="ascii") == fingerprint:
+        cached_inventory, cached_fingerprint = _runtime_inventory(
+            destination,
+            source_executable.name,
+            closed=True,
+        )
+        cached_projection = tuple(item[:3] for item in cached_inventory)
+        source_projection = tuple(item[:3] for item in source_inventory)
+        if cached_fingerprint == fingerprint and cached_projection == source_projection:
+            return executable
+        raise IsolatedPluginWorkerError("isolated plugin runtime cache is invalid")
     if destination.exists():
         raise IsolatedPluginWorkerError("isolated plugin runtime cache is invalid")
     stage = Path(tempfile.mkdtemp(prefix=f".{name}-", dir=cache_root))
     try:
-        for item in source_root.iterdir():
-            if item.is_file() and (
-                item.name in {source_executable.name, "python3.dll"}
-                or item.name.startswith("python") and item.suffix.casefold() == ".dll"
-                or item.name.startswith("vcruntime") and item.suffix.casefold() == ".dll"
-            ):
-                shutil.copy2(item, stage / item.name)
-        for directory in ("DLLs", "Lib"):
-            source = source_root / directory
-            if not source.is_dir():
-                raise IsolatedPluginWorkerError("isolated plugin runtime is incomplete")
-            shutil.copytree(source, stage / directory)
-        (stage / ".nachuan-runtime-fingerprint").write_text(fingerprint, encoding="ascii")
+        for relative, _size, _digest, source in source_inventory:
+            target = stage / Path(relative)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        stage_inventory, stage_fingerprint = _runtime_inventory(
+            stage,
+            source_executable.name,
+            closed=True,
+        )
+        if (
+            stage_fingerprint != fingerprint
+            or tuple(item[:3] for item in stage_inventory)
+            != tuple(item[:3] for item in source_inventory)
+        ):
+            raise IsolatedPluginWorkerError(
+                "isolated plugin runtime changed during staging"
+            )
+        (stage / _RUNTIME_MARKER).write_text(fingerprint, encoding="ascii")
         try:
             os.replace(stage, destination)
         except OSError:
@@ -560,11 +681,42 @@ def fence_current_process_singleton(
 
 
 def _environment_block(root: Path) -> ctypes.Array[ctypes.c_wchar]:
+    system_root = Path(os.environ.get("SystemRoot", r"C:\Windows")).resolve()
+    system_drive = os.environ.get("SystemDrive") or system_root.drive
+    user_profile = Path(
+        os.environ.get("USERPROFILE") or Path.home()
+    ).resolve()
+    local_app_data = Path(
+        os.environ.get("LOCALAPPDATA") or user_profile / "AppData" / "Local"
+    ).resolve()
+    roaming_app_data = Path(
+        os.environ.get("APPDATA") or user_profile / "AppData" / "Roaming"
+    ).resolve()
     values = {
-        "SystemRoot": os.environ.get("SystemRoot", r"C:\Windows"),
-        "WINDIR": os.environ.get("WINDIR", r"C:\Windows"),
+        "ALLUSERSPROFILE": os.environ.get("ALLUSERSPROFILE")
+        or str(Path(system_drive + "\\") / "ProgramData"),
+        "APPDATA": str(roaming_app_data),
+        "ComSpec": str(system_root / "System32" / "cmd.exe"),
+        "HOMEDRIVE": os.environ.get("HOMEDRIVE") or user_profile.drive,
+        "HOMEPATH": os.environ.get("HOMEPATH")
+        or str(user_profile).removeprefix(user_profile.drive),
+        "LOCALAPPDATA": str(local_app_data),
+        "NUMBER_OF_PROCESSORS": str(os.cpu_count() or 1),
+        "OS": "Windows_NT",
+        "Path": str(system_root / "System32"),
+        "PROCESSOR_ARCHITECTURE": os.environ.get("PROCESSOR_ARCHITECTURE")
+        or platform.machine()
+        or "AMD64",
+        "ProgramData": os.environ.get("ProgramData")
+        or str(Path(system_drive + "\\") / "ProgramData"),
+        "PUBLIC": os.environ.get("PUBLIC")
+        or str(Path(system_drive + "\\") / "Users" / "Public"),
+        "SystemDrive": system_drive,
+        "SystemRoot": str(system_root),
         "TEMP": str(root),
         "TMP": str(root),
+        "USERPROFILE": str(user_profile),
+        "WINDIR": str(system_root),
         "PYTHONIOENCODING": "utf-8",
         "PYTHONUTF8": "1",
     }
@@ -573,16 +725,13 @@ def _environment_block(root: Path) -> ctypes.Array[ctypes.c_wchar]:
     # parent's PATH, tokens, provider keys and arbitrary environment do not
     # cross the broker boundary.
     for key in (
-        "ALLUSERSPROFILE",
-        "APPDATA",
-        "HOMEDRIVE",
-        "HOMEPATH",
-        "LOCALAPPDATA",
-        "ProgramData",
-        "SystemDrive",
+        "COMPUTERNAME",
+        "PROCESSOR_IDENTIFIER",
+        "PROCESSOR_LEVEL",
+        "PROCESSOR_REVISION",
+        "SESSIONNAME",
         "USERDOMAIN",
         "USERNAME",
-        "USERPROFILE",
     ):
         value = os.environ.get(key)
         if value and "\0" not in value:

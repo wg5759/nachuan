@@ -10,6 +10,7 @@ import sqlite3
 import stat
 import time
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -27,6 +28,17 @@ _BUNDLE_FILES = frozenset({"manifest.json", "plugin.py", "sbom.json"})
 _MAX_MANIFEST_BYTES = 64 * 1024
 _MAX_SBOM_BYTES = 256 * 1024
 _MAX_ENTRYPOINT_BYTES = 1024 * 1024
+_STATE_APPLICATION_ID = 1_313_034_313
+_STATE_SCHEMA_VERSION = 1
+_MAX_QUARANTINE_IDENTITIES = 10_000
+_STATE_DDL = """CREATE TABLE isolated_plugin_quarantine (
+                    plugin_id TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    artifact_sha256 TEXT NOT NULL,
+                    reason_code TEXT NOT NULL,
+                    quarantined_at INTEGER NOT NULL,
+                    PRIMARY KEY (plugin_id, version, artifact_sha256)
+                ) WITHOUT ROWID"""
 
 
 class IsolatedPluginError(RuntimeError):
@@ -374,31 +386,92 @@ class SQLiteIsolatedPluginStateStore:
             raise IsolatedPluginContractError("plugin state store path is invalid")
         self._initialise()
 
-    def _connect(self) -> sqlite3.Connection:
+    def _raw_connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5)
         connection.execute("PRAGMA busy_timeout = 5000")
+        connection.execute("PRAGMA trusted_schema = OFF")
         return connection
 
-    def _initialise(self) -> None:
-        with self._connect() as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS isolated_plugin_quarantine (
-                    plugin_id TEXT NOT NULL,
-                    version TEXT NOT NULL,
-                    artifact_sha256 TEXT NOT NULL,
-                    reason_code TEXT NOT NULL,
-                    quarantined_at INTEGER NOT NULL,
-                    PRIMARY KEY (plugin_id, version, artifact_sha256)
-                ) WITHOUT ROWID
-                """
+    def _validate(self, connection: sqlite3.Connection) -> None:
+        application_id = int(connection.execute("PRAGMA application_id").fetchone()[0])
+        user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        rows = connection.execute(
+            """
+            SELECT type, name, tbl_name, sql
+            FROM sqlite_schema
+            WHERE name NOT LIKE 'sqlite_%'
+            ORDER BY type, name
+            """
+        ).fetchall()
+        expected = [
+            (
+                "table",
+                "isolated_plugin_quarantine",
+                "isolated_plugin_quarantine",
+                _STATE_DDL,
             )
-            connection.execute("PRAGMA user_version = 1")
+        ]
+        if (
+            application_id != _STATE_APPLICATION_ID
+            or user_version != _STATE_SCHEMA_VERSION
+            or rows != expected
+            or connection.execute("PRAGMA quick_check").fetchone()[0] != "ok"
+        ):
+            raise IsolatedPluginContractError("plugin state store authority is invalid")
+
+    @contextmanager
+    def _connect(self):
+        connection = self._raw_connect()
+        try:
+            self._validate(connection)
+            yield connection
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def _initialise(self) -> None:
+        connection = self._raw_connect()
+        try:
+            application_id = int(connection.execute("PRAGMA application_id").fetchone()[0])
+            user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+            objects = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'"
+                ).fetchone()[0]
+            )
+            if application_id == 0 and user_version == 0 and objects == 0:
+                with connection:
+                    connection.execute(_STATE_DDL)
+                    connection.execute(f"PRAGMA application_id = {_STATE_APPLICATION_ID}")
+                    connection.execute(f"PRAGMA user_version = {_STATE_SCHEMA_VERSION}")
+            self._validate(connection)
+        finally:
+            connection.close()
 
     def quarantine(self, identity: tuple[str, str, str], reason_code: str) -> None:
         if reason_code not in {"contract", "worker"}:
             raise IsolatedPluginContractError("plugin quarantine reason is invalid")
         with self._connect() as connection:
+            known = connection.execute(
+                """
+                SELECT 1 FROM isolated_plugin_quarantine
+                WHERE plugin_id = ? AND version = ? AND artifact_sha256 = ?
+                """,
+                identity,
+            ).fetchone()
+            if known is None:
+                count = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM isolated_plugin_quarantine"
+                    ).fetchone()[0]
+                )
+                if count >= _MAX_QUARANTINE_IDENTITIES:
+                    raise IsolatedPluginContractError(
+                        "plugin quarantine capacity is exhausted"
+                    )
             connection.execute(
                 """
                 INSERT INTO isolated_plugin_quarantine (

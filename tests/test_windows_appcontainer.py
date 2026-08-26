@@ -18,7 +18,11 @@ from orchestrator.isolated_plugin import (
     isolated_plugin_signing_payload,
     verify_isolated_plugin_bundle,
 )
-from orchestrator.windows_appcontainer import WindowsAppContainerLauncher
+from orchestrator.windows_appcontainer import (
+    WindowsAppContainerLauncher,
+    _environment_block,
+    _materialize_runtime,
+)
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows AppContainer only")
 
@@ -91,6 +95,41 @@ def test_real_appcontainer_executes_one_signed_plugin(tmp_path) -> None:
 
     assert broker.execute(bundle, {"echo": "isolated"}) == {"echo": "isolated"}
     assert launcher.last_attestation is True
+
+
+def test_dedicated_runtime_cache_rejects_stdlib_byte_tampering(tmp_path) -> None:
+    executable = _materialize_runtime(tmp_path / "runtime-cache")
+    target = executable.parent / "Lib" / "json" / "__init__.py"
+    target.write_bytes(target.read_bytes() + b"\n# tampered\n")
+
+    with pytest.raises(IsolatedPluginWorkerError, match="cache"):
+        _materialize_runtime(tmp_path / "runtime-cache")
+
+
+def test_child_environment_has_required_windows_identity_without_parent_secrets(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NACHUAN_SECRET_PROBE", "must-not-cross")
+    for name in ("LOCALAPPDATA", "APPDATA", "ComSpec", "Path"):
+        monkeypatch.delenv(name, raising=False)
+
+    block = _environment_block(tmp_path / "scratch")
+    entries = {
+        key.casefold(): value
+        for key, value in (
+            item.split("=", 1)
+            for item in "".join(block).split("\0")
+            if "=" in item
+        )
+    }
+
+    assert entries["localappdata"]
+    assert entries["appdata"]
+    assert entries["systemroot"]
+    assert entries["comspec"].casefold().endswith("system32\\cmd.exe")
+    assert entries["path"].casefold().endswith("system32")
+    assert "nachuan_secret_probe" not in entries
 
 
 def test_real_appcontainer_denies_host_file_network_and_child_process(tmp_path) -> None:

@@ -1010,10 +1010,25 @@ class ProviderCallLedger:
             return
         deadline = time.monotonic() + _SCHEMA_AUTHORITY_STABILIZE_SECONDS
         delay = 0.025
+        last_rejection: str | None = None
+        rejection_repeats = 0
         while True:
             verdict = self._classify_existing_database()
-            if verdict != "converging":
+            if verdict == "accept":
                 break
+            if verdict == "converging":
+                last_rejection = None
+                rejection_repeats = 0
+            else:
+                rejection_repeats = (
+                    rejection_repeats + 1 if verdict == last_rejection else 1
+                )
+                last_rejection = verdict
+                # A main/WAL private copy can be internally readable yet span
+                # two adjacent schema-commit instants.  Require three matching
+                # read-only classifications before treating drift as stable.
+                if rejection_repeats >= 3:
+                    break
             if time.monotonic() >= deadline:
                 raise sqlite3.OperationalError(
                     "provider-call ledger existing database did not stabilize"

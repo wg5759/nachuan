@@ -329,9 +329,9 @@ Windows 真 AppContainer worker。第三方 Python 不被导入 Engine；内核�
 
 - bundle 只允许 `manifest.json/plugin.py/sbom.json` 三个普通 non-reparse 文件；manifest、SBOM、请求和响应都必须是无重复字段的 canonical JSON；
 - Ed25519 签名绑定精确入口/SBOM SHA-256、publisher key id、版本、capability 和 CPU/内存/请求/响应/墙钟限额；未知 publisher、改字节、多文件或撤销身份均在 worker 前拒绝；
-- broker 只把验过的 `plugin.py` 字节复制到每次临时执行根；worker 以 `-I -S -B`、封闭环境和四字节长度帧只处理一个 JSON 请求，不在 argv 携带凭据或客户目标；
-- Windows 启动器用 `SECURITY_CAPABILITIES` 创建无 capability AppContainer，恢复线程前反查 `TokenIsAppContainer=1`；未授网络 capability，仅给专用 CPython 运行时缓存和本次执行根最小 ACL；
-- 子进程以 `CREATE_SUSPENDED` 起动，先纳入 kill-on-close Job Object 再恢复；Job 强制活动进程数 1、CPU 时间和内存上限，墙钟超时终止整个 Job。Windows `CHILD_PROCESS_POLICY` 会使 CPython 3.12 在入口前以 `0xC0000142` 退出，因此不做假兼容，改由已实验的单进程 Job 限额封锁；
+- broker 只把验过的 `plugin.py` 字节复制到每次临时执行根；worker 以 `-I -S -B`、封闭环境和四字节长度帧只处理一个 JSON 请求，不在 argv 携带凭据或客户目标；可信 worker 先发固定 `ready` 控制帧，broker 在此后才发客户请求并开始计算插件墙钟限额，首次运行时准备不会偷用插件执行时间；
+- Windows 启动器用 `SECURITY_CAPABILITIES` 创建无 capability AppContainer，恢复线程前反查 `TokenIsAppContainer=1` 且精确匹配纳川固定 AppContainer SID；未授网络 capability，仅给专用 CPython 运行时缓存和本次执行根最小 ACL。运行时缓存是文件闭集，每次按相对路径、大小和 SHA-256 重算全部标准库/DLL，加文件、删文件或改一字节均拒绝；
+- 子进程以 `CREATE_SUSPENDED` 起动，先纳入 kill-on-close Job Object 再恢复；源码 worker 强制活动进程数 1、CPU 时间和内存上限，墙钟超时终止整个 Job。PyInstaller 单文件 Engine 允许一个受审 bootloader 父子链，但冻结 worker 在处理插件前再将自身纳入内层单进程/CPU/内存 Job，真冻结 Engine 样例已证明插件不能拉子进程。Windows `CHILD_PROCESS_POLICY` 会使 CPython 3.12 在入口前以 `0xC0000142` 退出，因此不做假兼容，改由上述已实验 Job 封锁；
 - 协议错误、worker 异常或超时会把精确签名身份写入独立 SQLite quarantine，重启 broker 也不会自动复活；新版本/新哈希不会被旧身份误伤；
 - 内核中只挂载 builtin `isolated.plugin.execute` 代理，第三方 manifest 仍不能 in-process mount；服务借用期间禁止卸载，释放后注册和引用全部清理；
 - 当前本机证据为核心/worker/AppContainer/proxy 27 项与插件/发行相邻 89 项全绿，恶意样例确认插件能正常 import `socket/subprocess`，但不能读宿主哨兵文件、写外部文件、连本机 TCP 或拉起子进程。它不等于插件市场、Linux/macOS 隔离、出站白名单或动态第三方 UI 已完成。

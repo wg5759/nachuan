@@ -1965,6 +1965,38 @@ def test_concurrent_cold_start_is_reliable_and_keeps_one_schema(tmp_path) -> Non
     assert "terminal_reserve" in columns
 
 
+def test_transient_preflight_schema_drift_is_repolled_before_rejection(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    path = tmp_path / "usage.db"
+    connection = sqlite3.connect(path)
+    connection.execute("VACUUM")
+    connection.close()
+    original = ProviderCallLedger._classify_existing_database
+    calls = 0
+
+    def transient_once(self) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return "schema_drift"
+        return original(self)
+
+    monkeypatch.setattr(
+        ProviderCallLedger,
+        "_classify_existing_database",
+        transient_once,
+    )
+
+    ledger = ProviderCallLedger(path, required=True)
+    try:
+        assert ledger.list_calls() == []
+    finally:
+        ledger.close()
+    assert calls >= 2
+
+
 def test_financial_summary_keeps_partial_cost_and_tokens_unknown(tmp_path) -> None:
     ledger = ProviderCallLedger(tmp_path / "usage.db", required=True)
     identity = ProviderRouteIdentity(

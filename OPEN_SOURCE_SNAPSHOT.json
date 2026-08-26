@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260826-59",
+  "candidate_id": "nachuan-source-alpha-20260826-62",
   "file_count": 895,
   "files": [
     {
@@ -1914,8 +1914,8 @@
     },
     {
       "path": "docs/NACHUAN_PLUGIN_KERNEL_STRATEGY.md",
-      "sha256": "bf9c252de32a4ca2adeb0eeb57332035e3d1595a499ac5ab49be12185fbcccfa",
-      "size": 24908
+      "sha256": "75b737ae5b859cb3b227f866d5f7f55cdb7873a9b53e506c3bd8445f0f5a20f5",
+      "size": 25489
     },
     {
       "path": "docs/OPEN_SOURCE_STRATEGY_OPENCLAW_COMPARISON.md",
@@ -1929,8 +1929,8 @@
     },
     {
       "path": "docs/THIRD_PARTY_SECURITY.md",
-      "sha256": "7923c15932f01cf50ad7eab3d58168ff928ba12efe2bc37088efa8300a0e2b29",
-      "size": 47676
+      "sha256": "7ae4ceeac4f9ef10a18fa94f51d5fa36a4ffb3b68d6711fb5ec3ed9950a26288",
+      "size": 47914
     },
     {
       "path": "docs/adr/0001-unified-turn-lifecycle.md",
@@ -2364,8 +2364,8 @@
     },
     {
       "path": "gateway/provider_call_ledger.py",
-      "sha256": "9abbbc038cfa5348d1455fcce035a61ad2018e5bee4fe606b1a7f5ec6f73dc29",
-      "size": 127708
+      "sha256": "a6564133bf6843740bb35b80dd08149792220e9c252621278703323139990a12",
+      "size": 128388
     },
     {
       "path": "gateway/provider_plugins.py",
@@ -2694,8 +2694,8 @@
     },
     {
       "path": "orchestrator/isolated_plugin.py",
-      "sha256": "a72b0af73e95d37c915a475af7e8b23942c9ac7bdd98dd7ea0679d2781ecb544",
-      "size": 20726
+      "sha256": "e0157edc2f04d0e741d963e188152071e9e480b34efa194142a9d879389c18fd",
+      "size": 23613
     },
     {
       "path": "orchestrator/isolated_plugin_proxy.py",
@@ -2819,8 +2819,8 @@
     },
     {
       "path": "orchestrator/windows_appcontainer.py",
-      "sha256": "e8c8aeec9e56a7780a2558caa8454bd5826a37df491af5105d0ea79ac8dbafa3",
-      "size": 34686
+      "sha256": "2c360ec339dfec0caeebd99ea383c45f7dc057b0fe6432824ba1ee91fcf76184",
+      "size": 40683
     },
     {
       "path": "orchestrator/workflow_plugins.py",
@@ -3679,8 +3679,8 @@
     },
     {
       "path": "tests/test_isolated_plugin_contract.py",
-      "sha256": "91b7681b5c0029d1148f44956023b95a13cc3d3a19f08a4090b1115c39b7b969",
-      "size": 7077
+      "sha256": "b73ac3603d8cff385bddaa20efaa66ba4f2dceeb56da02bd11c317a7108b562b",
+      "size": 7668
     },
     {
       "path": "tests/test_isolated_plugin_proxy.py",
@@ -4049,8 +4049,8 @@
     },
     {
       "path": "tests/test_provider_call_ledger.py",
-      "sha256": "816283a3cff331c55315665cdc66628de8d078d021e1c153cbba8ced8b172fb8",
-      "size": 77771
+      "sha256": "837c6706745ec84ff97e3c869dad5e2f40284e0ba281cc9d5b3d992333312206",
+      "size": 78543
     },
     {
       "path": "tests/test_provider_call_scope_coverage.py",
@@ -4349,8 +4349,8 @@
     },
     {
       "path": "tests/test_windows_appcontainer.py",
-      "sha256": "1e6c59e804b698834b561ef4db7d94294b678c8bb6423eca08c25d1b285c98bd",
-      "size": 7667
+      "sha256": "56d3edcc2c33fab6df3ca54d8846b31ef8b25560a89a8d950ebd22ca11136454",
+      "size": 8961
     },
     {
       "path": "tests/test_workflow_plugin_events.py",
