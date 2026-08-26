@@ -425,6 +425,7 @@
   },
   "conn": {
     "title": "Connection Center",
+    "eyebrow": "Models and accounts",
     "simpleTitle": "Verify a connection, then keep using Nachuan Auto",
     "simpleHint": "Common providers usually need only an API key and Connect. Nachuan automatically selects and verifies one recommended chat model. A few providers also require a model ID or official sign-in; technical fields stay under Advanced.",
     "quick": {
@@ -507,6 +508,8 @@
     "regionIntl": "International",
     "regionLocal": "Local",
     "localTitle": "Local models (auto-detect)",
+    "localDetectHint": "Discover running Ollama or compatible services on this device",
+    "localModelCount": "{{n}} models found",
     "detect": "Detect local",
     "detecting": "Detecting…",
     "noLocal": "No local server found (start Ollama / LM Studio, then detect)",
@@ -516,6 +519,15 @@
     "localConnectRejected": "The local service failed connection verification and was not saved.",
     "localConnectFail": "The local connection result could not be confirmed. Refresh to verify before retrying.",
     "connect": "Connect",
+    "manage": "Manage",
+    "cancel": "Collapse",
+    "finishConnection": "Finish connection",
+    "loginHelp": "View sign-in steps",
+    "hideLoginHelp": "Hide sign-in steps",
+    "loginHelpHint": "Run this one command in PowerShell, finish authorization on the official page, then return here and refresh status.",
+    "apiAccountType": "API account",
+    "localAccountType": "Local service",
+    "providerDefaultHint": "Connect this service to select and use its models in Nachuan.",
     "reconnect": "Reconnect",
     "pull": "Pull models",
     "pulled": "Pulled {{n}} models",
@@ -529,8 +541,9 @@
     "kimiFailureTextContract": "The Kimi Code CLI protocol is incompatible. Update the official CLI, run {{cmd}}, then connect again.",
     "kimiFailureUnavailable": "The Kimi Code connector is unavailable. Check Diagnostics and do not submit repeatedly.",
     "subscription": {
-      "title": "Personal subscriptions (official CLI)",
-      "hint": "Status comes from the Engine's safe public interface. This view only displays status; it never stores sign-in credentials or signs in for you.",
+      "title": "Personal subscriptions (official accounts)",
+      "hint": "Connect Codex and Kimi Code here. Sign-in credentials remain managed by the official tools.",
+      "accountType": "Personal subscription",
       "refresh": "Refresh status",
       "loading": "Reading public status…",
       "error": "Subscription status cannot be verified. Check that the Engine is running, then refresh. An unverified subscription is never enabled.",
@@ -559,16 +572,16 @@
         "unavailable": "Unavailable"
       },
       "next": {
-        "install": "Next: install the official {{provider}} CLI. For Codex, run nachuan codex bind in PowerShell, restart the Engine, then refresh.",
-        "probeInstallation": "Next: the {{provider}} CLI installation is trusted. It will not be reported as signed in or enter Nachuan routing until the isolated status probe passes.",
-        "login": "Next: run {{command}} in PowerShell, complete official sign-in, then select Refresh status.",
-        "finishLogin": "Next: finish official device-code authorization in the browser, then select Refresh status.",
-        "verify": "Next: click Connect on the Codex card below. Nachuan will run one minimal text capability check, then add the model to the selector.",
-        "ready": "Next: the status is ready. Use the matching model after it appears in the model selector.",
-        "installOfficial": "Next: remove this CLI, install the official {{provider}} CLI, then refresh status.",
-        "update": "Next: update the official {{provider}} CLI to a supported version, then refresh status.",
-        "entitlement": "Next: verify the subscription and entitlement in the official {{provider}} account, then refresh status.",
-        "retry": "Next: refresh later. If this continues, update or restart the official {{provider}} CLI."
+        "install": "Install the official {{provider}} tool first, then return here and refresh.",
+        "probeInstallation": "The official tool is installed and waiting for a safe status check.",
+        "login": "Complete official account sign-in, then return here and refresh status.",
+        "finishLogin": "Finish official authorization in the browser, then return here and refresh.",
+        "verify": "The account is signed in. Select Finish connection for a minimal capability check.",
+        "ready": "The account is ready. Finish the connection if its model is not yet visible.",
+        "installOfficial": "The current tool failed trust verification. Install the official {{provider}} tool.",
+        "update": "Update the official {{provider}} tool to a supported version.",
+        "entitlement": "Verify the subscription and usage entitlement in the official {{provider}} account.",
+        "retry": "Status is temporarily unavailable. Refresh later; update or restart the official tool only if it persists."
       }
     }
   },

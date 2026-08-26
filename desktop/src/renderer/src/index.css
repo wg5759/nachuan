@@ -153,8 +153,7 @@ button {
   letter-spacing: .04em;
 }
 
-.nachuan-icon-button,
-.nachuan-creative-trigger {
+.nachuan-icon-button {
   display: inline-flex;
   height: 34px;
   align-items: center;
@@ -172,8 +171,7 @@ button {
   padding: 0;
 }
 
-.nachuan-icon-button svg,
-.nachuan-creative-trigger svg {
+.nachuan-icon-button svg {
   width: 18px;
   height: 18px;
 }
@@ -185,23 +183,6 @@ button {
 
 .nachuan-navigation-toggle {
   margin-right: 1px;
-}
-
-.nachuan-creative-trigger {
-  gap: 7px;
-  padding: 0 12px;
-  border-color: var(--nc-line);
-  background: var(--nc-surface);
-  box-shadow: var(--nc-shadow-sm);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.nachuan-creative-trigger:hover,
-.nachuan-creative-trigger.is-active {
-  border-color: #cdd0ff;
-  color: var(--nc-brand-strong);
-  background: var(--nc-brand-soft);
 }
 
 .nachuan-model-control {
@@ -231,6 +212,519 @@ button {
 .nachuan-engine-status--online > span {
   background: var(--nc-positive);
   box-shadow: 0 0 0 3px rgb(36 134 93 / 11%);
+}
+
+/* ── Connection center: customer-facing progressive disclosure. ──────── */
+.nachuan-connections {
+  height: 100%;
+  overflow: auto;
+  background:
+    radial-gradient(circle at 76% -10%, rgb(85 87 217 / 8%), transparent 34%),
+    var(--nc-canvas);
+}
+
+.nachuan-connections-content {
+  display: grid;
+  width: min(1120px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 34px 0 64px;
+  gap: 22px;
+}
+
+.nachuan-connections-header,
+.nachuan-connection-section-header,
+.nachuan-provider-card-head,
+.nachuan-provider-actions,
+.nachuan-connection-inline-field {
+  display: flex;
+  align-items: center;
+}
+
+.nachuan-connections-header,
+.nachuan-connection-section-header,
+.nachuan-provider-card-head {
+  justify-content: space-between;
+}
+
+.nachuan-connections-header {
+  gap: 28px;
+}
+
+.nachuan-connections-header h2 {
+  margin: 5px 0 7px;
+  color: var(--nc-ink);
+  font-size: 26px;
+  line-height: 1.2;
+  letter-spacing: -.03em;
+}
+
+.nachuan-connections-header p {
+  max-width: 690px;
+  margin: 0;
+  color: var(--nc-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.nachuan-connection-eyebrow,
+.nachuan-connection-region-title {
+  color: var(--nc-brand-strong);
+  font-size: 11px;
+  font-weight: 720;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.nachuan-connections-tools,
+.nachuan-connection-methods,
+.nachuan-provider-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.nachuan-connections-tools {
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.nachuan-connection-search,
+.nachuan-connection-input {
+  height: 38px;
+  border: 1px solid var(--nc-line-strong);
+  border-radius: 10px;
+  outline: none;
+  color: var(--nc-ink);
+  background: var(--nc-surface);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.nachuan-connection-search {
+  width: 205px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.nachuan-connection-input {
+  width: 100%;
+  padding: 0 11px;
+  font-size: 13px;
+}
+
+.nachuan-connection-search:focus,
+.nachuan-connection-input:focus {
+  border-color: #aeb0f2;
+  box-shadow: 0 0 0 3px rgb(85 87 217 / 10%);
+}
+
+.nachuan-connection-input.is-mono {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+}
+
+.nachuan-connection-primary-button,
+.nachuan-connection-secondary-button,
+.nachuan-connection-danger-button,
+.nachuan-connection-method-button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 13px;
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.nachuan-connection-primary-button {
+  border: 1px solid var(--nc-brand);
+  color: white;
+  background: var(--nc-brand);
+  box-shadow: 0 4px 12px rgb(85 87 217 / 18%);
+}
+
+.nachuan-connection-primary-button:hover {
+  border-color: var(--nc-brand-strong);
+  background: var(--nc-brand-strong);
+}
+
+.nachuan-connection-secondary-button,
+.nachuan-connection-method-button {
+  border: 1px solid var(--nc-line-strong);
+  color: var(--nc-ink-soft);
+  background: var(--nc-surface);
+}
+
+.nachuan-connection-secondary-button:hover,
+.nachuan-connection-method-button:hover {
+  border-color: #c6c8f4;
+  color: var(--nc-brand-strong);
+  background: var(--nc-brand-soft);
+}
+
+.nachuan-connection-danger-button {
+  border: 1px solid #efcccc;
+  color: var(--nc-danger);
+  background: #fffafa;
+}
+
+.nachuan-connection-primary-button:disabled,
+.nachuan-connection-secondary-button:disabled,
+.nachuan-connection-danger-button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+.nachuan-connection-quick {
+  display: flex;
+  min-height: 112px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 21px 22px;
+  border: 1px solid #dfe1ff;
+  border-radius: 16px;
+  background: linear-gradient(120deg, #f5f5ff, #fbfbff 58%, #f4f8ff);
+  box-shadow: var(--nc-shadow-sm);
+}
+
+.nachuan-connection-quick.is-ready {
+  border-color: #d9eee4;
+  background: linear-gradient(120deg, #f2fbf6, #fbfefc);
+}
+
+.nachuan-connection-quick-copy {
+  min-width: 210px;
+}
+
+.nachuan-connection-quick-title {
+  margin-top: 5px;
+  color: var(--nc-ink);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.nachuan-connection-quick-hint {
+  margin-top: 5px;
+  color: var(--nc-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.nachuan-connection-methods {
+  justify-content: flex-end;
+}
+
+.nachuan-connection-method-button {
+  min-height: 38px;
+  padding: 0 14px;
+}
+
+.nachuan-subscription-section,
+.nachuan-connection-region {
+  display: grid;
+  gap: 13px;
+}
+
+.nachuan-subscription-section {
+  padding: 20px;
+  border: 1px solid var(--nc-line);
+  border-radius: 16px;
+  background: rgb(255 255 255 / 78%);
+  box-shadow: var(--nc-shadow-sm);
+}
+
+.nachuan-connection-section-header {
+  gap: 18px;
+}
+
+.nachuan-connection-section-title {
+  color: var(--nc-ink);
+  font-size: 15px;
+  font-weight: 720;
+}
+
+.nachuan-connection-section-hint,
+.nachuan-provider-description,
+.nachuan-connection-loading,
+.nachuan-connection-field-hint {
+  color: var(--nc-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.nachuan-connection-section-hint {
+  margin-top: 4px;
+}
+
+.nachuan-subscription-grid,
+.nachuan-connections-local-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.nachuan-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(390px, 100%), 1fr));
+  gap: 12px;
+}
+
+.nachuan-subscription-card,
+.nachuan-provider-card,
+.nachuan-local-card {
+  min-width: 0;
+  padding: 17px;
+  border: 1px solid var(--nc-line);
+  border-radius: 14px;
+  background: var(--nc-surface);
+  box-shadow: 0 1px 2px rgb(28 31 46 / 3%);
+  transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.nachuan-subscription-card:hover,
+.nachuan-provider-card:hover,
+.nachuan-provider-card.is-open,
+.nachuan-local-card:hover {
+  border-color: #d2d4f1;
+  box-shadow: 0 7px 22px rgb(38 41 65 / 7%);
+}
+
+.nachuan-local-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.nachuan-local-model-list {
+  display: grid;
+  gap: 3px;
+}
+
+.nachuan-local-model-row,
+.nachuan-local-server-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 0;
+  border-top: 1px solid var(--nc-line);
+}
+
+.nachuan-local-model-row:first-child,
+.nachuan-local-server-row:first-of-type {
+  border-top: 0;
+}
+
+.nachuan-local-model-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
+.nachuan-local-model-copy strong {
+  overflow: hidden;
+  color: var(--nc-ink-soft);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nachuan-local-model-copy small {
+  overflow: hidden;
+  color: var(--nc-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nachuan-local-status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 999px;
+  background: #d7d9e2;
+}
+
+.nachuan-local-status-dot.is-downloaded {
+  background: #9499a8;
+}
+
+.nachuan-local-status-dot.is-active {
+  display: inline-block;
+  margin-right: 7px;
+  background: var(--nc-positive);
+  box-shadow: 0 0 0 3px rgb(36 134 93 / 10%);
+}
+
+.nachuan-provider-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+}
+
+.nachuan-provider-mark {
+  display: grid;
+  width: 35px;
+  height: 35px;
+  flex: 0 0 35px;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--nc-brand-strong);
+  background: var(--nc-brand-soft);
+  font-size: 14px;
+  font-weight: 760;
+}
+
+.nachuan-provider-name {
+  overflow: hidden;
+  color: var(--nc-ink);
+  font-size: 14px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nachuan-provider-kind {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--nc-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nachuan-provider-description {
+  display: -webkit-box;
+  min-height: 38px;
+  margin: 13px 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.nachuan-connection-badge {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.nachuan-connection-badge--ready {
+  color: #18734d;
+  background: #e9f7ef;
+}
+
+.nachuan-connection-badge--warning {
+  color: #94600e;
+  background: #fff5db;
+}
+
+.nachuan-connection-badge--idle {
+  color: #686d7b;
+  background: #f0f1f5;
+}
+
+.nachuan-provider-actions-wrap,
+.nachuan-provider-editor,
+.nachuan-provider-advanced {
+  display: grid;
+  gap: 11px;
+}
+
+.nachuan-provider-editor {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid var(--nc-line);
+}
+
+.nachuan-provider-advanced,
+.nachuan-login-help,
+.nachuan-connection-note {
+  padding: 12px;
+  border: 1px solid var(--nc-line);
+  border-radius: 10px;
+  background: var(--nc-surface-soft);
+}
+
+.nachuan-login-help {
+  display: grid;
+  gap: 7px;
+  color: var(--nc-muted);
+  font-size: 11px;
+}
+
+.nachuan-login-help code {
+  overflow: auto;
+  padding: 8px 9px;
+  border-radius: 7px;
+  color: var(--nc-ink-soft);
+  background: var(--nc-surface);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  white-space: nowrap;
+}
+
+.nachuan-connection-field {
+  display: grid;
+  gap: 6px;
+  color: var(--nc-ink-soft);
+  font-size: 12px;
+}
+
+.nachuan-connection-inline-field {
+  min-width: 0;
+  gap: 8px;
+}
+
+.nachuan-connection-inline-field .nachuan-connection-input {
+  min-width: 0;
+  flex: 1;
+}
+
+.nachuan-connection-model-list {
+  display: grid;
+  max-height: 180px;
+  gap: 7px;
+  overflow: auto;
+}
+
+.nachuan-connection-model-list label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--nc-muted);
+  font-size: 11px;
+}
+
+.nachuan-connection-model-id {
+  color: var(--nc-ink-soft);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+.nachuan-connection-message,
+.nachuan-connection-warning,
+.nachuan-connection-error {
+  margin-top: 9px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.nachuan-connection-message {
+  color: var(--nc-positive);
+}
+
+.nachuan-connection-warning {
+  color: var(--nc-warning);
+}
+
+.nachuan-connection-error {
+  color: var(--nc-danger);
 }
 
 .nachuan-engine-status--degraded > span,
@@ -1290,14 +1784,43 @@ button {
 
   .nachuan-brand-copy,
   .nachuan-model-control,
-  .nachuan-creative-trigger span,
   .nachuan-browser-trigger {
     display: none;
   }
 
-  .nachuan-creative-trigger {
-    width: 34px;
-    padding: 0;
+  .nachuan-connections-content {
+    width: min(100% - 24px, 680px);
+    padding-top: 22px;
+  }
+
+  .nachuan-connections-header,
+  .nachuan-connection-quick {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .nachuan-connections-tools,
+  .nachuan-connection-search {
+    width: 100%;
+  }
+
+  .nachuan-connections-tools .nachuan-connection-secondary-button {
+    flex: 0 0 auto;
+  }
+
+  .nachuan-connection-search {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .nachuan-connection-methods {
+    justify-content: flex-start;
+  }
+
+  .nachuan-subscription-grid,
+  .nachuan-provider-grid,
+  .nachuan-connections-local-grid {
+    grid-template-columns: 1fr;
   }
 
   .nachuan-left-pane {

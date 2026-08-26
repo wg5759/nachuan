@@ -425,6 +425,7 @@
   },
   "conn": {
     "title": "连接中心",
+    "eyebrow": "模型与账号",
     "simpleTitle": "先安全验证接入，之后默认使用“纳川·自动”",
     "simpleHint": "常用厂商通常只需粘贴 API Key 并连接；纳川会自动挑选并验证 1 个推荐聊天模型。少数厂商还需填写模型 ID 或完成官方登录，技术参数在高级设置中。",
     "quick": {
@@ -507,6 +508,8 @@
     "regionIntl": "海外",
     "regionLocal": "本地",
     "localTitle": "本地模型（自动探测）",
+    "localDetectHint": "自动发现本机已运行的 Ollama 或兼容服务",
+    "localModelCount": "发现 {{n}} 个模型",
     "detect": "探测本地",
     "detecting": "探测中…",
     "noLocal": "未发现本地服务（启动 Ollama / LM Studio 后再探）",
@@ -516,6 +519,15 @@
     "localConnectRejected": "本地服务未通过连接验证，未写入连接。",
     "localConnectFail": "无法确认本地连接结果，请刷新后核对；不要重复点击。",
     "connect": "连接",
+    "manage": "管理",
+    "cancel": "收起",
+    "finishConnection": "完成连接",
+    "loginHelp": "查看登录方法",
+    "hideLoginHelp": "收起登录方法",
+    "loginHelpHint": "在 PowerShell 运行下面这一条命令，按官方页面完成授权后，再回到这里刷新状态。",
+    "apiAccountType": "API 账号",
+    "localAccountType": "本地服务",
+    "providerDefaultHint": "连接后即可在纳川中选择并使用该模型服务。",
     "reconnect": "重新接入",
     "pull": "拉取模型",
     "pulled": "拉到 {{n}} 个模型",
@@ -529,8 +541,9 @@
     "kimiFailureTextContract": "Kimi Code CLI 协议不兼容；请更新官方 CLI，再运行 {{cmd}} 后连接。",
     "kimiFailureUnavailable": "Kimi Code 连接器暂不可用；请到诊断中心查看详情，不要连续重复提交。",
     "subscription": {
-      "title": "个人订阅（官方 CLI）",
-      "hint": "状态来自引擎的安全公开接口；这里只显示状态，不会代替你登录或保存登录凭据。",
+      "title": "个人订阅（官方账号）",
+      "hint": "Codex 和 Kimi Code 在这里统一连接；登录凭据仍由官方工具保管。",
+      "accountType": "个人订阅账号",
       "refresh": "刷新状态",
       "loading": "正在读取公开状态…",
       "error": "暂时无法核验订阅状态；确认引擎运行后再刷新。未核验前不会启用订阅连接。",
@@ -559,16 +572,16 @@
         "unavailable": "暂不可用"
       },
       "next": {
-        "install": "下一步：先安装官方 {{provider}} CLI；Codex 安装后在 PowerShell 运行 nachuan codex bind，再重启引擎并刷新状态。",
-        "probeInstallation": "下一步：{{provider}} CLI 已通过安装校验；完成独立状态探测前不会误报登录状态或进入纳川路由。",
-        "login": "下一步：在 PowerShell 运行 {{command}}，完成官方登录后点“刷新状态”。",
-        "finishLogin": "下一步：在浏览器完成官方设备码授权，然后点“刷新状态”。",
-        "verify": "下一步：在下方 Codex 连接卡点击“连接”，纳川会做一次最小文本能力核验；成功后模型进入选择器。",
-        "ready": "下一步：状态已就绪；在模型选择器出现对应模型后即可使用。",
-        "installOfficial": "下一步：移除当前 CLI，改装官方 {{provider}} CLI 后刷新状态。",
-        "update": "下一步：更新官方 {{provider}} CLI 到受支持版本后刷新状态。",
-        "entitlement": "下一步：在官方 {{provider}} 账户确认订阅与使用权限，再刷新状态。",
-        "retry": "下一步：稍后刷新；若仍异常，请更新或重新启动官方 {{provider}} CLI。"
+        "install": "需要先安装官方 {{provider}} 工具，安装完成后回到这里刷新。",
+        "probeInstallation": "官方工具已安装，正在等待安全状态核验。",
+        "login": "请完成官方账号登录，完成后回到这里刷新状态。",
+        "finishLogin": "请在浏览器完成官方授权，完成后回到这里刷新。",
+        "verify": "账号已登录，点击“完成连接”做一次最小能力核验。",
+        "ready": "账号状态正常，可以直接使用；如模型尚未出现，请完成连接。",
+        "installOfficial": "当前工具未通过信任校验，请改用官方 {{provider}} 工具。",
+        "update": "请将官方 {{provider}} 工具更新到受支持版本。",
+        "entitlement": "请在官方 {{provider}} 账户确认订阅与使用权限。",
+        "retry": "状态暂时异常，请稍后刷新；持续异常时再更新或重启官方工具。"
       }
     }
   },

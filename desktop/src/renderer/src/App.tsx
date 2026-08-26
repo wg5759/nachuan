@@ -535,7 +535,6 @@ export default function App(): React.ReactNode {
   return (
     <div className="nachuan-root h-full flex flex-col">
       <AppHeader
-        creativeOpen={creativeOpen}
         onToggleNavigation={() => {
           if (window.matchMedia('(max-width: 760px)').matches) {
             setMobileNavigationOpen((open) => !open)
@@ -543,16 +542,6 @@ export default function App(): React.ReactNode {
             toggle(leftRef.current)
           }
         }}
-        onToggleCreative={() => {
-          if (creativeOpen) {
-            setCreativeOpen(false)
-          } else {
-            setView('chat')
-            closeBrowser()
-            setCreativeOpen(true)
-          }
-        }}
-        onOpenSettings={() => selectPrimary('settings')}
         onToggleBrowser={toggleBrowser}
       />
       <div
