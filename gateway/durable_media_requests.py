@@ -25,6 +25,8 @@ from typing import Any, Callable, Literal
 
 from gateway.paid_media_asset_protocol import (
     RESULT_SCHEMA as PAID_MEDIA_ASSET_RESULT_SCHEMA,
+)
+from gateway.paid_media_asset_protocol import (
     PaidMediaAssetProtocolError,
     asset_token_hash,
     canonical_asset_result,
@@ -32,7 +34,7 @@ from gateway.paid_media_asset_protocol import (
     create_asset_token,
     parse_asset_result,
 )
-
+from gateway.sqlite_runtime import enable_wal_with_deadline
 
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 _VIDEO_ALIAS_RE = re.compile(r"^nvt1_[0-9a-f]{64}$")
@@ -1249,17 +1251,19 @@ class DurableMediaRequestStore:
                     )
                 self._configure_page_budget(connection)
                 connection.commit()
-                mode = connection.execute("PRAGMA journal_mode=WAL").fetchone()
-                if not mode or str(mode[0]).casefold() != "wal":
-                    raise sqlite3.DatabaseError(
-                        "durable media request store requires WAL mode"
-                    )
+                enable_wal_with_deadline(
+                    connection,
+                    error_message="durable media request store requires WAL mode",
+                )
                 connection.execute("PRAGMA synchronous=FULL")
                 check = connection.execute("PRAGMA quick_check").fetchone()
                 if not check or check[0] != "ok":
                     raise sqlite3.DatabaseError("durable media request database is corrupt")
             self._keeper = self._connect(check_same_thread=False)
-            self._keeper.execute("PRAGMA journal_mode=WAL")
+            enable_wal_with_deadline(
+                self._keeper,
+                error_message="durable media request store requires WAL mode",
+            )
             self._keeper.execute("BEGIN IMMEDIATE")
             try:
                 self._validate_schema(self._keeper)

@@ -1,6 +1,6 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260826-50",
-  "file_count": 876,
+  "candidate_id": "nachuan-source-alpha-20260826-51",
+  "file_count": 877,
   "files": [
     {
       "path": ".claude/commands/xreview.md",
@@ -1934,8 +1934,8 @@
     },
     {
       "path": "docs/adr/0007-bounded-conversation-and-turn-receipts.md",
-      "sha256": "549d36580b28374b1d347d25f913bb681475578c9e7704331cd27f570aed13dd",
-      "size": 6229
+      "sha256": "6e13947c491ef1cc4b44ac6b08c14d926da1f406feb84a67184085b2a6b1930f",
+      "size": 7186
     },
     {
       "path": "docs/adr/0008-installation-epoch-root.md",
@@ -2009,8 +2009,8 @@
     },
     {
       "path": "gateway/admission.py",
-      "sha256": "159bebf292dad2f06381a1582eabd3de258ef9c84cc974b8664da7de1b62912e",
-      "size": 35561
+      "sha256": "c2bf20252df60ef61c36c9d13c9091951895b741464a3c37971c1d5ffffa70d1",
+      "size": 35753
     },
     {
       "path": "gateway/agent_contract.py",
@@ -2054,8 +2054,8 @@
     },
     {
       "path": "gateway/bridge_protocol.py",
-      "sha256": "b51bc1b9930f6ceaccde80b3eec7e57487f74fe77c63075c296cb928a517372d",
-      "size": 69154
+      "sha256": "8b9118824f774240c7e914e4cf72733af703d81fd2b9219f63628524c3aa387b",
+      "size": 69118
     },
     {
       "path": "gateway/catalog.py",
@@ -2119,8 +2119,8 @@
     },
     {
       "path": "gateway/durable_media_requests.py",
-      "sha256": "3585015d8f1e9deed37421ebd4142df1b98d9f27f8c84f7348de04f724e739a6",
-      "size": 266890
+      "sha256": "b45f8d7807482c2bf08da0ed082f2210a3183888e9cec50005deb4f0095755ee",
+      "size": 266987
     },
     {
       "path": "gateway/enterprise_authz.py",
@@ -2329,13 +2329,13 @@
     },
     {
       "path": "gateway/privacy_rights.py",
-      "sha256": "9eb74adb42af27412f636194318158e81b68d920f196ada0ff29b2ae32d09445",
-      "size": 60741
+      "sha256": "7c471d0d740fd3d47fedce7eda14d49c8b60d5101adab700df2f0a8bb0a88d1a",
+      "size": 59958
     },
     {
       "path": "gateway/provider_call_ledger.py",
-      "sha256": "ee28113e020eba397338735e64a3a236a5571ec58ee777c937945470960ead3b",
-      "size": 127707
+      "sha256": "9abbbc038cfa5348d1455fcce035a61ad2018e5bee4fe606b1a7f5ec6f73dc29",
+      "size": 127708
     },
     {
       "path": "gateway/provider_plugins.py",
@@ -2458,6 +2458,11 @@
       "size": 9004
     },
     {
+      "path": "gateway/sqlite_runtime.py",
+      "sha256": "045c9eb123a8b090861af2f4cf7eb259328e3f277afd0ebb46056ed2615c2839",
+      "size": 3658
+    },
+    {
       "path": "gateway/streaming.py",
       "sha256": "189f88804c3883938d223c6e52e51ce6251ffbd787c55fad7fa02111a878b9f8",
       "size": 661
@@ -2529,8 +2534,8 @@
     },
     {
       "path": "gateway/weixin_idempotency.py",
-      "sha256": "aa0a49b5937e479f791234c695ffc999d8829c71a5ce5537838135c8df2a1aa2",
-      "size": 74299
+      "sha256": "99dd55c8a94932eb23d0295afcee7ee6e795ec1f3d3ef2d9e3dc2d081ec7df1e",
+      "size": 74287
     },
     {
       "path": "gateway/weixin_state_family_guard.py",
@@ -2554,8 +2559,8 @@
     },
     {
       "path": "orchestrator/agent.py",
-      "sha256": "86ce2250f4a2a477fd574fa54e5ece7e71cd131d54ab1dcbf13bb63a478402e1",
-      "size": 148628
+      "sha256": "6b4cd00465f44d324d75b8d8e45245b396a6f6b2387599caf3cae525c9850007",
+      "size": 148309
     },
     {
       "path": "orchestrator/agent_runner.py",
@@ -2659,8 +2664,8 @@
     },
     {
       "path": "orchestrator/ledger.py",
-      "sha256": "74598748bf2a86fd6e56bfe14290c6f6a99e00527f6d65590d3cfeb1db9f0145",
-      "size": 98202
+      "sha256": "f4a5716e32a80213f748f4c7f0514c1a77bb8814db6d74ab3d663c6e10896c05",
+      "size": 98204
     },
     {
       "path": "orchestrator/media.py",
@@ -2749,8 +2754,8 @@
     },
     {
       "path": "orchestrator/undo_receipts.py",
-      "sha256": "f9e033a5e0aeeef634cd6aff1b006a9d45c3653b2565253eb98b0cf7b694ed2f",
-      "size": 14063
+      "sha256": "d40872090f7585d5a44293d1e64ae27a5a937319f1eb77898332d102e7a9f455",
+      "size": 14146
     },
     {
       "path": "orchestrator/vision.py",
@@ -2989,8 +2994,8 @@
     },
     {
       "path": "scripts/run_feishu_bridge.py",
-      "sha256": "25c79eb0479cb256b232f90dbf0875233ed2007f5b07061d0a27936591d3d214",
-      "size": 236442
+      "sha256": "98a3438af1e054f1e61646800e6cccbc408f414ef244f80ff24e7b5dd040628b",
+      "size": 235606
     },
     {
       "path": "scripts/run_python_test_evidence.ps1",
@@ -3344,8 +3349,8 @@
     },
     {
       "path": "tests/test_conv_persist.py",
-      "sha256": "74dafe8853cb73e4d78f5f09a7861e6c489b46e300b95c2afa33bc670b20b424",
-      "size": 67692
+      "sha256": "1c67344a5a7ec360491a09384d57bcf4fa0816921b13ed63961dc2a14e5fa170",
+      "size": 71135
     },
     {
       "path": "tests/test_conv_summary.py",
@@ -3484,8 +3489,8 @@
     },
     {
       "path": "tests/test_feishu_bridge.py",
-      "sha256": "e3f6f550c677905843a1da8ea0799828f1c8d9d40b90e729ae8b61202fc5a11e",
-      "size": 10382
+      "sha256": "215242c8f1d8b0fa2c36957195f9add65325732db46ef0b5645d71d321b90f0e",
+      "size": 12403
     },
     {
       "path": "tests/test_feishu_channel_media_frames.py",
@@ -3934,8 +3939,8 @@
     },
     {
       "path": "tests/test_pip_packaging.py",
-      "sha256": "12c149757507c76d9d05e1d42aea3ce6e25b354cd568e33f21442a912c75cf59",
-      "size": 13003
+      "sha256": "a19dc1188c7959e932bc28782c5887cc826788a4c997a661c655ec964780254e",
+      "size": 13055
     },
     {
       "path": "tests/test_plugin_kernel.py",

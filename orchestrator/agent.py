@@ -33,6 +33,7 @@ from gateway.failover import chat_with_fallback
 from gateway.provider_call_ledger import bind_provider_call_scope
 from gateway.route_attestation import bind_agent_author_receipt
 from gateway.schemas import ChatCompletionRequest
+from gateway.sqlite_runtime import enable_wal_with_deadline
 from orchestrator.cases import decide_route, format_case
 from orchestrator.classify import classify
 from orchestrator.intent import classify_intent
@@ -800,17 +801,10 @@ class ConversationStore:
     def _ensure_initialization_wal_mode(
         cls, connection: sqlite3.Connection
     ) -> None:
-        for attempt in range(3):
-            try:
-                row = connection.execute("PRAGMA journal_mode=WAL").fetchone()
-                if row and str(row[0]).casefold() == "wal":
-                    return
-            except sqlite3.OperationalError as exc:
-                if attempt >= 2 or not cls._is_transient_sqlite_lock(exc):
-                    raise
-            if attempt < 2:
-                time.sleep(0.025 * (2**attempt))
-        raise RuntimeError("conversation database WAL mode unavailable")
+        enable_wal_with_deadline(
+            connection,
+            error_message="conversation database WAL mode unavailable",
+        )
 
     @classmethod
     def _preflight_database_generation(

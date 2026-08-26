@@ -25,11 +25,14 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Collection
 from contextlib import closing
 from dataclasses import dataclass, field
-from datetime import datetime, time as datetime_time, timedelta
+from datetime import datetime, timedelta
+from datetime import time as datetime_time
 from pathlib import Path
 from typing import Any
 
 from starlette.responses import JSONResponse
+
+from gateway.sqlite_runtime import enable_wal_with_deadline
 
 _HASH_DOMAIN = b"nachuan-admission-key-v1\x00"
 _HEX = frozenset("0123456789abcdef")
@@ -163,7 +166,10 @@ class _SQLiteDailyCounter:
             if self.path.exists() and not self.path.is_file():
                 raise OSError("admission database path is not a regular file")
             with closing(self._connect()) as connection:
-                connection.execute("PRAGMA journal_mode=WAL")
+                enable_wal_with_deadline(
+                    connection,
+                    error_message="admission database requires SQLite WAL mode",
+                )
                 connection.execute("PRAGMA synchronous=FULL")
                 connection.execute("PRAGMA trusted_schema=OFF")
                 connection.execute(

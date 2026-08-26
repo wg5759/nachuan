@@ -46,6 +46,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from starlette.responses import JSONResponse
 
+from gateway.sqlite_runtime import enable_wal_with_deadline
 
 PROTOCOL_VERSION = "1"
 CONTENT_ENCODING = "nachuan-bridge-aesgcm-v1"
@@ -660,9 +661,10 @@ class PersistentNonceReplayGuard:
         ) = effective
 
     def _apply_runtime_profile(self, connection: sqlite3.Connection) -> None:
-        journal_mode = connection.execute("PRAGMA journal_mode=WAL").fetchone()
-        if not journal_mode or str(journal_mode[0]).lower() != "wal":
-            raise sqlite3.DatabaseError("persistent replay WAL unavailable")
+        enable_wal_with_deadline(
+            connection,
+            error_message="persistent replay WAL unavailable",
+        )
         connection.execute("PRAGMA synchronous=FULL")
         connection.execute(f"PRAGMA journal_size_limit={self.wal_max_bytes}")
         connection.execute("PRAGMA wal_autocheckpoint=128")

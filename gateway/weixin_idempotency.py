@@ -24,6 +24,7 @@ from threading import RLock
 from typing import Any, Literal
 from urllib.parse import quote
 
+from gateway.sqlite_runtime import enable_wal_with_deadline
 
 _PRINCIPAL_DOMAIN = b"nachuan-durable-channel-principal-v1\x00"
 _KEY_DOMAIN = b"nachuan-durable-channel-message-key-v1\x00"
@@ -1130,9 +1131,10 @@ class WeixinIdempotencyStore:
         ) = effective
 
     def _apply_runtime_profile(self, connection: sqlite3.Connection) -> None:
-        mode = connection.execute("PRAGMA journal_mode=WAL").fetchone()
-        if not mode or str(mode[0]).lower() != "wal":
-            raise sqlite3.DatabaseError("idempotency WAL profile is unavailable")
+        enable_wal_with_deadline(
+            connection,
+            error_message="idempotency WAL profile is unavailable",
+        )
         connection.execute("PRAGMA synchronous=FULL")
         self._apply_page_cap(connection)
         connection.execute(f"PRAGMA journal_size_limit={_MAX_WAL_BYTES}")

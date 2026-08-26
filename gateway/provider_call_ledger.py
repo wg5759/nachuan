@@ -26,10 +26,11 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Protocol
 
+from gateway.sqlite_runtime import enable_wal_with_deadline
 
 _TERMINAL_STATUSES = frozenset(
     {
@@ -1264,9 +1265,10 @@ class ProviderCallLedger:
     def _init_schema(self) -> None:
         with self._lock:
             assert self._conn is not None
-            mode = str(self._conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]).casefold()
-            if mode != "wal":
-                raise sqlite3.DatabaseError("provider-call ledger requires SQLite WAL mode")
+            enable_wal_with_deadline(
+                self._conn,
+                error_message="provider-call ledger requires SQLite WAL mode",
+            )
             self._conn.execute("PRAGMA synchronous=FULL")
             self._conn.execute("PRAGMA trusted_schema=OFF")
             self._conn.execute("PRAGMA secure_delete=ON")

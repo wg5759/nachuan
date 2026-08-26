@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from gateway.sqlite_runtime import enable_wal_with_deadline
 
 _MAX_TEXT_BYTES = 2 * 1024 * 1024
 _TTL_SECONDS = 24 * 60 * 60
@@ -65,10 +66,14 @@ class UndoReceiptStore:
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA busy_timeout=5000")
-        mode = str(self._conn.execute("PRAGMA journal_mode=WAL").fetchone()[0])
-        if mode.casefold() != "wal":
+        try:
+            enable_wal_with_deadline(
+                self._conn,
+                error_message="undo receipt database requires SQLite WAL mode",
+            )
+        except BaseException:
             self._conn.close()
-            raise RuntimeError("undo receipt database requires SQLite WAL mode")
+            raise
         self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.execute("PRAGMA journal_size_limit=8388608")
         self._conn.execute("PRAGMA wal_autocheckpoint=1000")

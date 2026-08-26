@@ -21,6 +21,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterator, Literal, Sequence
 
+from gateway.sqlite_runtime import enable_wal_with_deadline
 
 RightsAction = Literal["export", "delete", "restrict"]
 RightsState = Literal[
@@ -620,31 +621,10 @@ class PrivacyRightsLedger:
                 "privacy rights main database exceeds its page limit"
             )
 
-    @staticmethod
-    def _is_transient_lock(exc: sqlite3.OperationalError) -> bool:
-        code = getattr(exc, "sqlite_errorcode", None)
-        if isinstance(code, int) and (code & 0xFF) in {
-            sqlite3.SQLITE_BUSY,
-            sqlite3.SQLITE_LOCKED,
-        }:
-            return True
-        rendered = str(exc).casefold()
-        return "locked" in rendered or "busy" in rendered
-
     def _ensure_wal_mode(self, connection: sqlite3.Connection) -> None:
-        for attempt in range(8):
-            try:
-                mode_row = connection.execute("PRAGMA journal_mode=WAL").fetchone()
-                if mode_row and str(mode_row[0]).casefold() == "wal":
-                    return
-            except sqlite3.OperationalError as exc:
-                if not self._is_transient_lock(exc) or attempt >= 7:
-                    raise
-            if attempt >= 7:
-                break
-            time.sleep(min(0.5, 0.01 * (2**attempt)))
-        raise sqlite3.DatabaseError(
-            "privacy rights database requires WAL journal mode"
+        enable_wal_with_deadline(
+            connection,
+            error_message="privacy rights database requires WAL journal mode",
         )
 
     def _classify_database(self, connection: sqlite3.Connection) -> str:

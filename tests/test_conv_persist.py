@@ -6,12 +6,15 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from threading import Barrier
 
-import orchestrator.agent as agent_module
 import pytest
+
+import orchestrator.agent as agent_module
+from gateway import sqlite_runtime
 from orchestrator.agent import (
     BufferedConversationStore,
     ConversationReceiptUnavailable,
@@ -41,6 +44,95 @@ def _sqlite_artifacts(path) -> dict[str, bytes]:  # noqa: ANN001
         for suffix in ("", "-wal", "-shm", "-journal")
         if (candidate := path.parent / f"{path.name}{suffix}").exists()
     }
+
+
+def test_conversation_wal_transition_uses_one_total_busy_budget(monkeypatch) -> None:
+    clock = {"now": 100.0}
+
+    class _Cursor:
+        def __init__(self, row=None):  # noqa: ANN001
+            self._row = row
+
+        def fetchone(self):  # noqa: ANN201
+            return self._row
+
+    class _AlwaysLockedConnection:
+        def __init__(self) -> None:
+            self.busy_timeout_ms = 5000
+            self.applied_timeouts: list[int] = []
+
+        def execute(self, statement: str):  # noqa: ANN201
+            if statement == "PRAGMA busy_timeout":
+                return _Cursor((self.busy_timeout_ms,))
+            if statement.startswith("PRAGMA busy_timeout="):
+                self.busy_timeout_ms = int(statement.rsplit("=", 1)[1])
+                self.applied_timeouts.append(self.busy_timeout_ms)
+                return _Cursor()
+            if statement == "PRAGMA journal_mode=WAL":
+                clock["now"] += self.busy_timeout_ms / 1000.0
+                raise sqlite3.OperationalError("database is locked")
+            raise AssertionError(statement)
+
+    connection = _AlwaysLockedConnection()
+    monkeypatch.setattr(sqlite_runtime.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        sqlite_runtime.time,
+        "sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
+
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        ConversationStore._ensure_initialization_wal_mode(connection)  # type: ignore[arg-type]
+
+    attempted = connection.applied_timeouts[:-1]
+    assert attempted
+    assert sum(attempted) <= 5000
+    assert clock["now"] <= 105.01
+    assert connection.applied_timeouts[-1] == 5000
+    assert connection.busy_timeout_ms == 5000
+
+
+def test_conversation_wal_transition_real_reader_obeys_one_wall_budget(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "wal-transition-reader.db"
+    ConversationStore(db_path=str(path)).close()
+    with closing(sqlite3.connect(path)) as reset:
+        assert reset.execute("PRAGMA journal_mode=DELETE").fetchone() == ("delete",)
+
+    original = ConversationStore._ensure_initialization_wal_mode
+    wal_elapsed: dict[str, float] = {}
+
+    def hold_reader(_cls, connection):  # noqa: ANN001, ANN202
+        connection.execute("PRAGMA busy_timeout=200")
+        with closing(sqlite3.connect(path, timeout=0.0)) as blocker:
+            blocker.execute("BEGIN")
+            blocker.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
+            wal_started = time.monotonic()
+            try:
+                return original(connection)
+            finally:
+                wal_elapsed["seconds"] = time.monotonic() - wal_started
+
+    monkeypatch.setattr(
+        ConversationStore,
+        "_ensure_initialization_wal_mode",
+        classmethod(hold_reader),
+    )
+    started = time.monotonic()
+    with pytest.raises(
+        ConversationReceiptUnavailable,
+        match="cannot initialize bounded conversation database",
+    ):
+        ConversationStore(db_path=str(path))
+    elapsed = time.monotonic() - started
+
+    assert wal_elapsed["seconds"] < 0.45
+    assert elapsed < 2.0
+    with closing(sqlite3.connect(path)) as check:
+        assert check.execute("PRAGMA journal_mode").fetchone() == ("delete",)
+        assert agent_module._conversation_database_generation(check) == "current"
 
 
 def _create_abandoned_foreign_hot_wal(path) -> None:  # noqa: ANN001

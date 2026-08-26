@@ -27,6 +27,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
+from gateway.sqlite_runtime import enable_wal_with_deadline
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY,
@@ -981,9 +983,10 @@ class TaskLedger:
 
             # WAL is persistent and cannot be rolled back.  It is changed only
             # after exact identity/schema acceptance under the write lock.
-            mode = str(connection.execute("PRAGMA journal_mode=WAL").fetchone()[0])
-            if mode.casefold() != "wal":
-                raise sqlite3.DatabaseError("TaskLedger requires SQLite WAL mode")
+            enable_wal_with_deadline(
+                connection,
+                error_message="TaskLedger requires SQLite WAL mode",
+            )
             self._apply_storage_profile(connection)
             self._validate_current_identity(connection)
             self._assert_database_family_bounds()

@@ -1,7 +1,7 @@
 # ADR-0007：会话历史以有界 SQLite 为真源并保护 Turn 回执
 
 - 状态：接受；存储合同完成，供应商调用路径接线待统一集成
-- 日期：2026-07-17
+- 日期：2026-07-17；2026-08-26 补充启动 WAL 总预算
 
 ## 背景
 
@@ -21,11 +21,13 @@
 - 回执行数、回执 payload 字节上限及容量合同版本写入 `conversation_capacity_meta`，成为数据库权威；第二实例、重启或滚动升级携带不同值时初始化故障关闭，不允许各进程用不同上限解释同一账本。缩容或改合同必须走显式迁移，不能靠换启动参数静默完成。
 - 初始化先把 `sqlite_master` 的完整状态归类为受审的新库、旧库或现役合同。只有完整受审旧版可原子迁移；缺 reservation、receipt、metadata、索引或触发器等任何 partial/mixed 状态一律故障关闭且不得静默修补。现役 schema 对 TEXT、摘要、状态、时间、大小和容量合同加数据库约束，数据库对象必须恰好是受审四表、两索引、九触发器与 SQLite 自有 sequence。相似表、额外对象、约束漂移、NULL/BLOB/超限旧数据同样拒绝。
 - 启动时在 `BEGIN IMMEDIATE` 内完成 schema/计数验证，并在释放写锁的 `COMMIT` **之前**采样初始 `PRAGMA data_version`；这样提交后抢入的外部变更不能被吸收成未经验证的新基线。后续写路径持写锁重验，`get`、Turn receipt 读取和 `last_model` 等只读入口也会在返回前检查外部提交；验证成功后再失效 LRU 和 served-model 归因，验证失败不擦除最后一份已知良好缓存。
+- 精确身份/schema 已在写锁内验证并提交后，运行 profile 才允许切换 WAL。`PRAGMA busy_timeout` 是“每条语句预算”，不能在重试时原样复用，否则三次重试会把5秒放大成15秒。统一 `gateway.sqlite_runtime.enable_wal_with_deadline` 把 caller 当前 timeout、5秒本地上限和可选外部 monotonic deadline 取最小值，逐次缩短 SQLite busy timeout，并在成功或失败后恢复 caller 原值。Conversation、Weixin、Bridge replay、Durable media、Admission、TaskLedger、Undo、Privacy、Provider-call ledger 与飞书 state WAL 收敛共用该合同；这不改变先只读分类、锁内复验、提交后切 WAL 的取证顺序。
 - 主数据库及 WAL/SHM/journal sidecar 在打开前后逐级 `lstat`，只接受非 reparse 的普通文件；路径异常统一使持久回执不可用。
 
 ## 后果
 
 - 磁盘满、外部锁和异常 schema 不再产生内存/磁盘分叉；重启后的历史与已确认提交保持一致。
+- 多个启动库不再各自把完整 busy timeout 乘以重试次数；持续锁竞争会在一个总预算内明确 unavailable，并保留原连接 timeout 策略，不会把网关冷启动拖成长串等待。
 - 每次启动都会做一次精确 `COUNT/SUM` 对账；旧 schema 首次迁移还需要表重建，应安排维护窗口并预留空间。正常单写者热路径不反复全表扫描。
 - 容量压力会明确拒绝新 Turn，而不是删掉仍可用于防重复执行的近期证据。
 - provider 前预留会保守占用 1 MiB 响应预算，即使实际响应很短；这是避免“保护窗已满却先产生供应商费用”的有意空间换安全。

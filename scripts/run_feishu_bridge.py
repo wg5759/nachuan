@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-from contextlib import contextmanager, nullcontext
 import hashlib
 import io
 import json
@@ -30,6 +29,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import NamedTuple
@@ -47,7 +47,6 @@ if _NACHUAN_FEISHU_STATE_ONLY:
     _lark_logger = logging.getLogger("nachuan-feishu-state-only")
 else:
     import lark_oapi as lark  # noqa: E402
-    from lark_oapi.core.log import logger as _lark_logger  # noqa: E402
     from lark_oapi.api.im.v1 import (  # noqa: E402
         CreateFileRequest,
         CreateFileRequestBody,
@@ -58,24 +57,30 @@ else:
         GetMessageResourceRequest,
         P2ImMessageReceiveV1,
     )
+    from lark_oapi.core.log import logger as _lark_logger  # noqa: E402
 
-from bridge.policy import RateLimiter, is_allowed, parse_command, resolve_user_id  # noqa: E402
+from bridge.policy import (  # noqa: E402
+    RateLimiter,
+    is_allowed,
+    parse_command,
+    resolve_user_id,
+)
 from gateway.bridge_protocol import (  # noqa: E402
     MAX_PLAINTEXT_REQUEST_BYTES,
     request_bridge_bytes,
-)
-from gateway.channel_media_protocol import (  # noqa: E402
-    MAX_CHANNEL_MEDIA_METADATA_BYTES,
-    encode_channel_media_frame,
 )
 from gateway.channel_delivery_claim import (  # noqa: E402
     ClaimLeaseLost,
     ClaimLeaseSession,
 )
+from gateway.channel_media_protocol import (  # noqa: E402
+    MAX_CHANNEL_MEDIA_METADATA_BYTES,
+    encode_channel_media_frame,
+)
 from gateway.config import get_isolated_bridge_settings  # noqa: E402
 from gateway.public_media import PublicFetchError, fetch_public_bytes  # noqa: E402
+from gateway.sqlite_runtime import enable_wal_with_deadline  # noqa: E402
 from orchestrator.media import detect_media_intent  # noqa: E402
-
 
 _LOG_SECRET_VALUE = re.compile(
     r"(?i)(\b(?:access_key|ticket|app_secret|(?:access|refresh|tenant|app|bot|user)?_?token)\b"
@@ -1518,38 +1523,12 @@ def _enable_state_wal(
     deadline_monotonic: float | None = None,
 ) -> None:
     """Converge concurrent validated initializers on WAL within one hard bound."""
-
-    deadline = (
-        float(deadline_monotonic)
-        if deadline_monotonic is not None
-        else time.monotonic() + max(0.05, busy_timeout_ms / 1000.0)
+    enable_wal_with_deadline(
+        conn,
+        max_wait_seconds=max(0.05, busy_timeout_ms / 1000.0),
+        deadline_monotonic=deadline_monotonic,
+        error_message="Feishu state database refused WAL journal mode",
     )
-    delay = 0.005
-    while True:
-        if deadline_monotonic is not None:
-            _constrain_state_busy_timeout(
-                conn,
-                deadline_monotonic=deadline,
-                default_busy_timeout_ms=busy_timeout_ms,
-            )
-        try:
-            row = conn.execute("PRAGMA journal_mode=WAL").fetchone()
-        except sqlite3.OperationalError as exc:
-            detail = str(exc).casefold()
-            if "locked" not in detail and "busy" not in detail:
-                raise
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise
-            time.sleep(min(delay, remaining))
-            delay = min(delay * 2, 0.05)
-            continue
-        if deadline_monotonic is not None:
-            _remaining_finish_budget(deadline)
-        mode = str(row[0] if row else "").casefold()
-        if mode != "wal":
-            raise RuntimeError("Feishu state database refused WAL journal mode")
-        return
 
 
 def _state_connect(

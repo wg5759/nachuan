@@ -13,6 +13,7 @@ import pytest
 import respx
 
 from bridge.feishu import FeishuBridge
+from gateway import sqlite_runtime
 
 TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
 SEND_URL = "https://open.feishu.cn/open-apis/im/v1/messages"
@@ -173,13 +174,65 @@ async def test_feishu_image_acknowledged():
     assert "收到文件/图片" in _sent_text(send)
 
 
-def _load_feishu_runner():
+def _load_feishu_runner(*, state_only: bool = False):
     path = Path(__file__).parents[1] / "scripts" / "run_feishu_bridge.py"
     spec = importlib.util.spec_from_file_location("run_feishu_bridge_media_test", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
+    if state_only:
+        module._NACHUAN_FEISHU_STATE_ONLY = True
     spec.loader.exec_module(module)
     return module
+
+
+def test_feishu_wal_retries_shrink_to_one_total_busy_budget(monkeypatch):
+    runner = _load_feishu_runner(state_only=True)
+    clock = {"now": 10.0}
+
+    class _Cursor:
+        def __init__(self, row=None):  # noqa: ANN001
+            self._row = row
+
+        def fetchone(self):  # noqa: ANN201
+            return self._row
+
+    class _EarlyThenSlowLock:
+        def __init__(self) -> None:
+            self.busy_timeout_ms = 1000
+            self.applied_timeouts: list[int] = []
+            self.attempts = 0
+
+        def execute(self, statement: str):  # noqa: ANN201
+            if statement == "PRAGMA busy_timeout":
+                return _Cursor((self.busy_timeout_ms,))
+            if statement.startswith("PRAGMA busy_timeout="):
+                self.busy_timeout_ms = int(statement.rsplit("=", 1)[1])
+                self.applied_timeouts.append(self.busy_timeout_ms)
+                return _Cursor()
+            if statement == "PRAGMA journal_mode=WAL":
+                self.attempts += 1
+                clock["now"] += (
+                    0.1 if self.attempts == 1 else self.busy_timeout_ms / 1000.0
+                )
+                raise runner.sqlite3.OperationalError("database is locked")
+            raise AssertionError(statement)
+
+    connection = _EarlyThenSlowLock()
+    monkeypatch.setattr(sqlite_runtime.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        sqlite_runtime.time,
+        "sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
+
+    with pytest.raises(runner.sqlite3.OperationalError, match="locked"):
+        runner._enable_state_wal(connection, busy_timeout_ms=1000)
+
+    assert connection.applied_timeouts
+    assert connection.applied_timeouts[0] == 1000
+    assert connection.applied_timeouts[1] < 900
+    assert clock["now"] <= 11.01
+    assert connection.applied_timeouts[-1] == 1000
 
 
 def test_feishu_runner_generated_media_uses_pinned_helper_and_data_cap(monkeypatch):
