@@ -1,6 +1,6 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260827-71",
-  "file_count": 909,
+  "candidate_id": "nachuan-source-alpha-20260827-72",
+  "file_count": 910,
   "files": [
     {
       "path": ".claude/commands/xreview.md",
@@ -2534,8 +2534,8 @@
     },
     {
       "path": "gateway/subscription_connectors.py",
-      "sha256": "d8d324bcc1a19161dfe83d70f3685916760387561083835e721985eae376837a",
-      "size": 4619
+      "sha256": "8981f6a53e979b18b079d87b52d4833d2b9d4dfc94343e354fbee0677f062d0d",
+      "size": 5978
     },
     {
       "path": "gateway/team_session.py",
@@ -3074,8 +3074,8 @@
     },
     {
       "path": "scripts/installed_model_onboarding_acceptance.py",
-      "sha256": "fec68062ad1989d30781e2b521672521c0e47729b02f92ff5655548d96dd3dc2",
-      "size": 6424
+      "sha256": "75fd083ddabcde26e921b22bac74d9137ff587dd9f93d4619092653e8cbb4e20",
+      "size": 6585
     },
     {
       "path": "scripts/installed_subscription_first_turn.py",
@@ -3728,6 +3728,11 @@
       "size": 13238
     },
     {
+      "path": "tests/test_installed_model_onboarding.py",
+      "sha256": "f7fba056df6f77792748654446e0623bc39c1c3f85a16fb6cc445f8354ffe45d",
+      "size": 306
+    },
+    {
       "path": "tests/test_installed_subscription_first_turn.py",
       "sha256": "5fdca922cd7ce29e3d5a796419682b603f7c1e6253139d29e650d8dd20e4f342",
       "size": 5921
@@ -4264,8 +4269,8 @@
     },
     {
       "path": "tests/test_subscription_connectors.py",
-      "sha256": "39b64e66422a93ac06a71d84d5014c2127567cc64c83e2ba43aa67a6150d2f84",
-      "size": 4371
+      "sha256": "d6c0a55854b0ce148d8f2204777d7fb18e3efae78425cf5113042eea36cabe9e",
+      "size": 10526
     },
     {
       "path": "tests/test_supply_chain_defaults.py",
@@ -4551,6 +4556,6 @@
   "history_included": false,
   "license": "Apache-2.0",
   "schema": "nachuan.open-source-snapshot.v1",
-  "source_head": "5ba529cb50f08caa15185fe4da5a6eadb37d0ccd",
+  "source_head": "63139011eaec9f00ec8e927783d3f110ab456fd5",
   "source_worktree_dirty": true
 }
