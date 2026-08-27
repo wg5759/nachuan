@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260827-78",
+  "candidate_id": "nachuan-source-alpha-20260827-79",
   "file_count": 910,
   "files": [
     {
@@ -3619,8 +3619,8 @@
     },
     {
       "path": "tests/test_feishu_durable_bridge.py",
-      "sha256": "07d06ea5b7423ae8b9d6d6f6c13fdcb1614b67b127d7d301264785df3d164f1a",
-      "size": 270703
+      "sha256": "c15700361da303a2798237bc350ae4769daf78ec216c0876bf2c8eee7e42023e",
+      "size": 270880
     },
     {
       "path": "tests/test_feishu_feedback_idempotency.py",
@@ -4556,6 +4556,6 @@
   "history_included": false,
   "license": "Apache-2.0",
   "schema": "nachuan.open-source-snapshot.v1",
-  "source_head": "a374c78f64ccfeebe40fcffa4fe464b5b6487b02",
+  "source_head": "72b5932402f9d9ea202c89f66aba6ee4a0ba2d77",
   "source_worktree_dirty": true
 }
