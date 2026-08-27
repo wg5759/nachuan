@@ -176,7 +176,8 @@ _MEDIA_TOTAL_TIMEOUT_SECONDS = 120.0
 _MEDIA_IDLE_TIMEOUT_SECONDS = 30.0
 # The Gateway's 55s Agent deadline is followed by a fenced, intentionally
 # uncancellable durable commit tail.  Reserve enough wall time for that tail;
-# an 8s progress notice keeps authorized text users informed meanwhile.
+# a single 30s progress notice keeps genuinely long text Turns informative
+# without making ordinary chat produce multiple bubbles.
 _AGENT_TURN_HTTP_TIMEOUT_SECONDS = 90.0
 _STATE_DB_MAX_BYTES = 256 * 1024 * 1024
 _STATE_WAL_MAX_BYTES = 16 * 1024 * 1024
@@ -201,13 +202,12 @@ _RECOVERY_OPERATION_DOMAIN = b"nachuan.feishu.close-without-replay.operation/v1\
 _RECOVERY_SET_DOMAIN = b"nachuan.feishu.close-without-replay.affected-set/v1\x00"
 _RECOVERY_ROW_DOMAIN = b"nachuan.feishu.close-without-replay.row/v1\x00"
 _RECOVERY_RECEIPT_DOMAIN = b"nachuan.feishu.close-without-replay.receipt/v1\x00"
-_INBOUND_RETRYING_NOTICE = "消息处理遇到问题，正在自动重试，请稍候。"
 _INBOUND_TERMINAL_NOTICE = (
     "消息处理多次失败，本次请求未完成。"
     "请稍后重新发送，或联系管理员检查纳川服务状态。"
 )
 _TEXT_PROGRESS_NOTICE = "还在处理中，我会继续处理并尽快回复，请稍候。"
-_TEXT_PROGRESS_AFTER_SECONDS = 8.0
+_TEXT_PROGRESS_AFTER_SECONDS = 30.0
 _ACCESS_GUIDANCE_NOTICE = (
     "纳川尚未为此账号开通使用权限。"
     "请联系管理员完成接入，或发送 /whoami 获取你的飞书标识。"
@@ -2647,14 +2647,6 @@ def _finish_inbound(
                     current,
                 ),
             ).rowcount
-            if changed == 1 and attempts == 1:
-                _enqueue_inbound_notice_in_transaction(
-                    conn,
-                    claim,
-                    notice_kind="retrying",
-                    text=_INBOUND_RETRYING_NOTICE,
-                    now=current,
-                )
         else:
             changed = conn.execute(
                 """

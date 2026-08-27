@@ -2094,7 +2094,7 @@ def test_feishu_slow_authorized_text_persists_progress_before_final_reply(
     runner._inbound_worker(stop)
 
     assert len(timers) == 1
-    assert timers[0].interval == pytest.approx(8.0)
+    assert timers[0].interval == pytest.approx(30.0)
     with runner._state_connect() as conn:
         deliveries = conn.execute(
             "SELECT delivery_uuid,status,content FROM feishu_outbox ORDER BY id"
@@ -2313,7 +2313,7 @@ def test_feishu_inbox_deduplicates_and_claims_in_chat_order_after_recovery(
     assert recovered["payload"]["message_id"] in {"m-2", "m-3"}
 
 
-def test_feishu_first_failed_text_turn_durably_notifies_retry_once(
+def test_feishu_first_failed_text_turn_retries_silently(
     monkeypatch, tmp_path: Path
 ) -> None:
     runner = _load_runner()
@@ -2349,15 +2349,7 @@ def test_feishu_first_failed_text_turn_durably_notifies_retry_once(
             "SELECT delivery_uuid,chat_id,status,content FROM feishu_outbox ORDER BY id"
         ).fetchall()
 
-    assert len(deliveries) == 1
-    assert deliveries[0][:3] == (
-        runner._stable_delivery_uuid(
-            f"inbound:{message_id}:notice:retrying"
-        ),
-        "chat-first-failure",
-        "pending",
-    )
-    assert "正在自动重试" in json.loads(deliveries[0][3])["text"]
+    assert deliveries == []
 
 
 def test_feishu_dead_text_turn_persists_terminal_notice_before_tombstone(
@@ -2406,8 +2398,8 @@ def test_feishu_dead_text_turn_persists_terminal_notice_before_tombstone(
         "",
         '{"state":"dead_tombstone","version":1}',
     )
-    assert len(deliveries) == 2
-    terminal = deliveries[1]
+    assert len(deliveries) == 1
+    terminal = deliveries[0]
     assert terminal[:3] == (
         runner._stable_delivery_uuid(
             f"inbound:{message_id}:notice:terminal"

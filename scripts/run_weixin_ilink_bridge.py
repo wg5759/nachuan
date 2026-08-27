@@ -7586,14 +7586,13 @@ def _progress_notice(
     permits_delivery=None,
     claim_context: tuple[int, str, int, object] | None = None,
 ) -> None:
-    # A channel Turn needs immediate user-visible evidence that the durable
-    # inbox owns it. Operators may tune the delay, but cannot recreate the
-    # former multi-minute silent window with an unbounded value.
+    # Ordinary chat should produce one final bubble.  Only a genuinely long
+    # Turn gets one progress notice; operators may tune the bounded delay.
     delay = _bounded_env_seconds(
         "WEIXIN_PROGRESS_AFTER_SECONDS",
-        default=2.0,
+        default=30.0,
         minimum=1.0,
-        maximum=5.0,
+        maximum=60.0,
     )
     if not done.wait(delay) and (
         permits_delivery is None or bool(permits_delivery())

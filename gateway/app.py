@@ -4579,10 +4579,8 @@ async def agent_chat_endpoint(
         if recovery_required:
             recovery_notice = {
                 "reply": (
-                    "纳川检测到上一轮模型调用可能已经产生费用，但回复未能安全落盘；"
-                    "已停止自动重试以避免重复扣费。管理员确认前，请勿原样重发付费或"
-                    "不可逆任务；普通对话可另起新问题。"
-                    f"管理员可凭恢复编号 {turn_identity} 排查。"
+                    "这次没有完成；若涉及付费或不可逆操作，请先在纳川管理端确认，"
+                    "普通对话稍后再试即可。"
                 ),
                 "model": _CHANNEL_LOCAL_MODEL,
                 "channel_result_version": _CHANNEL_RESULT_VERSION,

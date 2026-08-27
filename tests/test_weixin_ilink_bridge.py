@@ -570,7 +570,7 @@ def test_hung_provider_gets_a_durable_first_ack_within_three_seconds(
 
 @pytest.mark.parametrize(
     ("configured", "expected"),
-    [("999", 5.0), ("nan", 2.0), ("-10", 1.0)],
+    [("999", 60.0), ("nan", 30.0), ("-10", 1.0)],
 )
 def test_first_ack_delay_configuration_cannot_recreate_a_silent_window(
     monkeypatch, configured, expected

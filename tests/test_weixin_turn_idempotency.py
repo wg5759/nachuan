@@ -1433,10 +1433,13 @@ def test_durable_channel_replay_stops_before_models_after_possible_paid_call(
     assert len(first.json()["recovery_id"]) == 64
     assert first.json()["notice_trace_id"]
     assert "trace_id" not in first.json()
-    assert turn_id in first.json()["reply"]
-    assert "重复扣费" in first.json()["reply"]
-    assert "请勿原样重发付费或不可逆任务" in first.json()["reply"]
-    assert "稍后重新发送" not in first.json()["reply"]
+    assert first.json()["reply"] == (
+        "这次没有完成；若涉及付费或不可逆操作，请先在纳川管理端确认，"
+        "普通对话稍后再试即可。"
+    )
+    assert turn_id not in first.json()["reply"]
+    assert "恢复编号" not in first.json()["reply"]
+    assert "重复扣费" not in first.json()["reply"]
     assert replay.status_code == 200
     assert replay.headers["Idempotency-Replayed"] == "true"
     assert replay.json() == first.json()
