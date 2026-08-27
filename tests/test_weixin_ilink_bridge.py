@@ -2475,12 +2475,41 @@ def test_text_outbox_any_post_boundary_uncertainty_requires_recovery_without_rep
     assert calls == 1
 
 
+def test_text_outbox_dns_resolution_failure_is_retryable_before_submission(
+    monkeypatch, tmp_path
+):
+    bridge = _load_bridge()
+    database = tmp_path / "weixin-dns-retry.db"
+    monkeypatch.setattr(bridge, "_OUTBOX_DB", database)
+    calls = 0
+
+    def dns_failed_before_connect(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise urllib.error.URLError(socket.gaierror(11001, "getaddrinfo failed"))
+
+    monkeypatch.setattr(bridge, "_ilink", dns_failed_before_connect)
+    delivery_id, _rows = bridge._enqueue_delivery(
+        "user-1", "context-1", "reply", delivery_key="dns-preconnect"
+    )
+
+    assert bridge._drain_outbox("bot-token", delivery_id=delivery_id) == 0
+    assert calls == 1
+    with sqlite3.connect(database) as conn:
+        row = conn.execute(
+            "SELECT status,attempts,last_error,last_finish_outcome "
+            "FROM pending_delivery WHERE delivery_id=?",
+            (delivery_id,),
+        ).fetchone()
+    assert row == ("pending", 1, "URLError", "retry")
+
+
 def test_text_outbox_finish_storage_failure_keeps_submission_non_replayable(
     monkeypatch, tmp_path
 ):
     bridge = _load_bridge()
     with pytest.raises(ValueError, match="invalid delivery finish outcome"):
-        bridge._DeliveryFinishRequest(outcome="retry")
+        bridge._DeliveryFinishRequest(outcome="replay")
     database = tmp_path / "weixin-finish-storage.db"
     monkeypatch.setattr(bridge, "_OUTBOX_DB", database)
     delivery_id, _rows = bridge._enqueue_delivery(

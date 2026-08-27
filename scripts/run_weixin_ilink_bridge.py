@@ -705,6 +705,13 @@ def _is_socket_timeout(exc: BaseException) -> bool:
     return False
 
 
+def _is_preconnect_dns_failure(exc: BaseException) -> bool:
+    """Return true only when name resolution failed before a socket existed."""
+
+    reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+    return isinstance(reason, socket.gaierror)
+
+
 def _engine_post(
     path: str,
     payload: dict,
@@ -6620,7 +6627,7 @@ class _DeliveryFinishRequest:
         error: Exception | None = None,
         platform_response_sha256: str = "",
     ) -> None:
-        if outcome not in {"done", "recovery_required"}:
+        if outcome not in {"done", "retry", "recovery_required"}:
             raise ValueError("invalid delivery finish outcome")
         self.outcome = outcome
         self.error = error
@@ -6636,6 +6643,7 @@ def _finish_delivery(
     deadline_monotonic: float | None = None,
     platform_response_sha256: str = "",
     recovery_required: bool = False,
+    retry_safe: bool = False,
 ) -> bool:
     conn = (
         _outbox_connect()
@@ -6708,7 +6716,8 @@ def _finish_delivery(
             )
             target = (
                 "recovery_required"
-                if recovery_required or current_status == "submitting"
+                if recovery_required
+                or (current_status == "submitting" and not retry_safe)
                 else "pending"
             )
             detail = _error_code(type(error).__name__ if error else "unknown_error")
@@ -6764,6 +6773,7 @@ def _finish_delivery(
                         ),
                     )
             else:
+                finish_outcome = "retry" if retry_safe else target
                 changed = conn.execute(
                     """
                     UPDATE pending_delivery
@@ -6783,14 +6793,14 @@ def _finish_delivery(
                         detail,
                         claim["claim_token"],
                         int(claim["claim_epoch"]),
-                        target,
+                        finish_outcome,
                         claim["id"],
                         claim["claim_token"],
                         int(claim["claim_epoch"]),
                         current,
                     ),
                 ).rowcount
-                outcome = target
+                outcome = finish_outcome
         if changed != 1:
             raise DeliveryFinishFenceLost("delivery_finish_fence_lost")
         _constrain_outbox_busy_timeout(
@@ -6877,6 +6887,7 @@ class _DeliveryClaimStorage:
                 deadline_monotonic=deadline_monotonic,
                 platform_response_sha256=outcome.platform_response_sha256,
                 recovery_required=outcome.outcome == "recovery_required",
+                retry_safe=outcome.outcome == "retry",
             )
         except DeliveryFinishFenceLost:
             return False
@@ -7128,11 +7139,14 @@ def _drain_outbox(
                 platform_response_sha256=_canonical_json_sha256(response),
             )
         except Exception as e:  # noqa: BLE001
-            # Once ``submitting`` is durable, no transport exception proves
-            # that zero request bytes reached Weixin.  Every missing/invalid
-            # platform result is therefore non-replayable until adjudicated.
+            # DNS resolution fails before a socket exists, so zero request
+            # bytes can have reached Weixin and a delayed retry is safe.  Once
+            # a socket may exist, a missing/invalid platform result remains
+            # non-replayable until adjudicated.
             outcome = _DeliveryFinishRequest(
-                outcome="recovery_required",
+                outcome=(
+                    "retry" if _is_preconnect_dns_failure(e) else "recovery_required"
+                ),
                 error=e,
             )
         try:
@@ -7149,10 +7163,11 @@ def _drain_outbox(
         if outcome.outcome == "done":
             delivered += 1
         else:
-            print(
-                f"[send RECOVERY REQUIRED] {type(outcome.error).__name__}",
-                flush=True,
-            )
+            if outcome.outcome == "recovery_required":
+                print(
+                    f"[send RECOVERY REQUIRED] {type(outcome.error).__name__}",
+                    flush=True,
+                )
         if time.monotonic() >= drain_deadline:
             break
     return delivered
