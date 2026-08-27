@@ -76,14 +76,17 @@ $Taskkill = Join-Path ([Environment]::SystemDirectory) 'taskkill.exe'
 $script:Unhealthy = @{ engine = 0; weixin = 0; feishu = 0 }
 $script:StartAttempt = @{ engine = 0; weixin = 0; feishu = 0 }
 $script:NextStartAt = @{ engine = [DateTimeOffset]::MinValue; weixin = [DateTimeOffset]::MinValue; feishu = [DateTimeOffset]::MinValue }
+$script:StartedAt = @{ engine = [DateTimeOffset]::MinValue; weixin = [DateTimeOffset]::MinValue; feishu = [DateTimeOffset]::MinValue }
 $script:EngineGenerationCounter = [long]0
 $script:ProcessSnapshot = @()
 $script:ProcessSnapshotAt = [datetime]::MinValue
 $script:SupervisorInstanceId = ''
+$runtimeTreeInitialized = $false
 $WeixinInboundClaimTtlSeconds = 5 * 60
 # The bridge reclaims at 300s. Allow one extra minute for heartbeat/write
 # jitter before treating an otherwise alive worker as irrecoverably stuck.
 $WeixinProcessingStuckThresholdSeconds = $WeixinInboundClaimTtlSeconds + 60
+$FeishuStartupGraceSeconds = 180
 
 function Ensure-Directory([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
@@ -561,7 +564,6 @@ function Initialize-PrivateRuntimeTree {
     Protect-PrivateRuntimeTree $DataDir
     Ensure-Directory $LogDir
     Assert-NoReparseComponents $LogDir
-    Protect-PrivateRuntimeTree $DataDir
 }
 
 function Ensure-ApprovalAdminKey {
@@ -1722,6 +1724,7 @@ function Start-ManagedProcess([string]$Name) {
     }
     $startedPid = $proc.Id
     $proc.Dispose()
+    $script:StartedAt[$Name] = $now
     $script:StartAttempt[$Name] = [math]::Min(9, [int]$script:StartAttempt[$Name] + 1)
     $delay = [math]::Min(300, [math]::Pow(2, [int]$script:StartAttempt[$Name]))
     $script:NextStartAt[$Name] = $now.AddSeconds($delay)
@@ -1863,12 +1866,20 @@ function Invoke-WatchdogCycle {
 
     if (Test-FeishuConfigured) {
         $health = Get-FeishuHealth
+        $feishuStarting = [bool](
+            $feishuProc.Count -gt 0 -and
+            [DateTimeOffset]$script:StartedAt.feishu -ne [DateTimeOffset]::MinValue -and
+            ([DateTimeOffset]::UtcNow - [DateTimeOffset]$script:StartedAt.feishu).TotalSeconds -lt
+                $FeishuStartupGraceSeconds
+        )
         $healthPidBound = $false
         if ($health.pid -gt 0) {
             $healthPidBound = Test-ManagedPythonPid ([long]$health.pid) $feishuProc
         }
         if ($feishuProc.Count -eq 0) {
             [void](Start-ManagedProcess 'feishu')
+            $script:Unhealthy.feishu = 0
+        } elseif ($feishuStarting) {
             $script:Unhealthy.feishu = 0
         } elseif (-not $health.fresh -or -not $healthPidBound -or
             -not $health.connected -or $health.consecutive_reconnect_failures -gt 0) {
@@ -1886,6 +1897,7 @@ function Invoke-WatchdogCycle {
             $script:Unhealthy.feishu = 0
             $script:StartAttempt.feishu = 0
             $script:NextStartAt.feishu = [DateTimeOffset]::MinValue
+            $script:StartedAt.feishu = [DateTimeOffset]::MinValue
         }
     }
     $backupOk = Invoke-BackupIfDue
@@ -1985,6 +1997,7 @@ if ($Action -eq 'Resume') {
         exit 0
     }
     Initialize-PrivateRuntimeTree
+    $runtimeTreeInitialized = $true
     Assert-TrustedRegularFile $Python 'managed Python' -AllowReparseAncestors:(-not $Scheduled)
     Assert-TrustedRegularFile $ManagedLauncherPath 'managed launcher' -AllowReparseAncestors:(-not $Scheduled)
     if (Test-Path -LiteralPath $SupervisorStopFile -PathType Leaf) {
@@ -1999,7 +2012,10 @@ if ($DryRun) {
     exit 0
 }
 
-Initialize-PrivateRuntimeTree
+if (-not $runtimeTreeInitialized) {
+    Initialize-PrivateRuntimeTree
+    $runtimeTreeInitialized = $true
+}
 if (Test-StopRequested) {
     $stopState = Get-StopState
     Write-SupervisorLog ("supervisor start blocked by persistent stop latch (valid={0}, scheduled={1})" -f $stopState.valid, [bool]$Scheduled)

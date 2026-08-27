@@ -109,6 +109,43 @@ def test_supervisor_forces_utf8_for_every_managed_python_child() -> None:
     assert script.index("$env:PYTHONUTF8 = '1'") < script.index("function Start-ManagedProcess")
 
 
+def test_supervisor_resume_hardens_the_runtime_tree_exactly_once() -> None:
+    script = (
+        Path(__file__).resolve().parents[1] / "scripts" / "start_all.ps1"
+    ).read_text("utf-8-sig")
+    protect_start = script.index("function Protect-PrivateRuntimeTree")
+    protect_end = script.index("function Ensure-ApprovalAdminKey", protect_start)
+    runtime_protection = script[protect_start:protect_end]
+    resume_start = script.index("if ($Action -eq 'Resume')")
+    resume_end = script.index("\nif ($DryRun) {", resume_start)
+    resume = script[resume_start:resume_end]
+    common_start = script.index("Initialize-PrivateRuntimeTree", resume_end)
+    common = script[resume_end:common_start + len("Initialize-PrivateRuntimeTree")]
+
+    assert runtime_protection.count("Protect-PrivateRuntimeTree $DataDir") == 1
+    assert "$runtimeTreeInitialized = $false" in script[:protect_start]
+    assert resume.count("Initialize-PrivateRuntimeTree") == 1
+    assert "$runtimeTreeInitialized = $true" in resume
+    assert "if (-not $runtimeTreeInitialized)" in common
+
+
+def test_supervisor_gives_feishu_cold_sdk_import_a_bounded_startup_grace() -> None:
+    script = (
+        Path(__file__).resolve().parents[1] / "scripts" / "start_all.ps1"
+    ).read_text("utf-8-sig")
+    start = script.index("function Start-ManagedProcess")
+    stop = script.index("function Stop-ProjectProcesses", start)
+    launcher = script[start:stop]
+    watchdog = script[script.index("function Invoke-WatchdogCycle") :]
+
+    assert "$FeishuStartupGraceSeconds = 180" in script
+    assert "$script:StartedAt[$Name] = $now" in launcher
+    assert "$feishuStarting" in watchdog
+    assert watchdog.index("elseif ($feishuStarting)") < watchdog.index(
+        "feishu liveness/connection failed"
+    )
+
+
 def test_supervisor_does_not_forward_retired_claude_runtime_hooks() -> None:
     script = (
         Path(__file__).resolve().parents[1] / "scripts" / "start_all.ps1"
