@@ -2425,6 +2425,12 @@ def test_feishu_dead_tombstone_rolls_back_if_terminal_notice_cannot_persist(
         "open_id": "user-atomic-terminal",
     }
     assert runner._store_inbound(original_payload, now=current)
+    runner._enqueue_outbox(
+        "unrelated-chat",
+        "text",
+        json.dumps({"text": "occupy capacity"}),
+        delivery_key="unrelated-capacity-occupier",
+    )
 
     terminal_claim = None
     for attempt in range(8):
