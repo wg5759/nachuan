@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260827-77",
+  "candidate_id": "nachuan-source-alpha-20260827-78",
   "file_count": 910,
   "files": [
     {
@@ -2064,8 +2064,8 @@
     },
     {
       "path": "gateway/app.py",
-      "sha256": "d3cc3a215b1be15e54051c6cd8bc39237233fa0be517e990d10020f2b543b093",
-      "size": 430242
+      "sha256": "08ffbab3eca977ec26bc5a61a3b573e79189816e5dd97f6a884bc306c62ac739",
+      "size": 430028
     },
     {
       "path": "gateway/asr_nemotron.py",
@@ -3104,8 +3104,8 @@
     },
     {
       "path": "scripts/run_feishu_bridge.py",
-      "sha256": "98a3438af1e054f1e61646800e6cccbc408f414ef244f80ff24e7b5dd040628b",
-      "size": 235606
+      "sha256": "18e3b08ec9ff485b815bbfe05d1d57a278d28f04b9d6b38684081e096c489ccb",
+      "size": 235275
     },
     {
       "path": "scripts/run_python_test_evidence.ps1",
@@ -3119,8 +3119,8 @@
     },
     {
       "path": "scripts/run_weixin_ilink_bridge.py",
-      "sha256": "1e99ccb246db2b65721f38529085427a3fa78d5c3f147cf619c1b0f43859bc4c",
-      "size": 308775
+      "sha256": "82f15e6d41df87c30fe0291bcd4b8481d51bfb0490d8aba9981c164809042ff9",
+      "size": 308712
     },
     {
       "path": "scripts/smoke.py",
@@ -3619,8 +3619,8 @@
     },
     {
       "path": "tests/test_feishu_durable_bridge.py",
-      "sha256": "30b4c1b0314935a11f2348cc008214ee5598e16e899d706e6aba6b61ce05c052",
-      "size": 270979
+      "sha256": "07d06ea5b7423ae8b9d6d6f6c13fdcb1614b67b127d7d301264785df3d164f1a",
+      "size": 270703
     },
     {
       "path": "tests/test_feishu_feedback_idempotency.py",
@@ -4409,8 +4409,8 @@
     },
     {
       "path": "tests/test_weixin_ilink_bridge.py",
-      "sha256": "5eaaa40508a8fc7d6da15e7a272f38f51c0388afaf491a4a0e988de1807851b9",
-      "size": 280432
+      "sha256": "779dde1df33247ae6a375da8afb6b4855ee7affa211e45eb17516ac2a76c3027",
+      "size": 280434
     },
     {
       "path": "tests/test_weixin_state_family_guard.py",
@@ -4419,8 +4419,8 @@
     },
     {
       "path": "tests/test_weixin_turn_idempotency.py",
-      "sha256": "2a3bc036219986b3dabc7cca67eeb46b97fb930c4d7e1e4920a2578b51e0a687",
-      "size": 73098
+      "sha256": "22e83389a284817c5bffecac2b81b6599732bb14574cf0f6df93d3644166ec9c",
+      "size": 73208
     },
     {
       "path": "tests/test_windows_appcontainer.py",
@@ -4556,6 +4556,6 @@
   "history_included": false,
   "license": "Apache-2.0",
   "schema": "nachuan.open-source-snapshot.v1",
-  "source_head": "09450e030e12ef788ee316e3b508a8c7bcff1313",
+  "source_head": "a374c78f64ccfeebe40fcffa4fe464b5b6487b02",
   "source_worktree_dirty": true
 }
