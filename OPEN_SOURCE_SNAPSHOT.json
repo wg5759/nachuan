@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20260827-76",
+  "candidate_id": "nachuan-source-alpha-20260827-77",
   "file_count": 910,
   "files": [
     {
@@ -3119,8 +3119,8 @@
     },
     {
       "path": "scripts/run_weixin_ilink_bridge.py",
-      "sha256": "fdc3b8e1f71d5de9a04eaf681121ef84405727d10ee12dd00efe06196c4231e5",
-      "size": 308091
+      "sha256": "1e99ccb246db2b65721f38529085427a3fa78d5c3f147cf619c1b0f43859bc4c",
+      "size": 308775
     },
     {
       "path": "scripts/smoke.py",
@@ -4409,8 +4409,8 @@
     },
     {
       "path": "tests/test_weixin_ilink_bridge.py",
-      "sha256": "3390c2ad53181ce0c39533619df2193922fccc8dee583b703e179b732785a4c4",
-      "size": 279403
+      "sha256": "5eaaa40508a8fc7d6da15e7a272f38f51c0388afaf491a4a0e988de1807851b9",
+      "size": 280432
     },
     {
       "path": "tests/test_weixin_state_family_guard.py",
@@ -4556,6 +4556,6 @@
   "history_included": false,
   "license": "Apache-2.0",
   "schema": "nachuan.open-source-snapshot.v1",
-  "source_head": "0300b6f80db4c52f20e6d6321df5fa94fa4b1e6b",
+  "source_head": "09450e030e12ef788ee316e3b508a8c7bcff1313",
   "source_worktree_dirty": true
 }
