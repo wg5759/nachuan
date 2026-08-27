@@ -2356,7 +2356,28 @@ def test_send_business_error_is_one_bounded_outbox_attempt(monkeypatch):
     assert calls == 1
 
 
-def test_text_outbox_marks_submitting_before_ilink_and_only_exact_ret_zero_is_done(
+def test_send_empty_json_response_follows_tencent_246_success_contract(monkeypatch):
+    bridge = _load_bridge()
+    calls = 0
+
+    def official_empty_success(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return {}
+
+    monkeypatch.setattr(bridge, "_ilink", official_empty_success)
+
+    assert bridge._send_chunk(
+        "bot-token",
+        "user-1",
+        "context-1",
+        "official-success",
+        "client-1",
+    ) == {}
+    assert calls == 1
+
+
+def test_text_outbox_marks_submitting_before_ilink_and_official_success_is_done(
     monkeypatch, tmp_path
 ):
     bridge = _load_bridge()
@@ -2405,7 +2426,7 @@ def test_text_outbox_marks_submitting_before_ilink_and_only_exact_ret_zero_is_do
 
 @pytest.mark.parametrize(
     "failure_kind",
-    ("oserror", "timeout", "http", "json", "business", "empty"),
+    ("oserror", "timeout", "http", "json", "business"),
 )
 def test_text_outbox_any_post_boundary_uncertainty_requires_recovery_without_replay(
     monkeypatch, tmp_path, failure_kind
@@ -2429,7 +2450,7 @@ def test_text_outbox_any_post_boundary_uncertainty_requires_recovery_without_rep
             raise json.JSONDecodeError("bad response", "{", 1)
         if failure_kind == "business":
             return {"ret": -2, "errmsg": "rejected or rate limited"}
-        return {}
+        raise AssertionError(f"unexpected failure kind: {failure_kind}")
 
     monkeypatch.setattr(bridge, "_ilink", uncertain)
     delivery_id, _rows = bridge._enqueue_delivery(
@@ -7890,3 +7911,18 @@ def test_sqlite_state_has_hard_page_and_wal_budgets(monkeypatch, tmp_path):
         wal_limit = int(conn.execute("PRAGMA journal_size_limit").fetchone()[0])
     assert max_pages * page_size <= bridge._STATE_DB_MAX_BYTES
     assert wal_limit == bridge._STATE_DB_MAX_WAL_BYTES
+
+
+def test_login_qrcode_falls_back_to_svg_without_pillow(monkeypatch, tmp_path, capsys):
+    bridge = _load_bridge()
+    monkeypatch.setattr(bridge, "_TOKEN_FILE", tmp_path / "ilink_token.json")
+    monkeypatch.setattr(bridge.os, "startfile", lambda _path: None, raising=False)
+
+    bridge._show_qrcode("https://example.test/weixin-login")
+
+    svg = tmp_path / "ilink_qrcode.svg"
+    assert svg.is_file()
+    assert "<svg" in svg.read_text(encoding="utf-8")
+    output = capsys.readouterr().out
+    assert str(svg) in output
+    assert "https://example.test/weixin-login" not in output

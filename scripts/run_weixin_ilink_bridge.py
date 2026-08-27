@@ -994,7 +994,7 @@ def _client_id(prefix: str = "nachuan") -> str:
 
 def _show_qrcode(data: str) -> None:
     """把二维码内容(URL)转二维码。Windows cmd 是 GBK 编码，终端 ASCII 二维码会编码崩，
-    所以**主路径=存标准白底 PNG 并自动打开**(一定能扫)，终端 ASCII 仅作附加、崩了即跳过。"""
+    所以主路径存白底 PNG；无 Pillow 时存纯 SVG。终端 ASCII 仅作附加。"""
     import qrcode
 
     qr = qrcode.QRCode(border=2)
@@ -1011,8 +1011,29 @@ def _show_qrcode(data: str) -> None:
         except Exception:  # noqa: BLE001
             print("   (请手动打开上面的图片扫码)", flush=True)
         shown = True
-    except Exception as e:  # noqa: BLE001
-        print("存二维码图失败：", e, flush=True)
+    except Exception as png_error:  # noqa: BLE001
+        try:
+            from qrcode.image.svg import SvgPathImage
+
+            p = _TOKEN_FILE.parent / "ilink_qrcode.svg"
+            qr.make_image(image_factory=SvgPathImage).save(str(p))
+            print(
+                "\n[login] 用手机微信『扫一扫』扫这张二维码登录(要当 bot 的那个号)："
+                f"\n   {p}",
+                flush=True,
+            )
+            try:
+                os.startfile(str(p))  # type: ignore[attr-defined]
+                print("   (已自动打开二维码；没弹出就手动打开上面路径)", flush=True)
+            except Exception:  # noqa: BLE001
+                print("   (请手动打开上面的二维码文件扫码)", flush=True)
+            shown = True
+        except Exception as svg_error:  # noqa: BLE001
+            print(
+                "存二维码图失败："
+                f" PNG={type(png_error).__name__} SVG={type(svg_error).__name__}",
+                flush=True,
+            )
     try:  # 附加：终端 ASCII(cmd GBK 常崩 → 崩就静默跳过，不影响主路径)
         qr.print_ascii(invert=True)
     except Exception:  # noqa: BLE001
@@ -1104,7 +1125,11 @@ def _send_chunk(
         raise RuntimeError("ilink_sendmessage_response_invalid")
     ret = response.get("ret")
     errcode = response.get("errcode")
-    if type(ret) is not int or ret != 0 or (
+    # Tencent/openclaw-weixin 2.4.6 defines an HTTP-200 JSON object without a
+    # ``ret`` field (notably ``{}``) as successful.  Keep malformed or explicit
+    # non-zero codes fail-closed, but do not turn the official empty success
+    # response into an irreversible ``recovery_required`` row.
+    if (ret is not None and (type(ret) is not int or ret != 0)) or (
         errcode is not None and (type(errcode) is not int or errcode != 0)
     ):
         raise ILinkDeliveryError("sendmessage", response)
