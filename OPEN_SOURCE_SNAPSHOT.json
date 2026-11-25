@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20261125-04",
+  "candidate_id": "nachuan-source-alpha-20261125-05",
   "file_count": 1035,
   "files": [
     {
@@ -99,8 +99,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "330b77d0a7e38a827a0f1a1d39e69300b65c50c874e8ba6a8bdcf0a4f60e20a2",
-      "size": 11067
+      "sha256": "9ef4a92376c1664b0efaa24c90834dc063adb5b623cb30a5878367098fdefc15",
+      "size": 11202
     },
     {
       "path": "README.zh-CN.md",

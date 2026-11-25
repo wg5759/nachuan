@@ -12,6 +12,8 @@ English | [简体中文完整运维与边界说明 (README.zh-CN.md)](README.zh-
 
 > **Release status**: `0.2.0` **source alpha** (Apache-2.0). Source, CLI + Local Web control plane, zero-telemetry verifier, and multi-worktree Coding Studio are open for inspection, testing, and contribution; signed consumer desktop installers and hosted enterprise multi-tenant deployments remain gated by independent release doors (see [`PACKAGING.md`](PACKAGING.md) and [`docs/CODE_SIGNING_POLICY.md`](docs/CODE_SIGNING_POLICY.md)).
 
+![Nachuan 31s Real-Machine Walkthrough](https://github.com/wg5759/nachuan/releases/download/v0.2.0-alpha/nachuan_demo_en_preview.gif)
+
 ### Core Highlights · 核心卖点速览
 
 - **60-Second Quickstart · 60 秒极速启动**：一条命令 `nachuan start` 启动 `127.77.77.77` 专属回环引擎与本地 Web 控制面。
