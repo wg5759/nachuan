@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import threading
 
 from fastapi.testclient import TestClient
@@ -93,6 +94,8 @@ def test_default_registry_uses_only_explicit_attested_cli(
     image[0x3C:0x40] = (64).to_bytes(4, "little")
     image[64:68] = b"PE\0\0"
     codex.write_bytes(image)
+    if os.name != "nt":
+        codex.chmod(0o755)
     monkeypatch.setenv("CODEX_CLI_PATH", str(codex))
     monkeypatch.setenv(
         "CODEX_CLI_SHA256", hashlib.sha256(codex.read_bytes()).hexdigest()
@@ -132,6 +135,8 @@ def test_default_registry_probes_attested_kimi_login_state(
     image[0x3C:0x40] = (64).to_bytes(4, "little")
     image[64:68] = b"PE\0\0"
     kimi.write_bytes(image)
+    if os.name != "nt":
+        kimi.chmod(0o755)
     digest = hashlib.sha256(kimi.read_bytes()).hexdigest()
     kimi_home = (tmp_path / "kimi-home").resolve()
     temp_root = (tmp_path / "kimi-temp").resolve()
@@ -178,6 +183,8 @@ def test_kimi_probe_failure_isolated_without_hiding_other_connectors(
     image[0x3C:0x40] = (64).to_bytes(4, "little")
     image[64:68] = b"PE\0\0"
     kimi.write_bytes(image)
+    if os.name != "nt":
+        kimi.chmod(0o755)
     digest = hashlib.sha256(kimi.read_bytes()).hexdigest()
     kimi_home = (tmp_path / "kimi-home").resolve()
     temp_root = (tmp_path / "kimi-temp").resolve()

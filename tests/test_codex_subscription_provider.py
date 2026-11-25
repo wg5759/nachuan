@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,8 @@ def _fake_pe(marker: bytes = b"codex") -> bytes:
 def _environment(tmp_path: Path) -> dict[str, str]:
     executable = (tmp_path / "codex.exe").resolve()
     executable.write_bytes(_fake_pe())
+    if os.name != "nt":
+        executable.chmod(0o755)
     return {
         "CODEX_CLI_PATH": str(executable),
         "CODEX_CLI_SHA256": hashlib.sha256(executable.read_bytes()).hexdigest(),

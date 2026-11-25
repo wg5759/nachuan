@@ -267,17 +267,30 @@ def _isolated_gateway_env(api_key: str = "verify-zero-telemetry-key") -> Iterato
             "NACHUAN_CONFIG_ENV_ONLY",
             "NACHUAN_OFFLINE_MODE",
             "NACHUAN_DB_MODE",
+            "NACHUAN_SECRET_FALLBACK_PASSPHRASE",
         )
     }
     with tempfile.TemporaryDirectory(
         prefix="nachuan_zt_", ignore_cleanup_errors=True
     ) as tmp_str:
-        tmp_dir = Path(tmp_str)
+        tmp_dir = Path(os.path.realpath(tmp_str))
         os.environ["USAGE_DB_PATH"] = str(tmp_dir / "usage.db")
         os.environ["GATEWAY_API_KEYS"] = api_key
         os.environ["NACHUAN_CONFIG_ENV_ONLY"] = "1"
         os.environ["NACHUAN_DB_MODE"] = "unified"
         os.environ.pop("NACHUAN_OFFLINE_MODE", None)
+        if (
+            os.name != "nt"
+            and not os.environ.get("NACHUAN_SECRET_FALLBACK_PASSPHRASE")
+            and not os.environ.get("NACHUAN_MASTER_KEY")
+            and not os.environ.get("NACHUAN_SECRET_KEYFILE")
+        ):
+            # 无头 Linux CI 沙箱无 Secret Service 时，仅在校验隔离环境内注入临时口令走 scrypt+AES-GCM，绝不回退明文
+            import secrets as _secrets
+
+            os.environ["NACHUAN_SECRET_FALLBACK_PASSPHRASE"] = (
+                f"nachuan-zt-sandbox-{_secrets.token_hex(16)}"
+            )
         config_mod.get_settings.cache_clear()
         _reset_fastapi_middleware_stack()
         guard.reset_for_tests(offline_mode=False)

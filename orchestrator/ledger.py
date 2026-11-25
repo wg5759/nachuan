@@ -697,6 +697,8 @@ class _ReaderLease:
 class TaskLedger:
     """多步任务的持久化台账。"""
 
+    _unified: bool = False
+
     def __init__(self, path: str | Path = "data/ledger.db") -> None:
         self.path = os.path.abspath(os.fspath(path))
         self._unified = is_unified_db_path(self.path)
@@ -719,6 +721,24 @@ class TaskLedger:
             int(getattr(info, "st_file_attributes", 0)) & reparse_flag
         )
 
+    @staticmethod
+    def _is_darwin_system_root_symlink(component: Path) -> bool:
+        import sys as _sys
+
+        if _sys.platform != "darwin":
+            return False
+        expected = {
+            "/var": "/private/var",
+            "/tmp": "/private/tmp",
+            "/etc": "/private/etc",
+        }.get(str(component))
+        if not expected:
+            return False
+        try:
+            return os.path.realpath(str(component)) == expected
+        except OSError:
+            return False
+
     def _assert_database_path(self, *, require_main: bool) -> None:
         lexical = Path(self.path)
         for component in reversed([lexical.parent, *lexical.parent.parents]):
@@ -726,7 +746,11 @@ class TaskLedger:
                 info = os.lstat(component)
             except FileNotFoundError:
                 continue
-            if self._is_reparse_or_symlink(info) or not stat.S_ISDIR(info.st_mode):
+            if self._is_reparse_or_symlink(info):
+                if self._is_darwin_system_root_symlink(component):
+                    continue
+                raise OSError("TaskLedger path components must be real directories")
+            if not stat.S_ISDIR(info.st_mode):
                 raise OSError("TaskLedger path components must be real directories")
         for candidate in (
             lexical,

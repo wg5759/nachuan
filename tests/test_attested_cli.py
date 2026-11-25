@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,8 @@ def test_cli_attestation_requires_absolute_executable_and_exact_hash(
 ) -> None:
     executable = (tmp_path / "claude.exe").resolve()
     executable.write_bytes(b"reviewed executable")
+    if os.name != "nt":
+        executable.chmod(0o755)
     digest = hashlib.sha256(executable.read_bytes()).hexdigest()
 
     monkeypatch.setenv("CLAUDE_CLI_PATH", str(executable))

@@ -284,6 +284,7 @@ def test_serve_sets_engine_environment_without_putting_keys_in_a_url(
         out=output,
         environment=environment,
         engine_main=engine_main,
+        port_guard=lambda _port: None,
     )
 
     assert code == 0

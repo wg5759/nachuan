@@ -1,6 +1,6 @@
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import i18n from '../i18n'
 import type { ModelInfo } from '../store'
@@ -32,6 +32,10 @@ function props(
     ...overrides
   }
 }
+
+beforeEach(async () => {
+  await i18n.changeLanguage('zh')
+})
 
 afterEach(() => {
   vi.unstubAllGlobals()

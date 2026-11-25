@@ -2163,6 +2163,7 @@ app.include_router(team_session_router)
 app.include_router(enterprise_rag_router)
 
 from gateway.routes import register_gateway_routes  # noqa: E402
+from gateway.routes.agent_ops import _spawn_job  # noqa: E402, F401
 from gateway.routes.audio_vision import (  # noqa: E402, F401
     _CHANNEL_LAPIAN_RESULT_RESERVATION_BYTES,
     _CHANNEL_MEDIA_HEARTBEAT_MAX_INTERVAL_SECONDS,

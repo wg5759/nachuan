@@ -473,7 +473,7 @@ def test_startup_failure_before_yield_closes_every_constructed_resource(
     monkeypatch.setattr(
         appmod,
         "Router",
-        lambda *, store, durable_event_sink: CloseableRouter(),
+        lambda *, store, durable_event_sink, **_kwargs: CloseableRouter(),
     )
     monkeypatch.setattr(appmod, "UsageLogger", lambda _path: Closeable("usage"))
     monkeypatch.setattr(
@@ -1372,6 +1372,8 @@ def test_lifespan_reports_sanitized_failure_after_closing_later_resources(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    monkeypatch.setenv("NACHUAN_ENABLE_PAID_MEDIA_VAULT", "1")
+    appmod.get_settings.cache_clear()
     events: list[str] = []
     secret = "SECRET usage database path and credential"
 

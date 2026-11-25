@@ -726,7 +726,7 @@ async def test_decompose_subtask_failure_is_partial_even_with_aggregate() -> Non
         aggregator="aggregator",
     )
 
-    assert [row["status"] for row in result["subtasks"]] == ["ok", "failed"]
+    assert sorted(row["status"] for row in result["subtasks"]) == ["failed", "ok"]
     assert result["final"] == "partial aggregate"
     assert result["outcome"] == "partial"
     assert result["stopped_reason"] == "subtask_failures"

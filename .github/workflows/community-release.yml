@@ -1,0 +1,228 @@
+name: community-release
+
+# 面向开源社区的洁净 Runner 跨平台发布工作流（不依赖私有商业签名证书）：
+# - 由 v* 版本标签或手动 workflow_dispatch 触发
+# - 跨平台构建 CLI / Web UI 社区包，附带完整许可证材料与 SHA256SUMS 校验清单
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 可选版本标签（留空则使用当前 ref 名称）
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: community-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24.14.0'
+  NPM_VERSION: '11.12.1'
+  UV_VERSION: '0.11.3'
+  PYTHON_VERSION: '3.12.9'
+  UV_PYTHON: '3.12.9'
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+  NODE_OPTIONS: ''
+  NODE_PATH: ''
+  NODE_EXTRA_CA_CERTS: ''
+  NODE_TLS_REJECT_UNAUTHORIZED: ''
+  ELECTRON_RUN_AS_NODE: ''
+  ELECTRON_MIRROR: ''
+  ELECTRON_BUILDER_BINARIES_MIRROR: ''
+  ELECTRON_CUSTOM_DIR: ''
+  ELECTRON_CUSTOM_FILENAME: ''
+  ELECTRON_CUSTOM_VERSION: ''
+  ELECTRON_OVERRIDE_DIST_PATH: ''
+  ESBUILD_BINARY_PATH: ''
+  npm_config_electron_mirror: ''
+  npm_config_electron_builder_binaries_mirror: ''
+  npm_config_electron_custom_dir: ''
+  npm_config_electron_custom_filename: ''
+  npm_config_electron_custom_version: ''
+  npm_config_electron_override_dist_path: ''
+  npm_config_esbuild_binary_path: ''
+  npm_config_node_options: ''
+  npm_config_script_shell: ''
+  NPM_CONFIG_STRICT_SSL: 'true'
+  PYTHONHOME: ''
+  PYTHONPATH: ''
+  PYTHONSTARTUP: ''
+  PYTHONUSERBASE: ''
+
+jobs:
+  build-community:
+    name: community-bundle (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            archive_ext: tar.gz
+          - os: macos-latest
+            target: macos-arm64
+            archive_ext: tar.gz
+          - os: windows-latest
+            target: windows-x64
+            archive_ext: zip
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Verify pinned community build toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv_ver="$(uv --version | awk '{print $2}')"
+          test "$uv_ver" = "$UV_VERSION"
+          test "$(node --version)" = "v$NODE_VERSION"
+          npm install --global "npm@$NPM_VERSION" --ignore-scripts --registry "$NPM_CONFIG_REGISTRY"
+          test "$(npm --version)" = "$NPM_VERSION"
+          uv python install "$PYTHON_VERSION"
+
+      - name: Install lifecycle-disabled desktop dependencies
+        working-directory: desktop
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck and build community Web UI
+        working-directory: desktop
+        run: |
+          npm run typecheck
+          npm run build:web
+
+      - name: Stage community CLI/Web package, license materials, and SHA256SUMS
+        id: bundle
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          ARCHIVE_EXT: ${{ matrix.archive_ext }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-${GITHUB_REF_NAME:-dev}}"
+          TAG_SAFE="$(echo "$TAG" | tr '/: ' '---')"
+          STAGE_ROOT="build/community-stage/nachuan-community-${TAG_SAFE}-${TARGET}"
+          OUT_DIR="build/community-dist/${TARGET}"
+          rm -rf "$STAGE_ROOT" "$OUT_DIR"
+          mkdir -p "$STAGE_ROOT/web-ui" "$STAGE_ROOT/licenses" "$OUT_DIR"
+
+          # 复制 Python CLI / 网关源码（无商业私钥/凭据）
+          for item in pyproject.toml uv.lock README.md LICENSE gateway orchestrator storage config scripts; do
+            if [ -e "$item" ]; then
+              cp -R "$item" "$STAGE_ROOT/"
+            fi
+          done
+          find "$STAGE_ROOT" -type d -name '__pycache__' -exec rm -rf {} +
+
+          # 复制已构建的 Web UI 静态资产
+          cp -R desktop/out-web/. "$STAGE_ROOT/web-ui/"
+
+          # 复制开源许可证与第三方声明材料
+          for lic in LICENSE NOTICE desktop/npm-license-registry.json desktop/third-party-notices; do
+            if [ -e "$lic" ]; then
+              cp -R "$lic" "$STAGE_ROOT/licenses/"
+            fi
+          done
+
+          ARCHIVE_NAME="nachuan-community-${TAG_SAFE}-${TARGET}.${ARCHIVE_EXT}"
+          if [ "$ARCHIVE_EXT" = "tar.gz" ]; then
+            tar -czf "$OUT_DIR/$ARCHIVE_NAME" -C "build/community-stage" "nachuan-community-${TAG_SAFE}-${TARGET}"
+          else
+            node -e '
+              const { execFileSync } = require("node:child_process");
+              const path = require("node:path");
+              const src = path.resolve(process.argv[1]);
+              const dst = path.resolve(process.argv[2]);
+              execFileSync("pwsh", ["-NoProfile", "-Command", `Compress-Archive -Path "${src}" -DestinationPath "${dst}" -Force`], { stdio: "inherit" });
+            ' "$STAGE_ROOT" "$OUT_DIR/$ARCHIVE_NAME"
+          fi
+
+          # 同时在发布根目录留存独立许可证摘要与 SHA256SUMS 校验清单
+          cp "$STAGE_ROOT/licenses/LICENSE" "$OUT_DIR/LICENSE" 2>/dev/null || true
+          cp desktop/npm-license-registry.json "$OUT_DIR/npm-license-registry.json"
+          (
+            cd "$OUT_DIR"
+            node -e '
+              const crypto = require("node:crypto");
+              const fs = require("node:fs");
+              const files = fs.readdirSync(".").filter((f) => f !== "SHA256SUMS" && fs.statSync(f).isFile()).sort();
+              const lines = files.map((f) => {
+                const hash = crypto.createHash("sha256").update(fs.readFileSync(f)).digest("hex");
+                return `${hash}  ${f}`;
+              });
+              fs.writeFileSync("SHA256SUMS", lines.join("\n") + "\n", "utf8");
+            '
+            cat SHA256SUMS
+          )
+          echo "archive_name=$ARCHIVE_NAME" >> "$GITHUB_OUTPUT"
+          echo "out_dir=$OUT_DIR" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nachuan-community-${{ matrix.target }}
+          path: ${{ steps.bundle.outputs.out_dir }}/**
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 30
+
+  publish-community-release:
+    name: publish-community-github-release
+    needs: build-community
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: nachuan-community-*
+          path: community-release-assets
+          merge-multiple: true
+
+      - name: Consolidate SHA256SUMS across all community platforms
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd community-release-assets
+          rm -f SHA256SUMS
+          node -e '
+            const crypto = require("node:crypto");
+            const fs = require("node:fs");
+            const files = fs.readdirSync(".").filter((f) => f !== "SHA256SUMS" && fs.statSync(f).isFile()).sort();
+            const lines = files.map((f) => {
+              const hash = crypto.createHash("sha256").update(fs.readFileSync(f)).digest("hex");
+              return `${hash}  ${f}`;
+            });
+            fs.writeFileSync("SHA256SUMS", lines.join("\n") + "\n", "utf8");
+          '
+          cat SHA256SUMS
+
+      - name: Publish community GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" community-release-assets/* \
+            --title "Nachuan Community $TAG" \
+            --generate-notes \
+            --verify-tag

@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 
 import httpx
@@ -51,6 +52,8 @@ def _fake_pe(marker: bytes) -> bytes:
 def _codex_environment(tmp_path: Path) -> dict[str, str]:
     executable = (tmp_path / "codex.exe").resolve()
     executable.write_bytes(_fake_pe(b"codex"))
+    if os.name != "nt":
+        executable.chmod(0o755)
     return {
         "CODEX_CLI_PATH": str(executable),
         "CODEX_CLI_SHA256": hashlib.sha256(executable.read_bytes()).hexdigest(),
@@ -65,6 +68,8 @@ def _codex_environment(tmp_path: Path) -> dict[str, str]:
 def _kimi_environment(tmp_path: Path) -> dict[str, str]:
     executable = (tmp_path / "kimi.exe").resolve()
     executable.write_bytes(_fake_pe(b"kimi"))
+    if os.name != "nt":
+        executable.chmod(0o755)
     return {
         "KIMI_CLI_PATH": str(executable),
         "KIMI_CLI_SHA256": hashlib.sha256(executable.read_bytes()).hexdigest(),

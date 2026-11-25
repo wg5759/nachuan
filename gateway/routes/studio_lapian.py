@@ -58,6 +58,10 @@ def _app_mod():
     return _mod
 
 
+def _request_app(request: Request) -> Any:
+    return request.scope.get("app") or _app_mod().app
+
+
 def _require_media_studio_enabled() -> None:
     if not _app_mod().get_settings().enable_media_studio:
         raise HTTPException(
@@ -253,13 +257,13 @@ async def studio_plan(request: Request, _: str = Depends(require_api_key)):
 @router.post("/v1/studio/execute")
 async def studio_execute(request: Request, _: str = Depends(require_api_key)):
     """③ 按方案成片：{plan} → 起后台任务，返回 {job_id}（逐镜生成→拼接）。"""
-    _require_media_studio_enabled()
-    app_mod = _app_mod()
     if not current_runtime_profile().allows(RuntimeCapability.STUDIO_EXECUTION):
         raise HTTPException(
             status_code=503,
             detail="当前运行配置已关闭工作室执行；需要独立低权限 worker",
         )
+    _require_media_studio_enabled()
+    app_mod = _app_mod()
     body = await request.json()
     plan = body.get("plan")
     if not isinstance(plan, dict) or not isinstance(plan.get("shots"), list):
@@ -286,7 +290,7 @@ async def studio_execute(request: Request, _: str = Depends(require_api_key)):
     if held is not None:
         return held
     try:
-        job_id = start_execution(request.app.state.router, plan, out_dir)
+        job_id = app_mod.start_execution(request.app.state.router, plan, out_dir)
     except Exception:
         if approval_id:
             request.app.state.approvals.finish_action(approval_id, success=False)
@@ -356,8 +360,8 @@ async def lapian_endpoint(
             return claim.response
         payload = frame.raw
         try:
-            selected_vision_model = pick_vision_model(
-                request.app.state.router, vision_model
+            selected_vision_model = app_mod.pick_vision_model(
+                _request_app(request).state.router, vision_model
             )
         except BaseException:
             await _abandon_channel_media_pre_provider(store, claim)
@@ -417,7 +421,7 @@ async def lapian_endpoint(
         with scope:
             run_task = asyncio.create_task(
                 app_mod.run_lapian(
-                    request.app.state.router,
+                    _request_app(request).state.router,
                     path,
                     vision_model=vision_model,
                     synth_model=synth_model,

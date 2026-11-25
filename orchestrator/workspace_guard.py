@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 from pathlib import Path
 
 from gateway.config import PROJECT_ROOT, get_settings
@@ -56,9 +57,40 @@ def _is_reparse(path: Path) -> bool:
         return True
 
 
+_DARWIN_SYSTEM_ROOT_SYMLINKS = {
+    "/var": "/private/var",
+    "/tmp": "/private/tmp",
+    "/etc": "/private/etc",
+}
+
+
+def _is_darwin_system_root_symlink(path: Path) -> bool:
+    if sys.platform != "darwin":
+        return False
+    expected = _DARWIN_SYSTEM_ROOT_SYMLINKS.get(str(path))
+    if not expected:
+        return False
+    try:
+        return os.path.realpath(str(path)) == expected
+    except OSError:
+        return False
+
+
+def _normalize_darwin_system_prefix(path: Path) -> Path:
+    if sys.platform != "darwin":
+        return path
+    raw = str(path)
+    for alias, target in _DARWIN_SYSTEM_ROOT_SYMLINKS.items():
+        if raw == alias or raw.startswith(alias + "/"):
+            return Path(target + raw[len(alias) :])
+    return path
+
+
 def _assert_existing_components_are_real(path: Path) -> None:
     for candidate in reversed((path, *path.parents)):
         if candidate.exists() and _is_reparse(candidate):
+            if _is_darwin_system_root_symlink(candidate):
+                continue
             raise WorkspaceBoundaryError(
                 "Agent 路径不能经过符号链接、目录联接或其它重解析点"
             )
@@ -138,8 +170,9 @@ def resolve_workspace(workdir: str, *, create_root: bool = True) -> Path:
 
     # ``resolve`` catches escapes; rejecting every existing component below
     # the root also removes same-tree symlink/junction ambiguity.
+    lexical_for_rel = _normalize_darwin_system_prefix(lexical)
     try:
-        relative = lexical.relative_to(Path(str(root)))
+        relative = lexical_for_rel.relative_to(Path(str(root)))
     except ValueError as exc:
         raise WorkspaceBoundaryError("workdir 的词法路径越出 Agent 工作区") from exc
     current = Path(str(root))

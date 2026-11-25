@@ -7,6 +7,7 @@ import hmac
 import os
 import re
 import stat as stat_module
+import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +24,25 @@ class AttestedCliPinError(RuntimeError):
     """Stable failure while holding an executable identity through one run."""
 
 
+_DARWIN_SYSTEM_ROOT_SYMLINKS = {
+    "/var": "/private/var",
+    "/tmp": "/private/tmp",
+    "/etc": "/private/etc",
+}
+
+
+def _is_darwin_system_root_symlink(component: Path) -> bool:
+    if sys.platform != "darwin":
+        return False
+    expected = _DARWIN_SYSTEM_ROOT_SYMLINKS.get(str(component))
+    if not expected:
+        return False
+    try:
+        return os.path.realpath(str(component)) == expected
+    except OSError:
+        return False
+
+
 def _path_has_redirect(path: Path) -> bool:
     try:
         for component in reversed((path, *path.parents)):
@@ -32,6 +52,8 @@ def _path_has_redirect(path: Path) -> bool:
                 attributes
                 & int(getattr(stat_module, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
             ):
+                if _is_darwin_system_root_symlink(component):
+                    continue
                 return True
         return False
     except OSError:

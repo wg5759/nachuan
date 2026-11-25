@@ -772,7 +772,7 @@ def test_cli_excludes_a_lock_candidate_whose_pep508_marker_is_false(tmp_path: Pa
   "bomFormat": "CycloneDX",
   "components": [
     {"name": "windows-demo", "purl": "pkg:pypi/windows-demo@1.0", "type": "library", "version": "1.0"},
-    {"name": "linux-only", "purl": "pkg:pypi/linux-only@9.0", "properties": [{"name": "uv:package:marker", "value": "sys_platform == 'linux'"}], "type": "library", "version": "9.0"}
+    {"name": "linux-only", "purl": "pkg:pypi/linux-only@9.0", "properties": [{"name": "uv:package:marker", "value": "sys_platform == 'plan9'"}], "type": "library", "version": "9.0"}
   ],
   "specVersion": "1.5",
   "version": 1

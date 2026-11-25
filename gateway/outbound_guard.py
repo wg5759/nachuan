@@ -515,6 +515,8 @@ class OutboundGuard:
 
 
 _GLOBAL_GUARD = OutboundGuard()
+_REAL_ASYNC_CLIENT = httpx.AsyncClient
+_REAL_SYNC_CLIENT = httpx.Client
 _PATCH_LOCK = threading.Lock()
 _HTTPX_PATCHED = False
 _ORIG_CLIENT_SEND: Any = None
@@ -722,6 +724,12 @@ def create_async_client(
     """创建挂载 ``AuditedAsyncTransport`` 的 ``httpx.AsyncClient``。"""
     raw_transport = kwargs.pop("transport", None)
     raw_mounts = kwargs.pop("mounts", None)
+    if (
+        raw_transport is None
+        and raw_mounts is None
+        and httpx.AsyncClient is not _REAL_ASYNC_CLIENT
+    ):
+        return httpx.AsyncClient(**kwargs)
     if raw_transport is not None:
         transport = (
             raw_transport
@@ -753,6 +761,12 @@ def create_sync_client(
     """创建挂载 ``AuditedSyncTransport`` 的 ``httpx.Client``。"""
     raw_transport = kwargs.pop("transport", None)
     raw_mounts = kwargs.pop("mounts", None)
+    if (
+        raw_transport is None
+        and raw_mounts is None
+        and httpx.Client is not _REAL_SYNC_CLIENT
+    ):
+        return httpx.Client(**kwargs)
     if raw_transport is not None:
         transport = (
             raw_transport

@@ -96,6 +96,9 @@ def _restore_process_environment_after_each_test():
     finally:
         os.environ.clear()
         os.environ.update(before)
+        from gateway.config import get_settings
+
+        get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -122,6 +125,7 @@ def paid_media_auth_headers(monkeypatch):
     """Explicitly enter the engine-only paid-media trust domain for one test."""
     secret = "sk-paid-media-" + ("a" * 64)
     monkeypatch.setenv("NACHUAN_PAID_MEDIA_API_KEY", secret)
+    monkeypatch.setenv("NACHUAN_ENABLE_PAID_MEDIA_VAULT", "1")
     from gateway.config import get_settings
 
     get_settings.cache_clear()

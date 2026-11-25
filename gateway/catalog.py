@@ -144,14 +144,6 @@ PROVIDER_PRESETS: list[dict[str, Any]] = [
                       skills=["code", "reasoning", "long"])],
     },
     {
-        "name": "agnes", "label": "Agnes AI", "region": "cn",
-        "type": "openai_compat", "auth": "api_key", "base_url": "https://apihub.agnes-ai.com/v1",
-        "note": "2.5-flash 视觉/工具主力；image/video 为媒体生成模型（媒体链路另行接入）",
-        "models": [_m("agnes-2.5-flash", "agnes-2.5-flash", "Agnes 2.5 Flash（视觉+工具）", "cheap", rank=6, skills=["zh", "vision", "fast"]),
-                   _m("agnes-image-2.5-flash", "agnes-image-2.5-flash", "Agnes Image 2.5 Flash（生图）", "cheap", skills=["zh", "image"]),
-                   _m("agnes-video-2.5-flash", "agnes-video-2.5-flash", "Agnes Video 2.5 Flash（生视频）", "cheap", skills=["zh", "video"])],
-    },
-    {
         "name": "moonshot", "label": "月之暗面 Kimi", "region": "cn",
         "type": "openai_compat", "auth": "api_key", "base_url": "https://api.moonshot.cn/v1",
         "auto_discover_models": True,

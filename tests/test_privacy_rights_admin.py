@@ -319,9 +319,22 @@ def test_gateway_app_wires_privacy_router_and_dedicated_database(
         captured["path"] = path
         return marker
 
+    from gateway.config import get_settings
+    from storage.unified_db import resolve_db_path
+
     monkeypatch.setattr(privacy_admin, "PrivacyRightsLedger", open_ledger)
     assert privacy_admin.initialize_privacy_rights(tmp_path) is marker
-    assert captured["path"] == tmp_path / "privacy_rights.db"
+    assert captured["path"] == resolve_db_path(
+        "privacy_rights", data_dir=tmp_path, db_mode=get_settings().db_mode
+    )
+    monkeypatch.setenv("NACHUAN_DB_MODE", "legacy")
+    get_settings.cache_clear()
+    try:
+        assert privacy_admin.initialize_privacy_rights(tmp_path) is marker
+        assert captured["path"] == tmp_path / "privacy_rights.db"
+    finally:
+        monkeypatch.delenv("NACHUAN_DB_MODE", raising=False)
+        get_settings.cache_clear()
 
 
 def test_request_capacity_is_stable_409_and_keeps_existing_request(tmp_path) -> None:

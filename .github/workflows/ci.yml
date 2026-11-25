@@ -140,7 +140,7 @@ jobs:
         run: node desktop/scripts/python-release-policy.mjs test
       - name: Zero-Telemetry & Air-Gapped Outbound Firewall Attestation
         shell: pwsh
-        run: uv run --no-sync python scripts/verify_zero_telemetry.py --json
+        run: .\.venv\Scripts\python.exe -X utf8 -B scripts/verify_zero_telemetry.py --json
 
   backend-unix:
     name: backend-unix (${{ matrix.os }})
@@ -180,4 +180,4 @@ jobs:
         run: node desktop/scripts/unix-backend-ci-test.mjs
       - name: Zero-Telemetry & Air-Gapped Outbound Firewall Attestation (Unix)
         shell: bash
-        run: uv run --no-sync python scripts/verify_zero_telemetry.py --json
+        run: ./.venv/bin/python -X utf8 -B scripts/verify_zero_telemetry.py --json

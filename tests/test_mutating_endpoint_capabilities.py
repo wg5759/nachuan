@@ -182,24 +182,30 @@ def test_studio_execution_requires_capability(monkeypatch, approval_auth_headers
         calls += 1
         return "studio-job"
 
+    monkeypatch.setenv("NACHUAN_ENABLE_MEDIA_STUDIO", "1")
+    appmod.get_settings.cache_clear()
     monkeypatch.setattr(appmod, "start_execution", fake_start)
     payload = {
         "plan": {"title": "t", "shots": [{"n": 1, "desc": "x", "seconds": 5}]},
         "user_id": "studio-cap-user",
     }
-    with TestClient(app) as client:
-        held = client.post("/v1/studio/execute", headers=AUTH, json=payload).json()
-        assert held["needs_approval"] is True and calls == 0
-        aid = held["approval_id"]
-        client.post(
-            f"/v1/approvals/{aid}/resolve",
-            headers=approval_auth_headers,
-            json={"decision": "approve"},
-        )
-        ok = client.post(
-            "/v1/studio/execute", headers=AUTH, json={**payload, "approval_id": aid}
-        )
-    assert ok.status_code == 200 and ok.json()["job_id"] == "studio-job" and calls == 1
+    try:
+        with TestClient(app) as client:
+            held = client.post("/v1/studio/execute", headers=AUTH, json=payload).json()
+            assert held["needs_approval"] is True and calls == 0
+            aid = held["approval_id"]
+            client.post(
+                f"/v1/approvals/{aid}/resolve",
+                headers=approval_auth_headers,
+                json={"decision": "approve"},
+            )
+            ok = client.post(
+                "/v1/studio/execute", headers=AUTH, json={**payload, "approval_id": aid}
+            )
+        assert ok.status_code == 200 and ok.json()["job_id"] == "studio-job" and calls == 1
+    finally:
+        monkeypatch.delenv("NACHUAN_ENABLE_MEDIA_STUDIO", raising=False)
+        appmod.get_settings.cache_clear()
 
 
 def test_daily_video_launcher_is_closed_before_capability(

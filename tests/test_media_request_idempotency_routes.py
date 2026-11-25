@@ -2050,6 +2050,8 @@ def test_media_ledger_never_stores_raw_bearer_or_idempotency_key(media_client) -
 
 
 def test_gateway_lifespan_creates_and_closes_paid_media_store(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NACHUAN_ENABLE_PAID_MEDIA_VAULT", "1")
+    appmod.get_settings.cache_clear()
     created: list[DurableMediaRequestStore] = []
 
     def factory(_path) -> DurableMediaRequestStore:
@@ -2058,11 +2060,15 @@ def test_gateway_lifespan_creates_and_closes_paid_media_store(tmp_path, monkeypa
         return store
 
     monkeypatch.setattr(appmod, "DurableMediaRequestStore", factory, raising=False)
-    with TestClient(appmod.app):
-        assert created
-        assert appmod.app.state.media_requests is created[0]
-        assert created[0]._keeper is not None
-    assert created[0]._keeper is None
+    try:
+        with TestClient(appmod.app):
+            assert created
+            assert appmod.app.state.media_requests is created[0]
+            assert created[0]._keeper is not None
+        assert created[0]._keeper is None
+    finally:
+        monkeypatch.delenv("NACHUAN_ENABLE_PAID_MEDIA_VAULT", raising=False)
+        appmod.get_settings.cache_clear()
 
 
 @pytest.mark.parametrize(

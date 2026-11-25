@@ -65,9 +65,11 @@ def test_p3_health_exposes_coding_control_plane_feature():
         assert features.get("outbound_audit") is True
 
 
-def test_p3_list_worktrees_non_git_dir_degrades_gracefully(tmp_path: Path):
+def test_p3_list_worktrees_non_git_dir_degrades_gracefully(tmp_path: Path, monkeypatch):
     plain_dir = tmp_path / "not-a-git-repo"
     plain_dir.mkdir(parents=True, exist_ok=True)
+    # 阻断 git 向上穿越父目录（如 CI 将 TEMP 放在仓库内 build/ci-python-temp 时误命中外层 .git）
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.resolve()))
     with TestClient(app) as client:
         resp = client.get(
             "/v1/workspace/worktrees",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import subprocess
 from pathlib import Path
 
@@ -62,6 +63,8 @@ async def test_claude_plain_chat_has_no_execution_or_full_disk_capability(
     provider = ClaudeCodeProvider()
     attested = tmp_path / "claude.exe"
     attested.write_bytes(b"attested claude fixture")
+    if os.name != "nt":
+        attested.chmod(0o755)
     provider._cli = str(attested)
     provider._cli_sha256 = hashlib.sha256(attested.read_bytes()).hexdigest()
     provider.enabled = True

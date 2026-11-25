@@ -409,6 +409,9 @@ def test_store_media_launch_rejects_env_attestation_without_final_manifest(
     ffprobe = tmp_path / "ffprobe.exe"
     ffmpeg.write_bytes(b"MZ-store-profile-test")
     ffprobe.write_bytes(b"MZ-store-profile-test-probe")
+    if os.name != "nt":
+        ffmpeg.chmod(0o755)
+        ffprobe.chmod(0o755)
     monkeypatch.setenv("NACHUAN_RUNTIME_PROFILE", "store")
     monkeypatch.setenv("FFMPEG_BIN", str(ffmpeg.resolve()))
     monkeypatch.setenv("FFMPEG_SHA256", hashlib.sha256(ffmpeg.read_bytes()).hexdigest())
@@ -428,6 +431,9 @@ def test_store_media_launch_accepts_exact_final_manifest_role(
     ffprobe = media / "ffprobe.exe"
     ffmpeg.write_bytes(b"MZ-store-profile-test")
     ffprobe.write_bytes(b"MZ-store-profile-test-probe")
+    if os.name != "nt":
+        ffmpeg.chmod(0o755)
+        ffprobe.chmod(0o755)
     manifest = tmp_path / "media-runtime-manifest.json"
     manifest.write_text(
         json.dumps(

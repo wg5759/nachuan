@@ -8,10 +8,12 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from gateway.app import app
+from gateway.config import get_settings
 from orchestrator.durable_event_log import (
     DurableWorkflowEventLog,
     DurableWorkflowEventUnavailable,
 )
+from storage.unified_db import resolve_db_path
 
 AUTH = {"Authorization": "Bearer test-key"}
 
@@ -58,7 +60,11 @@ def test_pipeline_echo():
         assert d["final"]
         workflow_id = d["workflow_id"]
     log = DurableWorkflowEventLog(
-        Path(str(os.environ["USAGE_DB_PATH"])).parent / "workflow-events.db"
+        resolve_db_path(
+            "workflow-events",
+            data_dir=Path(str(os.environ["USAGE_DB_PATH"])).parent,
+            db_mode=get_settings().db_mode,
+        )
     )
     try:
         events = log.list_events(workflow_id)

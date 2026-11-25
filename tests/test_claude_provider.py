@@ -88,6 +88,8 @@ def _provider(tmp_path: Path, *, timeout_s: float = 180.0) -> ClaudeCodeProvider
     provider = ClaudeCodeProvider(timeout_s=timeout_s)
     attested = tmp_path / "claude.exe"
     attested.write_bytes(b"attested claude test executable")
+    if os.name != "nt":
+        attested.chmod(0o755)
     provider._cli = str(attested)
     provider._cli_sha256 = hashlib.sha256(attested.read_bytes()).hexdigest()
     provider.enabled = True

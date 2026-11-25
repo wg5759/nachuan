@@ -270,6 +270,8 @@ describe('P1 slim store, zero-license-blocker i18n, and modular ChatPane', () =>
       }
     })
 
+    const { default: freshI18n } = await import('./i18n')
+    await freshI18n.changeLanguage('zh')
     const { probeEngineHealth } = await import('./api')
     const { useAppStore } = await import('./store')
     const {

@@ -279,7 +279,7 @@ async def test_agent_run_stream_body_close_drains_real_producer(monkeypatch) -> 
     async def fake_capability(**_kwargs):
         return None, None
 
-    async def fake_compress(_router, _conversation_id, history):
+    async def fake_compress(_router, _conversation_id, history, **_kwargs):
         return history
 
     async def fake_orchestrated(*_args, **kwargs):

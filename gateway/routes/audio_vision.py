@@ -47,6 +47,10 @@ def _app_mod():
     return _mod
 
 
+def _request_app(request: Request) -> Any:
+    return request.scope.get("app") or _app_mod().app
+
+
 def _decode_bridge_channel_media(
     data: bytes,
     *,
@@ -269,10 +273,18 @@ async def _channel_media_heartbeat_loop(
     claim: DurableMediaRequestClaim,
     lost: asyncio.Event,
 ) -> None:
+    max_interval = float(
+        getattr(
+            _app_mod(),
+            "_CHANNEL_MEDIA_HEARTBEAT_MAX_INTERVAL_SECONDS",
+            _CHANNEL_MEDIA_HEARTBEAT_MAX_INTERVAL_SECONDS,
+        )
+    )
     interval = max(
         0.001,
         min(
             _CHANNEL_MEDIA_HEARTBEAT_MAX_INTERVAL_SECONDS,
+            max_interval,
             store.lease_seconds / 3.0,
         ),
     )
@@ -421,8 +433,8 @@ async def vision_endpoint(
         expected_params={"question": normalized_question, "model": model or ""},
     )
     if frame is None:
-        text = await describe_image(
-            request.app.state.router,
+        text = await app_mod.describe_image(
+            _request_app(request).state.router,
             data,
             question=normalized_question,
             model=model,
@@ -443,7 +455,7 @@ async def vision_endpoint(
             )
         return claim.response
     try:
-        selected_model = pick_vision_model(request.app.state.router, model)
+        selected_model = app_mod.pick_vision_model(_request_app(request).state.router, model)
     except BaseException:
         await _abandon_channel_media_pre_provider(store, claim)
         raise
@@ -463,8 +475,8 @@ async def vision_endpoint(
         text = await _await_channel_media_provider(
             store,
             claim,
-            describe_image(
-                request.app.state.router,
+            app_mod.describe_image(
+                _request_app(request).state.router,
                 frame.raw,
                 question=normalized_question,
                 model=selected_model,

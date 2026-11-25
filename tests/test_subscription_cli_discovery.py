@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 
 import pytest
 
@@ -58,9 +59,15 @@ def _fake_pe(marker: bytes) -> bytes:
     return bytes(payload)
 
 
+def _write_fake_pe(path, marker: bytes) -> None:
+    path.write_bytes(_fake_pe(marker))
+    if os.name != "nt":
+        path.chmod(0o755)
+
+
 def test_attested_pe_without_a_worker_probe_stays_installed_unprobed(tmp_path) -> None:
     codex = (tmp_path / "codex.exe").resolve()
-    codex.write_bytes(_fake_pe(b"codex"))
+    _write_fake_pe(codex, b"codex")
     environment = {
         "CODEX_CLI_PATH": str(codex),
         "CODEX_CLI_SHA256": hashlib.sha256(codex.read_bytes()).hexdigest(),
@@ -75,8 +82,8 @@ def test_attested_pe_without_a_worker_probe_stays_installed_unprobed(tmp_path) -
 def test_attested_pe_versions_are_public_without_claiming_authentication(tmp_path) -> None:
     codex = (tmp_path / "codex.exe").resolve()
     kimi = (tmp_path / "kimi.exe").resolve()
-    codex.write_bytes(_fake_pe(b"codex"))
-    kimi.write_bytes(_fake_pe(b"kimi"))
+    _write_fake_pe(codex, b"codex")
+    _write_fake_pe(kimi, b"kimi")
     environment = {
         "CODEX_CLI_PATH": str(codex),
         "CODEX_CLI_SHA256": hashlib.sha256(codex.read_bytes()).hexdigest(),
@@ -125,7 +132,7 @@ def test_attested_pe_versions_are_public_without_claiming_authentication(tmp_pat
 
 def test_kimi_official_version_probe_accepts_bare_semver(tmp_path) -> None:
     kimi = (tmp_path / "kimi.exe").resolve()
-    kimi.write_bytes(_fake_pe(b"kimi"))
+    _write_fake_pe(kimi, b"kimi")
     environment = {
         "KIMI_CLI_PATH": str(kimi),
         "KIMI_CLI_SHA256": hashlib.sha256(kimi.read_bytes()).hexdigest(),
@@ -146,7 +153,7 @@ def test_kimi_official_version_probe_accepts_bare_semver(tmp_path) -> None:
 
 def test_version_probe_rejects_a_banner_from_the_wrong_cli(tmp_path) -> None:
     codex = (tmp_path / "codex.exe").resolve()
-    codex.write_bytes(_fake_pe(b"codex"))
+    _write_fake_pe(codex, b"codex")
     environment = {
         "CODEX_CLI_PATH": str(codex),
         "CODEX_CLI_SHA256": hashlib.sha256(codex.read_bytes()).hexdigest(),
@@ -201,7 +208,7 @@ def test_exe_extension_without_a_pe_image_is_untrusted(tmp_path) -> None:
 
 def test_old_attested_cli_maps_to_version_unsupported(tmp_path) -> None:
     kimi = (tmp_path / "kimi.exe").resolve()
-    kimi.write_bytes(_fake_pe(b"kimi"))
+    _write_fake_pe(kimi, b"kimi")
     environment = {
         "KIMI_CLI_PATH": str(kimi),
         "KIMI_CLI_SHA256": hashlib.sha256(kimi.read_bytes()).hexdigest(),

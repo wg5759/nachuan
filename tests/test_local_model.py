@@ -873,9 +873,22 @@ def test_download_fsyncs_before_publish_and_removes_failed_published_file(
         def iter_bytes(self, _size):
             yield payload
 
+    class _Client:
+        def __init__(self, *_args, **_kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def stream(self, *_args, **_kwargs):
+            return _Response()
+
     import httpx
 
-    monkeypatch.setattr(httpx, "stream", lambda *_args, **_kwargs: _Response())
+    monkeypatch.setattr(httpx, "Client", _Client)
     events: list[str] = []
     real_fsync = local_model.os.fsync
     real_replace = local_model.os.replace

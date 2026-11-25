@@ -353,4 +353,6 @@ def test_shutdown_signal_exits_zero_and_releases_the_loopback_port(
 
     assert returncode == 0
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        if sys.platform != "win32":
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         probe.bind(("127.0.0.1", port))

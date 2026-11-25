@@ -31,6 +31,8 @@ def _fake_pe(marker: bytes = b"codex") -> bytes:
 def _request(tmp_path: Path, *, operation: str, prompt: str = "") -> CodexWorkerRequest:
     executable = (tmp_path / "codex.exe").resolve()
     executable.write_bytes(_fake_pe())
+    if os.name != "nt":
+        executable.chmod(0o755)
     return CodexWorkerRequest(
         operation=operation,  # type: ignore[arg-type]
         executable_path=str(executable),

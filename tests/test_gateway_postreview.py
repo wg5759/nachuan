@@ -1070,7 +1070,7 @@ async def test_grow_memory_task_has_strong_reference_until_completion(monkeypatc
 
     monkeypatch.setattr(appmod, "extract_and_store", fake_extract)
     appmod.app.state.background_tasks = set()
-    task = appmod._grow_memory(Router(), "user", "assistant")
+    task = appmod._grow_memory(Router(), "user", "assistant", source_model="agnes-flash")
     await asyncio.wait_for(started.wait(), timeout=0.5)
     assert task is not None
     assert task in appmod.app.state.background_tasks

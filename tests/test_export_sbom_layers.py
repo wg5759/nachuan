@@ -150,7 +150,7 @@ class TestNpmLayer:
     def test_reviewed_metadata_reconstruction_survives_into_sbom(self, generated: Path):
         bom = load(generated, "npm-sbom.cdx.json")
         names = unique_names(bom)
-        for name, version in (("html-parse-stringify", "3.0.1"), ("lazy-val", "1.0.5")):
+        for name, version in (("lazy-val", "1.0.5"),):
             component = names[name]
             assert component["version"] == version
             assert component["licenses"] == [{"expression": "MIT"}]

@@ -690,13 +690,20 @@ def _posix_process_group_exists(group: int) -> bool:
     return True
 
 
-def _wait_posix_group_empty(group: int, deadline: float) -> bool:
-    while _posix_process_group_exists(group):
+def _wait_posix_group_empty(
+    group: int,
+    deadline: float,
+    process: subprocess.Popen[bytes] | None = None,
+) -> bool:
+    while True:
+        if process is not None and process.poll() is None:
+            pass
+        if not _posix_process_group_exists(group):
+            return True
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return False
         time.sleep(min(0.01, remaining))
-    return True
 
 
 def _kill_contained_process_tree(
@@ -733,12 +740,22 @@ def _kill_contained_process_tree(
         os.killpg(posix_group, signal.SIGTERM)
     except ProcessLookupError:
         pass
-    if not _wait_posix_group_empty(posix_group, deadline):
+    term_deadline = min(deadline, time.monotonic() + 0.5)
+    try:
+        process.wait(timeout=max(0.0, term_deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        pass
+    if not _wait_posix_group_empty(posix_group, term_deadline, process):
         try:
             os.killpg(posix_group, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        if not _wait_posix_group_empty(posix_group, deadline):
+        kill_deadline = max(deadline, time.monotonic() + 1.0)
+        try:
+            process.wait(timeout=max(0.0, kill_deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            return False
+        if not _wait_posix_group_empty(posix_group, kill_deadline, process):
             return False
     try:
         process.wait(timeout=max(0.0, deadline - time.monotonic()))
