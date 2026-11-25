@@ -47,8 +47,7 @@ Kimi Code 用户订阅的通用文本入口也已通过真实连接、单次回�
 
 当前代码定位是 **Windows 单机、单 owner 的生产加固工作树**，不是多租户 SaaS。native CLI/宿主启动路径已用
 故障关闭 stopgap 收口，但最终残余审计仍有智能体宿主文件工具遍历 owner 秘密的 P0；关闭前不是生产候选。完整
-审计、P0/P1 闭环、未验证项和上线阻塞见
-[`docs/PRODUCTION_AUDIT_20260713.md`](docs/PRODUCTION_AUDIT_20260713.md)。MSERT 已命中主机上的 Defender
+审计、P0/P1 闭环、未验证项和上线阻塞见内部审计基线 `PRODUCTION_AUDIT_20260713`（安全证据见 [THIRD_PARTY_SECURITY.md](docs/THIRD_PARTY_SECURITY.md)）。MSERT 已命中主机上的 Defender
 篡改注册表状态，策略虽已恢复但 Defender 平台仍不可用；最终安装包也尚未完成双引擎扫描和正式签名，因此不能宣称
 “无病毒/无木马”或已经可上架。逐 provider-call attempt 的本地不可变账本与恢复查询已经落地，旧聚合表仍不得用于
 商业结算；供应商发票对账、预算预留/扣减、多币种和退款/结案流程尚未闭环，因此商业计费仍是 `NOT CERTIFIED`。

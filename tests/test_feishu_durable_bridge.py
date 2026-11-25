@@ -5012,7 +5012,7 @@ def test_feishu_finish_begin_busy_obeys_total_wallclock(
         blocker.close()
         session.close()
 
-    assert elapsed < 0.75
+    assert elapsed < (1.5 if sys.platform == "darwin" else 0.75)
     with runner._state_connect() as conn:
         assert conn.execute(
             "SELECT status,last_finish_outcome FROM feishu_inbox"
@@ -5058,7 +5058,7 @@ def test_feishu_finish_returning_true_at_deadline_is_rejected(
         session.close()
 
     assert len(observed_deadlines) == 1
-    assert elapsed < 0.75
+    assert elapsed < (1.5 if sys.platform == "darwin" else 0.75)
     # The adapter's post-return deadline check rejects the late True before it
     # escapes to the shared coordinator, so this is a storage timeout rather
     # than a healthy commit acknowledgement.

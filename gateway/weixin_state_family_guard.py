@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import sys
 import time
 from typing import BinaryIO, Callable, Iterator
 
@@ -1020,6 +1021,27 @@ def _same_pinned_identity(current: _Identity, expected: _Identity) -> bool:
 
 
 def _same_object_identity(current: _Identity, expected: _Identity) -> bool:
+    # On macOS APFS, a directory's st_nlink tracks total entries (including
+    # regular files), so creating cloned files inside stage/ legitimately
+    # increments st_nlink without replacing the directory inode itself.
+    # Directory entry drift is independently enforced by parent enumeration checks.
+    ignore_dir_nlink = (
+        sys.platform == "darwin"
+        and stat.S_ISDIR(current.mode_type)
+        and stat.S_ISDIR(expected.mode_type)
+    )
+    if ignore_dir_nlink:
+        return (
+            current.volume_serial,
+            current.file_index,
+            current.mode_type,
+            current.attributes,
+        ) == (
+            expected.volume_serial,
+            expected.file_index,
+            expected.mode_type,
+            expected.attributes,
+        )
     return (
         current.volume_serial,
         current.file_index,

@@ -7,6 +7,7 @@ setuptools 式命名空间标记（source '-'）、各类 fail-closed 拒绝。
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -41,7 +42,7 @@ def test_empty_regular_file_is_a_legitimate_source(roots):
     target = roots["site_packages"] / "demo" / "__init__.py"
     target.parent.mkdir(parents=True)
     target.write_bytes(b"")
-    key = str(target.resolve()).lower()
+    key = os.path.normcase(str(target.resolve()))
     roots["distribution_owners"][key] = {
         "kind": "python-distribution",
         "name": "demo",

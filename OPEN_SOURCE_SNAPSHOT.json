@@ -1,5 +1,5 @@
 {
-  "candidate_id": "nachuan-source-alpha-20261125-03",
+  "candidate_id": "nachuan-source-alpha-20261125-04",
   "file_count": 1035,
   "files": [
     {
@@ -29,8 +29,8 @@
     },
     {
       "path": ".github/workflows/community-release.yml",
-      "sha256": "7138ad121f557e04139105697eb2bd79ddaf9d445ce1367def12e5625215cf7d",
-      "size": 8280
+      "sha256": "56ed1cc4baf1d03ba10898d1c1b942d7fbaf6d39b82133ece13e26a4204f8f9e",
+      "size": 8582
     },
     {
       "path": ".github/workflows/finalize-early-access.yml",
@@ -104,8 +104,8 @@
     },
     {
       "path": "README.zh-CN.md",
-      "sha256": "4ccd1ae36a13246784296f11bab6f9d17f8f95d285176a8fd991969624236510",
-      "size": 21621
+      "sha256": "4ee6b113d50c453c02107f9fed64e3d34065ffc0cbcd9e1247f91c984ca65708",
+      "size": 21671
     },
     {
       "path": "SECURITY.md",
@@ -714,8 +714,8 @@
     },
     {
       "path": "desktop/scripts/unix-backend-ci-test.mjs",
-      "sha256": "187834882cc0c8257cc9893341fe8917c57a5353164c48f86298981c88965b62",
-      "size": 5578
+      "sha256": "342a35e63e74449bfe89db5e35a7d012f1caeadc78b4eaeea12e4ce46c267442",
+      "size": 5618
     },
     {
       "path": "desktop/scripts/update-envelope.mjs",
@@ -2949,8 +2949,8 @@
     },
     {
       "path": "gateway/weixin_state_family_guard.py",
-      "sha256": "48e85026b00a612acd71ca10b419c5d76d2e2222c109b14bd0130fc23115bf0a",
-      "size": 43129
+      "sha256": "01ad59cc86b45f6d5e612c29b1f6ee0c318011fcbccf39a0fd4ae695163c49f4",
+      "size": 43930
     },
     {
       "path": "gateway/windows_installed_drain_pipe.py",
@@ -3869,8 +3869,8 @@
     },
     {
       "path": "tests/test_conv_persist.py",
-      "sha256": "1c67344a5a7ec360491a09384d57bcf4fa0816921b13ed63961dc2a14e5fa170",
-      "size": 71135
+      "sha256": "d95c88757679c714ff2eb2f7b49954cb1cdff1adf1fdf769bf3faaf8b9728232",
+      "size": 71174
     },
     {
       "path": "tests/test_conv_summary.py",
@@ -4004,8 +4004,8 @@
     },
     {
       "path": "tests/test_export_python_payload_ownership.py",
-      "sha256": "76e2126a2e00e96d81cd9e60db8b3abdd53794b5e0b43134c08aa59c9cc797fd",
-      "size": 4067
+      "sha256": "fa724c22ca22aef32bac286942ce5dbdf12fe7cd6ebc8494ab327c84d466d542",
+      "size": 4087
     },
     {
       "path": "tests/test_export_sbom_layers.py",
@@ -4049,8 +4049,8 @@
     },
     {
       "path": "tests/test_feishu_durable_bridge.py",
-      "sha256": "ae76a32b216ed4c22b4f4b58e6627272e557c2199b6444adb535f348aa927bc9",
-      "size": 282585
+      "sha256": "d0dc2f9caee2d24481c3d07888048b7f2f8b2b3724fd5426dbe0bf238a0955e2",
+      "size": 282663
     },
     {
       "path": "tests/test_feishu_feedback_idempotency.py",
@@ -5014,8 +5014,8 @@
     },
     {
       "path": "tests/test_weixin_ilink_bridge.py",
-      "sha256": "a5ee0e4424329b464ac8396ea2057a1426a20b4d02d3b153bc1eccd8d28b906f",
-      "size": 291817
+      "sha256": "aa2379a82b00746eb6f3cf2927af7bc7ff522b46c97c8817728af158f9a36439",
+      "size": 291945
     },
     {
       "path": "tests/test_weixin_state_family_guard.py",

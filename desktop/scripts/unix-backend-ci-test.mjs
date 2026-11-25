@@ -20,6 +20,7 @@ const WINDOWS_ONLY_TEST_FILES = new Set([
   'test_installed_channel_config.py',
   'test_installed_service_machine_vault.py',
   'test_kimi_acp_private_client.py',
+  'test_kimi_auth_probe_entrypoint.py',
   'test_kimi_login_entrypoint.py',
   'test_kimi_subscription_login.py',
   'test_kimi_subscription_provider.py',

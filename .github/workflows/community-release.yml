@@ -220,9 +220,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release create "$TAG" community-release-assets/* \
-            --title "Nachuan Community $TAG" \
-            --generate-notes \
-            --verify-tag
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" community-release-assets/* \
+              --repo "$REPO" \
+              --clobber
+          else
+            gh release create "$TAG" community-release-assets/* \
+              --repo "$REPO" \
+              --title "Nachuan Community $TAG" \
+              --generate-notes \
+              --verify-tag
+          fi

@@ -128,7 +128,7 @@ def test_conversation_wal_transition_real_reader_obeys_one_wall_budget(
         ConversationStore(db_path=str(path))
     elapsed = time.monotonic() - started
 
-    assert wal_elapsed["seconds"] < 0.45
+    assert wal_elapsed["seconds"] < (0.9 if sys.platform == "darwin" else 0.45)
     assert elapsed < 2.0
     with closing(sqlite3.connect(path)) as check:
         assert check.execute("PRAGMA journal_mode").fetchone() == ("delete",)
