@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '../i18n'
 import { lapianVideo, lapianUrl, visionImage, type LapianResult } from '../api'
 import StudioPane from './StudioPane'
 

@@ -1,8 +1,8 @@
-"""一次性建好视频工作室③的图床（Supabase Storage 公开桶 `studio-frames` + 权限）。
+"""一次性建好视频工作室③的图床（Supabase Storage 私有桶 `studio-frames` + 权限）。
 
-机主给 PAT（账户管理员 token）跑一次即可：建公开桶 + RLS policy
-（authenticated 可 传/查/删，public 可读）。**select policy 必须有** —— Supabase 删对象
-前要先能 SELECT 找到它，缺了删除会 403。
+机主给 PAT（账户管理员 token）跑一次即可：建私有桶（public=false，配合短期 Signed URL 使用）
++ RLS policy（仅 authenticated 可传/查/签发/删，禁止匿名公开读）。**select policy 必须有** ——
+Supabase 签发 Signed URL 和删对象前都要能 SELECT 找到它，缺了会 403。
 商用分发同理：终端用户用自己的 Supabase 时各跑一次（机主托管的项目里已建好则免）。
 
 用法：
@@ -17,8 +17,8 @@ import sys
 import httpx
 
 _SQL = """
-insert into storage.buckets (id,name,public) values ('studio-frames','studio-frames',true)
-  on conflict (id) do update set public=true;
+insert into storage.buckets (id,name,public) values ('studio-frames','studio-frames',false)
+  on conflict (id) do update set public=false;
 drop policy if exists "studio_frames_insert" on storage.objects;
 create policy "studio_frames_insert" on storage.objects for insert to authenticated with check (bucket_id='studio-frames');
 drop policy if exists "studio_frames_select" on storage.objects;

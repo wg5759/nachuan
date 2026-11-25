@@ -35,14 +35,21 @@ _SUMMARY_TIMEOUT = 60.0
 
 
 def _db_path() -> str:
-    return str(_DATA / "conv_summary.db")
+    from storage.unified_db import resolve_db_path
+
+    return str(resolve_db_path("conv_summary", data_dir=_DATA))
 
 
 class _Store:
     def __init__(self, db_path: str):
         p = Path(db_path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(p), check_same_thread=False)
+        self._conn = sqlite3.connect(str(p), check_same_thread=False, timeout=5.0)
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        from storage.unified_db import ensure_unified_wal, is_unified_db_path
+
+        if is_unified_db_path(p):
+            ensure_unified_wal(self._conn, busy_timeout_ms=5000)
         self._lock = threading.Lock()
         with self._lock:
             self._conn.execute(
@@ -122,9 +129,17 @@ def clear(conv_id: str) -> None:
         pass
 
 
-async def _merge_summarize(router: Any, prev_summary: str, fold_msgs: list[dict[str, Any]]) -> str:
-    """把「已有主线摘要 + 新增几轮对话」增量合并成更新后的主线摘要（便宜模型，硬超时）。
+async def _merge_summarize(
+    router: Any,
+    prev_summary: str,
+    fold_msgs: list[dict[str, Any]],
+    *,
+    source_model: str | None = None,
+) -> str:
+    """把「已有主线摘要 + 新增几轮对话」增量合并成更新后的主线摘要（严格同源模型，硬超时）。
 
+    隐私隔离（P0-2）：绝不把当前对话静默发给 agnes-flash 或其他跨供应商模型；
+    仅使用当前对话所属同源模型，且禁止跨供应商 fallback。
     失败 → 返回 prev_summary（不推进，等下次再折叠；绝不丢已有摘要）。
     """
     convo = "\n".join(
@@ -138,16 +153,16 @@ async def _merge_summarize(router: Any, prev_summary: str, fold_msgs: list[dict[
         f"【已有摘要】\n{prev_summary or '(暂无)'}\n\n【新增的几轮对话】\n{convo}\n\n【更新后的摘要】："
     )
     try:
-        from gateway.failover import chat_with_fallback
+        from gateway.failover import chat_with_fallback, same_origin_only_fallback
+        from gateway.privacy import select_same_origin_helper_model
         from gateway.provider_call_ledger import bind_provider_call_scope
         from gateway.schemas import ChatCompletionRequest
-        from orchestrator.modes import pick_model
 
-        cheap = "agnes-flash" if router.resolve("agnes-flash") else pick_model(router, "cheap")
-        if not cheap:
+        helper_model = select_same_origin_helper_model(router, source_model=source_model)
+        if not helper_model:
             return prev_summary
-        req = ChatCompletionRequest(model=cheap, messages=[{"role": "user", "content": prompt}])  # type: ignore[arg-type]
-        with bind_provider_call_scope(role="conversation_summary.merge"):
+        req = ChatCompletionRequest(model=helper_model, messages=[{"role": "user", "content": prompt}])  # type: ignore[arg-type]
+        with bind_provider_call_scope(role="conversation_summary.merge"), same_origin_only_fallback():
             res, _s, _r = await asyncio.wait_for(
                 chat_with_fallback(router, req), timeout=_SUMMARY_TIMEOUT
             )
@@ -163,26 +178,54 @@ async def rolling_compress(
     messages: list[dict[str, Any]] | None,
     *,
     keep_recent: int = _KEEP_RECENT,
+    source_model: str | None = None,
+    incognito: bool = False,
 ) -> list[dict[str, Any]] | None:
     """对话历史累积滚动摘要压缩。返回喂给模型的干净历史（[主线摘要 system] + 最近若干条）。
 
-    - 无 conv_id → 退回无状态 `compress_history`（仍能压，只是不跨请求累积）。
+    - 无痕隐私模式（incognito=True）或后台摘要开关关闭 → 直接原样返回（零落库、零外发）。
+    - 无 conv_id → 退回无状态 `compress_history`（同样遵循同源隔离）。
     - 有 conv_id：读持久化摘要 + covered；把"新增且非最近"的中段增量折叠进摘要；最近 keep_recent 原样。
     - 任何失败 → 退回无状态压缩或原样（降级第一）。
     """
-    if not messages:
+    if not messages or incognito:
         return messages
+    try:
+        from gateway.config import get_settings
+
+        if not get_settings().background_summary_enabled:
+            return messages
+    except Exception:  # noqa: BLE001
+        pass
     if not conv_id:
-        return await compress_history(router, messages, keep_recent=keep_recent)
+        return await compress_history(
+            router,
+            messages,
+            keep_recent=keep_recent,
+            source_model=source_model,
+            incognito=incognito,
+        )
 
     st = _get_store()
     if st is None:
-        return await compress_history(router, messages, keep_recent=keep_recent)
+        return await compress_history(
+            router,
+            messages,
+            keep_recent=keep_recent,
+            source_model=source_model,
+            incognito=incognito,
+        )
 
     try:
         summary, covered = st.get(conv_id)
     except Exception:  # noqa: BLE001
-        return await compress_history(router, messages, keep_recent=keep_recent)
+        return await compress_history(
+            router,
+            messages,
+            keep_recent=keep_recent,
+            source_model=source_model,
+            incognito=incognito,
+        )
 
     n = len(messages)
     # 前端把历史裁短了/用户编辑过 → covered 失效，重置成无状态重新压（安全）。
@@ -193,7 +236,7 @@ async def rolling_compress(
     fold = messages[covered:recent_start]  # 新增(未折叠) 且 不在最近 keep_recent 里的中段
     # 触发折叠：有中段可折 且 (已有摘要 或 中段够长)。短对话且无摘要 → 原样返回，零开销。
     if fold and (summary or _history_chars(fold) >= _FOLD_THRESHOLD_CHARS):
-        new_summary = await _merge_summarize(router, summary, fold)
+        new_summary = await _merge_summarize(router, summary, fold, source_model=source_model)
         if new_summary and new_summary != summary:
             summary = new_summary
             covered = recent_start

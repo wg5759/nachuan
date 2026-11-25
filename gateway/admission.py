@@ -36,6 +36,8 @@ from gateway.sqlite_runtime import enable_wal_with_deadline
 
 _HASH_DOMAIN = b"nachuan-admission-key-v1\x00"
 _HEX = frozenset("0123456789abcdef")
+_INSTALLED_DRAIN_FENCE_LOCK = threading.RLock()
+_INSTALLED_DRAIN_FENCE = None
 
 # POST is charged by default.  Only control-plane operations which are both
 # bounded and demonstrably cheap stay available when inference capacity is full.
@@ -66,6 +68,9 @@ _CHEAP_POST_EXACT = frozenset(
         "/v1/paid-media/web/import-legacy",
         "/v1/paid-media/web/recover-archive",
         "/v1/paid-media/web/read-asset",
+        # Air-gap offline mode toggle is a pure local safety control and must
+        # remain reachable even if inference quotas or accounting are saturated.
+        "/v1/privacy/offline-mode",
     }
 )
 
@@ -159,8 +164,11 @@ class _SQLiteDailyCounter:
     _TABLE = "admission_daily"
 
     def __init__(self, db_path: str | Path, *, busy_timeout_ms: int = 250) -> None:
+        from storage.unified_db import is_unified_db_path
+
         self.path = Path(db_path)
-        self.busy_timeout_ms = max(1, min(int(busy_timeout_ms), 10_000))
+        effective_timeout = max(2000, int(busy_timeout_ms)) if is_unified_db_path(self.path) else int(busy_timeout_ms)
+        self.busy_timeout_ms = max(1, min(effective_timeout, 10_000))
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             if self.path.exists() and not self.path.is_file():
@@ -354,6 +362,8 @@ class _BackgroundLease:
     kind: str
     expires_at: float
     external_ids: set[str] = field(default_factory=set)
+    drain_fence: Any | None = None
+    drain_permit: Any | None = None
 
 
 class BackgroundJobLeasePool:
@@ -408,12 +418,32 @@ class BackgroundJobLeasePool:
         return tuple(out)
 
     def _drop_locked(self, token: str) -> bool:
-        lease = self._leases.pop(token, None)
+        lease = self._leases.get(token)
         if lease is None:
             return False
+        if lease.drain_fence is not None and lease.drain_permit is not None:
+            lease.drain_fence.finish_background(lease.drain_permit)
+        self._leases.pop(token, None)
         for external_id in lease.external_ids:
             self._external.pop((lease.kind, external_id), None)
         return True
+
+    @staticmethod
+    def _acquire_drain_background():
+        fence = get_installed_drain_fence()
+        if fence is None:
+            return None, None, True
+        permit = fence.try_begin_background()
+        if permit is None:
+            return fence, None, False
+        if not fence.commit_background(permit):
+            return fence, None, False
+        return fence, permit, True
+
+    @staticmethod
+    def _release_drain_background(fence, permit) -> None:
+        if fence is not None and permit is not None:
+            fence.finish_background(permit)
 
     def _prune_locked(self, now: float) -> None:
         for token, lease in list(self._leases.items()):
@@ -435,27 +465,43 @@ class BackgroundJobLeasePool:
             raise ValueError("background job bucket must be a SHA-256 digest")
         aliases = self._validated_ids(external_ids)
         now = float(self._clock())
-        with self._lock:
-            self._prune_locked(now)
-            if len(self._leases) >= self.max_global:
-                return None
-            if sum(1 for lease in self._leases.values() if lease.bucket_hash == bucket) >= self.max_per_key:
-                return None
-            if any((normalized_kind, alias) in self._external for alias in aliases):
-                return None
-            token = secrets.token_hex(16)
-            while token in self._leases:
+        fence, permit, allowed = self._acquire_drain_background()
+        if not allowed:
+            return None
+        try:
+            with self._lock:
+                self._prune_locked(now)
+                if len(self._leases) >= self.max_global:
+                    self._release_drain_background(fence, permit)
+                    return None
+                if sum(
+                    1
+                    for lease in self._leases.values()
+                    if lease.bucket_hash == bucket
+                ) >= self.max_per_key:
+                    self._release_drain_background(fence, permit)
+                    return None
+                if any((normalized_kind, alias) in self._external for alias in aliases):
+                    self._release_drain_background(fence, permit)
+                    return None
                 token = secrets.token_hex(16)
-            lease = _BackgroundLease(
-                bucket_hash=bucket,
-                kind=normalized_kind,
-                expires_at=now + self.lease_ttl_seconds,
-                external_ids=set(aliases),
-            )
-            self._leases[token] = lease
-            for alias in aliases:
-                self._external[(normalized_kind, alias)] = token
-            return token
+                while token in self._leases:
+                    token = secrets.token_hex(16)
+                lease = _BackgroundLease(
+                    bucket_hash=bucket,
+                    kind=normalized_kind,
+                    expires_at=now + self.lease_ttl_seconds,
+                    external_ids=set(aliases),
+                    drain_fence=fence,
+                    drain_permit=permit,
+                )
+                self._leases[token] = lease
+                for alias in aliases:
+                    self._external[(normalized_kind, alias)] = token
+                return token
+        except BaseException:
+            self._release_drain_background(fence, permit)
+            raise
 
     def restore(
         self,
@@ -482,41 +528,82 @@ class BackgroundJobLeasePool:
         now = float(self._clock())
         with self._lock:
             self._prune_locked(now)
-            existing_tokens = {
-                token
-                for alias in aliases
-                if (token := self._external.get((normalized_kind, alias))) is not None
-            }
-            if existing_tokens:
-                if len(existing_tokens) != 1:
-                    raise ValueError("restored background job aliases conflict")
-                token = next(iter(existing_tokens))
-                lease = self._leases.get(token)
-                if lease is None or lease.bucket_hash != bucket:
-                    raise ValueError("restored background job ownership conflicts")
-                if any(
-                    (bound := self._external.get((normalized_kind, alias))) is not None
-                    and bound != token
-                    for alias in aliases
-                ):
-                    raise ValueError("restored background job aliases conflict")
-                for alias in aliases:
-                    lease.external_ids.add(alias)
-                    self._external[(normalized_kind, alias)] = token
-                lease.expires_at = now + self.lease_ttl_seconds
-                return token
-            token = secrets.token_hex(16)
-            while token in self._leases:
-                token = secrets.token_hex(16)
-            self._leases[token] = _BackgroundLease(
-                bucket_hash=bucket,
-                kind=normalized_kind,
-                expires_at=now + self.lease_ttl_seconds,
-                external_ids=set(aliases),
+            existing = self._restore_existing_locked(
+                normalized_kind,
+                bucket,
+                aliases,
+                now,
             )
-            for alias in aliases:
-                self._external[(normalized_kind, alias)] = token
-            return token
+            if existing is not None:
+                return existing
+
+        fence, permit, allowed = self._acquire_drain_background()
+        if not allowed:
+            raise BackgroundJobLimitExceeded("service draining")
+        transferred = False
+        try:
+            with self._lock:
+                self._prune_locked(now)
+                existing = self._restore_existing_locked(
+                    normalized_kind,
+                    bucket,
+                    aliases,
+                    now,
+                )
+                if existing is not None:
+                    self._release_drain_background(fence, permit)
+                    return existing
+                token = secrets.token_hex(16)
+                while token in self._leases:
+                    token = secrets.token_hex(16)
+                self._leases[token] = _BackgroundLease(
+                    bucket_hash=bucket,
+                    kind=normalized_kind,
+                    expires_at=now + self.lease_ttl_seconds,
+                    external_ids=set(aliases),
+                    drain_fence=fence,
+                    drain_permit=permit,
+                )
+                for alias in aliases:
+                    self._external[(normalized_kind, alias)] = token
+                transferred = True
+                return token
+        except BaseException:
+            if not transferred:
+                self._release_drain_background(fence, permit)
+            raise
+
+    def _restore_existing_locked(
+        self,
+        normalized_kind: str,
+        bucket: str,
+        aliases: tuple[str, ...],
+        now: float,
+    ) -> str | None:
+        existing_tokens = {
+            token
+            for alias in aliases
+            if (token := self._external.get((normalized_kind, alias))) is not None
+        }
+        if not existing_tokens:
+            return None
+        if len(existing_tokens) != 1:
+            raise ValueError("restored background job aliases conflict")
+        token = next(iter(existing_tokens))
+        lease = self._leases.get(token)
+        if lease is None or lease.bucket_hash != bucket:
+            raise ValueError("restored background job ownership conflicts")
+        if any(
+            (bound := self._external.get((normalized_kind, alias))) is not None
+            and bound != token
+            for alias in aliases
+        ):
+            raise ValueError("restored background job aliases conflict")
+        for alias in aliases:
+            lease.external_ids.add(alias)
+            self._external[(normalized_kind, alias)] = token
+        lease.expires_at = now + self.lease_ttl_seconds
+        return token
 
     def bind(self, token: str, external_ids: Collection[str]) -> bool:
         """Bind provider/job identifiers to a lease for terminal release/renewal."""
@@ -893,15 +980,85 @@ class AdmissionControlMiddleware:
             await self._release_local(lease, rollback_rate=False)
 
 
+def configure_installed_drain_fence(fence) -> None:
+    if fence is not None and any(
+        not callable(getattr(fence, method, None))
+        for method in (
+            "try_begin_admission",
+            "commit_admission",
+            "finish_admission",
+        )
+    ):
+        raise ValueError("installed drain fence is invalid")
+    global _INSTALLED_DRAIN_FENCE
+    with _INSTALLED_DRAIN_FENCE_LOCK:
+        _INSTALLED_DRAIN_FENCE = fence
+
+
+def get_installed_drain_fence():
+    with _INSTALLED_DRAIN_FENCE_LOCK:
+        return _INSTALLED_DRAIN_FENCE
+
+
+class InstalledDrainAdmissionMiddleware:
+    """Block every new business request after the installed drain gate closes."""
+
+    def __init__(self, app: Any, *, fence_provider=None) -> None:
+        selected = fence_provider or get_installed_drain_fence
+        if not callable(selected):
+            raise ValueError("installed drain fence provider is invalid")
+        self.app = app
+        self._fence_provider = selected
+
+    async def __call__(
+        self,
+        scope: dict[str, Any],
+        receive: Callable[[], Awaitable[dict[str, Any]]],
+        send: Callable[[dict[str, Any]], Awaitable[None]],
+    ) -> None:
+        if scope.get("type") != "http" or str(scope.get("path") or "").rstrip(
+            "/"
+        ) == "/health":
+            await self.app(scope, receive, send)
+            return
+        try:
+            fence = self._fence_provider()
+        except Exception:
+            await JSONResponse(
+                {"detail": "service drain state unavailable"},
+                status_code=503,
+                headers={"Retry-After": "1", "Cache-Control": "no-store"},
+            )(scope, receive, send)
+            return
+        if fence is None:
+            await self.app(scope, receive, send)
+            return
+        permit = fence.try_begin_admission()
+        if permit is None or not fence.commit_admission(permit):
+            await JSONResponse(
+                {"detail": "service draining"},
+                status_code=503,
+                headers={"Retry-After": "1", "Cache-Control": "no-store"},
+            )(scope, receive, send)
+            return
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            fence.finish_admission(permit)
+
+
 __all__ = [
     "AdmissionControlMiddleware",
     "AdmissionStoreUnavailable",
     "BackgroundJobLeasePool",
     "BackgroundJobLimitExceeded",
+    "InstalledDrainAdmissionMiddleware",
     "configure_background_job_pool",
+    "configure_installed_drain_fence",
     "current_admission_bucket",
     "current_background_job_lease",
     "get_background_job_pool",
+    "get_installed_drain_fence",
     "hash_api_keys",
     "hash_bearer_token",
     "is_expensive_request",

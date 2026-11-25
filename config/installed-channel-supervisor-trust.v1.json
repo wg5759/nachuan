@@ -1,0 +1,1 @@
+{"algorithm":"ed25519","enabled":true,"minimum_installer_release_sequence":0,"minimum_keyring_sequence":0,"public_key_spki_base64":"MCowBQYDK2VwAyEAMpByrtfseuk6EtUlWiPKy5yjjib90lqUyF/bAGKCqBA=","schema":"nachuan.installed-channel-supervisor-embedded-trust.v1","signer_key_id":"881f71d8ae177eb2bbb793c8ec5fa05319897fa531a4776fe928894ad1730ba9"}

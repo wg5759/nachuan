@@ -4,6 +4,8 @@
 
 ## 当前可直接使用的入口
 
+- **本机桌面体验版（2026-09-06）**：桌面快捷方式“纳川（本机体验版）”，说明和启动器位于本目录 `本机桌面体验版`。当前源码已构建并实际打开，独立数据、不自动启真实渠道；不是正式客户安装包，禁止混称签名/商店/企业生产交付。
+
 - **开源版用户入口**：双击 `安装开源版.cmd`，或在 PowerShell 运行项目根目录 `install.ps1`。安装后统一使用
   `nachuan start|update|doctor|uninstall`；四个中文双击入口分别是安装、更新、诊断和卸载。它是用户级源码安装，
   会解析不可变 GitHub commit、验证公开源码闭包，并使用固定 SHA-256 的 uv 与受管 Python，不需要管理员权限。
@@ -11,6 +13,7 @@
 - `检查三版本同步状态.cmd`：核对 Python 网关、桌面端以及开源/桌面/企业发布合同是否仍为同一个核心版本。
 - `查看免费签名与交付状态.cmd`：打开免费开源签名路线、当前批准状态和客户交付边界；不把“已开源”误报成
   “已获 Windows 证书”。
+- `签名与信任\README.md`：查看Supervisor anchor生产Ed25519身份的公开Key ID、私钥安全指针、验收回执与未完成的离线托管门；该身份不等于Windows Authenticode证书。
 - **pip 包 + CLI（ADR-0013 主分发形态）**：构建 `python -m build --wheel --no-isolation`（产物在 `dist\*.whl`），安装 `pip install dist\llm_aggregator-0.2.0-py3-none-any.whl`。装完：
   - `nachuan start`：一命令启动本地引擎 + Web 界面（仅绑专属回环 `127.77.77.77`；runtime/approval Key 由当前用户 DPAPI+ACL 保护，启动器用120秒单次 fragment 自动换取 host-only HttpOnly Cookie，长期 Key 不显示在终端、不进 argv/URL/页面脚本/日志；以后新标签页无需再输入）。`--no-open` 只起服务，`--port` 换端口。
   - `nachuan status|models|chat "消息"|ui`：健康、模型目录、单条聊天、打印 Web 地址。
@@ -18,7 +21,11 @@
   - 它与 Supervisor 多服务（微信/飞书桥）是两种形态：CLI 是单人本地 Web；渠道长驻仍走下方 Supervisor。
 - `查看运行状态.cmd`：只读查看 Supervisor、引擎、微信和飞书状态，不会启动服务。
 - `停止纳川.cmd`：停止 Supervisor、引擎与桥接，并留下持久停机闩锁，防计划任务自动复活。
-- `恢复并启动纳川.cmd`：显式清除停机状态并启动受控 Supervisor。微信仍需 owner 白名单，不会自动授权第一个联系人。
+- `恢复并启动纳川.cmd`：显式清除停机状态并启动受控 Supervisor。若已安装版的 DPAPI 模型连接仓库及验证钥匙同时
+  存在，入口会只传入其路径并复用这一份仓库，不复制 API Key；微信仍需 owner 白名单，不会自动授权第一个联系人。
+- `仅启动引擎与飞书-暂缓微信.cmd`：当微信存在历史 `pending` / `recovery_required`、尚未获得 Owner 结案决定时，
+  仍可启动受控 Supervisor、引擎和飞书，但微信保持显式冻结；它与完整恢复入口使用同一份已安装模型连接仓库，
+  不会通过临时直启、复制 Key 或挪走登录文件绕过恢复边界。
 - `构建本地安装包-精简版.cmd`：从锁文件进行本地 lean 构建。正式许可证、签名、AV、真实渠道和 soak 门禁未满足时会故障关闭，不能把输出当正式上架包。
 - `开发模式启动桌面端.cmd`：仅供开发调试；必须显式设置开发确认变量，不能冒充生产或商店启动入口。
 - `手动检查上游更新.cmd`：人工前台执行只读上游/依赖巡检并把报告留在项目 `data\`；不会安装、升级或注册计划任务。未配置受证明的 npm/gh 工具时对应栏目会明确跳过，不会回退 PATH。
@@ -69,6 +76,12 @@
 2. Windows 的实际卸载由“设置 → 应用 → 已安装的应用 → 纳川”执行；
 3. 本目录必须同时提供安装后检查、升级、回滚和残留清理说明；
 4. 任何必须位于 `C:\Program Files` 或 `C:\ProgramData` 的受保护实体只保留一份，不能复制回项目目录冒充第二真源。
+
+渠道常驻的分阶段合同见 `..\docs\INSTALLED_CHANNEL_SUPERVISOR.md`。当前完成ICS-001、ICS-002、ICS-003A和
+ICS-003B真实Win32进程适配器及ICS-003C的Stop/身份状态/真实健康/watchdog循环和纯bootstrap装配；默认Supervisor仍固定不可用，尚无可点击的“安装渠道服务”入口。在installer-bound loader和ICS-004注册完成前，禁止手工
+创建计划任务或把源码/终端进程当后台服务。
+
+ICS-004A只读anchor核心已完成，但本机没有生产anchor：未来安装器在ProgramData写canonical签名anchor，运行态DPAPI配置继续留在LocalAppData；anchor绑定配置/验证钥匙密文字节，运行态无权自动重建。生产签名身份、创建/换代broker和注册入口完成前，不得手工伪造anchor文件。
 
 ## 自动更新
 

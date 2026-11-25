@@ -160,7 +160,7 @@ describe('RendererEngineProxy', () => {
         method: 'POST',
         target: '/v1/route',
         bodyKind: 'json',
-        body: '{"mode":"smart","messages":[],"web_search":true}',
+        body: '{"mode":"smart","messages":[],"web_search":false,"incognito":true,"inject_memory":false}',
         responseKind: 'json'
       })
     ).resolves.toMatchObject({ status: 200 })
@@ -222,6 +222,479 @@ describe('RendererEngineProxy', () => {
     ).rejects.toThrow('Renderer Engine request is not permitted')
 
     expect(transport).toHaveBeenCalledTimes(2)
+  })
+
+  it('permits /v1/conversations CRUD and import routes while rejecting unknown fields or malformed ids', async () => {
+    const transport = vi.fn(async () => ({
+      status: 200,
+      contentType: 'application/json',
+      body: Uint8Array.from(Buffer.from('{"ok":true}', 'utf8'))
+    }))
+    const proxy = new RendererEngineProxy({
+      session: () => SESSION,
+      runtimeKey: () => 'sk-local-' + 'a'.repeat(64),
+      transport
+    })
+
+    const validRequests = [
+      {
+        requestId: '12121212-1212-4121-8121-121212121201',
+        method: 'GET' as const,
+        target: '/v1/conversations',
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '12121212-1212-4121-8121-121212121202',
+        method: 'POST' as const,
+        target: '/v1/conversations',
+        bodyKind: 'json' as const,
+        body: '{"id":"c1","title":"测试","kind":"chat","messages":[]}',
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '12121212-1212-4121-8121-121212121203',
+        method: 'GET' as const,
+        target: '/v1/conversations/c1',
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '12121212-1212-4121-8121-121212121204',
+        method: 'PATCH' as const,
+        target: '/v1/conversations/c1',
+        bodyKind: 'json' as const,
+        body: '{"title":"改名","archived":true}',
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '12121212-1212-4121-8121-121212121205',
+        method: 'PUT' as const,
+        target: '/v1/conversations/c1/messages',
+        bodyKind: 'json' as const,
+        body: '{"messages":[{"role":"user","content":"hi"}]}',
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '12121212-1212-4121-8121-121212121206',
+        method: 'DELETE' as const,
+        target: '/v1/conversations/c1',
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '12121212-1212-4121-8121-121212121207',
+        method: 'POST' as const,
+        target: '/v1/conversations/import',
+        bodyKind: 'json' as const,
+        body: '{"conversations":[]}',
+        responseKind: 'json' as const
+      }
+    ]
+
+    for (const req of validRequests) {
+      await expect(proxy.request(req)).resolves.toMatchObject({ status: 200 })
+    }
+    expect(transport).toHaveBeenCalledTimes(validRequests.length)
+
+    // 拒绝非白名单字段和越权子路径
+    await expect(
+      proxy.request({
+        requestId: '12121212-1212-4121-8121-121212121208',
+        method: 'PATCH',
+        target: '/v1/conversations/c1',
+        bodyKind: 'json',
+        body: '{"messages":[]}',
+        responseKind: 'json'
+      })
+    ).rejects.toThrow('Renderer Engine request is not permitted')
+
+    await expect(
+      proxy.request({
+        requestId: '12121212-1212-4121-8121-121212121209',
+        method: 'DELETE',
+        target: '/v1/conversations/import',
+        bodyKind: 'none',
+        responseKind: 'json'
+      })
+    ).rejects.toThrow('Renderer Engine request is not permitted')
+
+    await expect(
+      proxy.request({
+        requestId: '12121212-1212-4121-8121-121212121210',
+        method: 'PUT',
+        target: '/v1/conversations/c1/other',
+        bodyKind: 'json',
+        body: '{"messages":[]}',
+        responseKind: 'json'
+      })
+    ).rejects.toThrow('Renderer Engine request is not permitted')
+
+    expect(transport).toHaveBeenCalledTimes(validRequests.length)
+  })
+
+  it('permits the 7 /v1/workspace/* routes and rejects unknown fields or invalid payloads', async () => {
+    const transport = vi.fn(async () => ({
+      status: 200,
+      contentType: 'application/json',
+      body: Uint8Array.from(Buffer.from('{"ok":true}', 'utf8'))
+    }))
+    const proxy = new RendererEngineProxy({
+      session: () => SESSION,
+      runtimeKey: () => 'sk-local-' + 'w'.repeat(64),
+      transport
+    })
+
+    const validRequests = [
+      {
+        requestId: '34343434-3434-4343-8343-343434343401',
+        method: 'GET' as const,
+        target: `/v1/workspace/worktrees?repo_path=${encodeURIComponent('D:\\repo\\demo')}`,
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '34343434-3434-4343-8343-343434343402',
+        method: 'POST' as const,
+        target: '/v1/workspace/worktrees',
+        bodyKind: 'json' as const,
+        body: JSON.stringify({
+          repo_path: 'D:\\repo\\demo',
+          task_name: 'feat-diff-ui',
+          base_ref: 'main'
+        }),
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '34343434-3434-4343-8343-343434343403',
+        method: 'POST' as const,
+        target: '/v1/workspace/worktrees/remove',
+        bodyKind: 'json' as const,
+        body: JSON.stringify({
+          repo_path: 'D:\\repo\\demo',
+          worktree_path: 'D:\\repo\\.worktrees\\feat-diff-ui',
+          force: false,
+          delete_branch: true
+        }),
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '34343434-3434-4343-8343-343434343404',
+        method: 'GET' as const,
+        target: `/v1/workspace/diff?worktree_path=${encodeURIComponent('D:\\repo\\.worktrees\\feat-diff-ui')}&staged=false`,
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '34343434-3434-4343-8343-343434343405',
+        method: 'POST' as const,
+        target: '/v1/workspace/revert-file',
+        bodyKind: 'json' as const,
+        body: JSON.stringify({
+          worktree_path: 'D:\\repo\\.worktrees\\feat-diff-ui',
+          file_path: 'src/app.ts'
+        }),
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '34343434-3434-4343-8343-343434343406',
+        method: 'POST' as const,
+        target: '/v1/workspace/commit',
+        bodyKind: 'json' as const,
+        body: JSON.stringify({
+          worktree_path: 'D:\\repo\\.worktrees\\feat-diff-ui',
+          message: 'feat: add diff panel',
+          files: ['src/app.ts']
+        }),
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '34343434-3434-4343-8343-343434343407',
+        method: 'POST' as const,
+        target: '/v1/workspace/exec-plan',
+        bodyKind: 'json' as const,
+        body: JSON.stringify({
+          worktree_path: 'D:\\repo\\.worktrees\\feat-diff-ui',
+          mode: 'build',
+          command: 'npm test',
+          approval_id: 'appr-42'
+        }),
+        responseKind: 'json' as const
+      }
+    ]
+
+    for (const req of validRequests) {
+      await expect(proxy.request(req)).resolves.toMatchObject({ status: 200 })
+    }
+    expect(transport).toHaveBeenCalledTimes(validRequests.length)
+
+    // 拒绝非白名单字段、非法枚举与未放行子路径
+    const rejectedRequests = [
+      {
+        requestId: '34343434-3434-4343-8343-343434343408',
+        method: 'POST' as const,
+        target: '/v1/workspace/worktrees',
+        bodyKind: 'json' as const,
+        body: JSON.stringify({ repo_path: 'D:\\repo', task_name: 'x', shell: true }),
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '34343434-3434-4343-8343-343434343409',
+        method: 'POST' as const,
+        target: '/v1/workspace/exec-plan',
+        bodyKind: 'json' as const,
+        body: JSON.stringify({ worktree_path: 'D:\\repo', mode: 'full', command: 'rm -rf .' }),
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '34343434-3434-4343-8343-343434343410',
+        method: 'GET' as const,
+        target: '/v1/workspace/diff?staged=false',
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '34343434-3434-4343-8343-343434343411',
+        method: 'POST' as const,
+        target: '/v1/workspace/arbitrary-exec',
+        bodyKind: 'json' as const,
+        body: JSON.stringify({ command: 'whoami' }),
+        responseKind: 'json' as const
+      }
+    ]
+
+    for (const req of rejectedRequests) {
+      await expect(proxy.request(req)).rejects.toThrow('Renderer Engine request is not permitted')
+    }
+    expect(transport).toHaveBeenCalledTimes(validRequests.length)
+  })
+
+  it('permits all 10 /v1/coding/* routes while rejecting invalid ids, query params, and malformed/extra fields', async () => {
+    const transport = vi.fn(async () => ({
+      status: 200,
+      contentType: 'application/json',
+      body: Uint8Array.from(Buffer.from('{"ok":true}', 'utf8'))
+    }))
+    const proxy = new RendererEngineProxy({
+      session: () => SESSION,
+      runtimeKey: () => 'sk-local-' + 'a'.repeat(64),
+      transport
+    })
+
+    const validRequests = [
+      {
+        requestId: '13131313-1313-4131-8131-131313131301',
+        method: 'GET' as const,
+        target: '/v1/coding/sessions',
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131302',
+        method: 'POST' as const,
+        target: '/v1/coding/sessions',
+        bodyKind: 'json' as const,
+        body: '{"repo_path":"D:\\\\repo","title":"Refactor auth","base_ref":"HEAD","mode":"plan","agent_engine":"codex"}',
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131303',
+        method: 'GET' as const,
+        target: '/v1/coding/sessions/wt-a1b2c3d4/diff',
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131304',
+        method: 'POST' as const,
+        target: '/v1/coding/sessions/wt-a1b2c3d4/mode',
+        bodyKind: 'json' as const,
+        body: '{"mode":"build"}',
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131305',
+        method: 'POST' as const,
+        target: '/v1/coding/sessions/wt-a1b2c3d4/revert',
+        bodyKind: 'json' as const,
+        body: '{"path":"src/index.ts"}',
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131306',
+        method: 'POST' as const,
+        target: '/v1/coding/sessions/wt-a1b2c3d4/commit',
+        bodyKind: 'json' as const,
+        body: '{"message":"feat: add coding studio","files":["src/index.ts"]}',
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131307',
+        method: 'DELETE' as const,
+        target: '/v1/coding/sessions/wt-a1b2c3d4?delete_branch=true',
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131308',
+        method: 'DELETE' as const,
+        target: '/v1/coding/sessions/wt-a1b2c3d4',
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131309',
+        method: 'POST' as const,
+        target: '/v1/coding/sessions/wt-a1b2c3d4/exec',
+        bodyKind: 'json' as const,
+        body: '{"command":"git status","timeout":30}',
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131310',
+        method: 'GET' as const,
+        target: '/v1/coding/approvals?status=pending',
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131311',
+        method: 'GET' as const,
+        target: '/v1/coding/approvals',
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131312',
+        method: 'POST' as const,
+        target: '/v1/coding/approvals/cap-12345abcde/resolve',
+        bodyKind: 'json' as const,
+        body: '{"decision":"approve","note":"lgtm"}',
+        responseKind: 'json' as const
+      }
+    ]
+
+    for (const req of validRequests) {
+      await expect(proxy.request(req)).resolves.toMatchObject({ status: 200 })
+    }
+    expect(transport).toHaveBeenCalledTimes(validRequests.length)
+
+    const forbiddenRequests = [
+      // 非法 session_id（路径穿越 / 含斜杠 / 超长）
+      {
+        requestId: '13131313-1313-4131-8131-131313131320',
+        method: 'GET' as const,
+        target: '/v1/coding/sessions/../diff',
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131321',
+        method: 'GET' as const,
+        target: `/v1/coding/sessions/${'a'.repeat(65)}/diff`,
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131322',
+        method: 'POST' as const,
+        target: '/v1/coding/sessions/wt-1/shell',
+        bodyKind: 'json' as const,
+        body: '{"command":"ls"}',
+        responseKind: 'json' as const
+      },
+      // 非法 query 参数
+      {
+        requestId: '13131313-1313-4131-8131-131313131323',
+        method: 'DELETE' as const,
+        target: '/v1/coding/sessions/wt-1?delete_branch=yes',
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131324',
+        method: 'DELETE' as const,
+        target: '/v1/coding/sessions/wt-1?delete_branch=true&extra=1',
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131325',
+        method: 'GET' as const,
+        target: '/v1/coding/approvals?status=unknown',
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131326',
+        method: 'GET' as const,
+        target: '/v1/coding/approvals?status=pending&limit=10',
+        bodyKind: 'none' as const,
+        responseKind: 'json' as const
+      },
+      // 越权字段或非法字段类型
+      {
+        requestId: '13131313-1313-4131-8131-131313131327',
+        method: 'POST' as const,
+        target: '/v1/coding/sessions',
+        bodyKind: 'json' as const,
+        body: '{"repo_path":"D:\\\\repo","title":"t","admin":true}',
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131328',
+        method: 'POST' as const,
+        target: '/v1/coding/sessions',
+        bodyKind: 'json' as const,
+        body: '{"repo_path":"D:\\\\repo","title":"t","agent_engine":"evil-shell"}',
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131329',
+        method: 'POST' as const,
+        target: '/v1/coding/sessions/wt-1/mode',
+        bodyKind: 'json' as const,
+        body: '{"mode":"root"}',
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131330',
+        method: 'POST' as const,
+        target: '/v1/coding/sessions/wt-1/commit',
+        bodyKind: 'json' as const,
+        body: '{"message":"ok","files":[123]}',
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131331',
+        method: 'POST' as const,
+        target: '/v1/coding/sessions/wt-1/exec',
+        bodyKind: 'json' as const,
+        body: '{"command":"pytest","timeout":"60"}',
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131332',
+        method: 'POST' as const,
+        target: '/v1/coding/approvals/cap-1/resolve',
+        bodyKind: 'json' as const,
+        body: '{"decision":"force"}',
+        responseKind: 'json' as const
+      },
+      {
+        requestId: '13131313-1313-4131-8131-131313131333',
+        method: 'POST' as const,
+        target: '/v1/coding/approvals/../resolve',
+        bodyKind: 'json' as const,
+        body: '{"decision":"approve"}',
+        responseKind: 'json' as const
+      }
+    ]
+
+    for (const req of forbiddenRequests) {
+      await expect(proxy.request(req)).rejects.toThrow('Renderer Engine request is not permitted')
+    }
+    expect(transport).toHaveBeenCalledTimes(validRequests.length)
   })
 
   it('rejects the ninth concurrent renderer request before transport admission', async () => {

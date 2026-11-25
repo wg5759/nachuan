@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '../i18n'
 import {
   type CatalogModel,
   type CatalogProvider,
@@ -68,29 +68,29 @@ export function ConnectionQuickStart({
   const { t } = useTranslation()
   const ready = verifiedConnections > 0
   return (
-    <section className={`nachuan-connection-quick${ready ? ' is-ready' : ''}`}>
-      <div className="nachuan-connection-quick-copy">
-        <div className="nachuan-connection-eyebrow">{t('conn.quick.eyebrow')}</div>
-        <div className="nachuan-connection-quick-title">
-          {ready ? t('conn.quick.readyTitle') : t('conn.quick.title')}
-        </div>
-        <div className="nachuan-connection-quick-hint">
-          {ready
-            ? t('conn.quick.readyHint', { n: verifiedConnections })
-            : t('conn.quick.hint')}
-        </div>
+    <section className="rounded-xl border border-blue-900/70 bg-blue-950/25 p-4">
+      <div className="text-xs font-medium uppercase tracking-wider text-blue-300">
+        {t('conn.quick.eyebrow')}
+      </div>
+      <div className="mt-1 font-medium text-blue-100">
+        {ready ? t('conn.quick.readyTitle') : t('conn.quick.title')}
+      </div>
+      <div className="mt-1 text-xs leading-5 text-neutral-400">
+        {ready
+          ? t('conn.quick.readyHint', { n: verifiedConnections })
+          : t('conn.quick.hint')}
       </div>
       {ready ? (
         <button
           type="button"
           onClick={onStartChat}
           disabled={!onStartChat}
-          className="nachuan-connection-primary-button"
+          className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-500 disabled:opacity-40"
         >
           {t('conn.quick.startChat')}
         </button>
       ) : (
-        <div className="nachuan-connection-methods">
+        <div className="mt-3 flex flex-wrap gap-2">
           {(
             [
               ['deepseek', 'conn.quick.deepseek'],
@@ -105,7 +105,7 @@ export function ConnectionQuickStart({
               type="button"
               data-quick-target={target}
               onClick={() => onTarget(target)}
-              className="nachuan-connection-method-button"
+              className="rounded-lg border border-neutral-700 bg-neutral-950/50 px-3 py-2 text-sm text-neutral-200 hover:border-blue-700 hover:bg-blue-950/40"
             >
               {t(key)}
             </button>
@@ -217,17 +217,10 @@ export default function ConnectionCenter({
     const q = query.trim().toLowerCase()
     const g: Record<string, CatalogProvider[]> = {}
     for (const p of catalog) {
-      if (p.auth === 'login') continue
       if (q && !`${p.label} ${p.name}`.toLowerCase().includes(q)) continue
       if (!shouldShowConnectionProvider(p.connectable, showUnavailable, connections[p.name])) continue
-      const key = p.region || 'intl'
+      const key = p.auth === 'login' ? 'subscription' : p.region || 'intl'
       ;(g[key] ||= []).push(p)
-    }
-    for (const providers of Object.values(g)) {
-      providers.sort((a, b) => {
-        const connectedDelta = Number(connections[b.name]?.state === 'verified') - Number(connections[a.name]?.state === 'verified')
-        return connectedDelta || a.label.localeCompare(b.label)
-      })
     }
     return g
   }, [catalog, connections, query, showUnavailable])
@@ -239,19 +232,14 @@ export default function ConnectionCenter({
   }, [catalog, connections, query])
 
   return (
-    <div className="nachuan-connections">
-      <div className="nachuan-connections-content">
-      <div className="nachuan-connections-header">
-        <div>
-          <div className="nachuan-connection-eyebrow">{t('conn.eyebrow')}</div>
-          <h2>{t('conn.title')}</h2>
-          <p>{t('conn.simpleHint')}</p>
-        </div>
-        <div className="nachuan-connections-tools">
+    <div className="p-4 space-y-5 overflow-auto h-full">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold">{t('conn.title')}</h2>
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => setShowUnavailable((value) => !value)}
-            className="nachuan-connection-secondary-button"
+            className="px-2 py-1 rounded border border-neutral-700 text-xs text-neutral-400 hover:bg-neutral-800"
           >
             {showUnavailable ? t('conn.hideUnavailable') : t('conn.showUnavailable')}
           </button>
@@ -259,11 +247,11 @@ export default function ConnectionCenter({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('conn.search')}
-            className="nachuan-connection-search"
+            className="px-2 py-1 rounded bg-neutral-950 border border-neutral-700 text-sm w-48"
           />
         </div>
       </div>
-      {error && <div className="nachuan-connection-error">{error}</div>}
+      {error && <div className="text-red-400 text-sm">{error}</div>}
 
       <ConnectionQuickStart
         verifiedConnections={connectedProviders.size}
@@ -271,20 +259,12 @@ export default function ConnectionCenter({
         onStartChat={onStartChat}
       />
 
-      <SubscriptionConnectorPanel
-        catalog={catalog}
-        connections={connections}
+      <SubscriptionConnectorPanel />
+      <LocalModelPicker />
+      <LocalDetect
         connectedProviders={connectedProviders}
-        onChanged={afterChange}
         onVerified={confirmConnectionActivation}
       />
-      <div className="nachuan-connections-local-grid">
-        <LocalModelPicker />
-        <LocalDetect
-          connectedProviders={connectedProviders}
-          onVerified={confirmConnectionActivation}
-        />
-      </div>
 
       {orphanConnections.length > 0 && (
         <section className="space-y-3">
@@ -306,12 +286,11 @@ export default function ConnectionCenter({
         const items = groups[region]
         if (!items || items.length === 0) return null
         return (
-          <section key={region} className="nachuan-connection-region">
-            <div className="nachuan-connection-region-title">
+          <section key={region} className="space-y-3">
+            <div className="text-xs uppercase tracking-wide text-neutral-500">
               {t(REGION_KEY[region])} · {items.length}
             </div>
-            <div className="nachuan-provider-grid">
-              {items.map((p) => (
+            {items.map((p) => (
               <ProviderCard
                 key={p.name}
                 provider={p}
@@ -320,32 +299,23 @@ export default function ConnectionCenter({
                 onChanged={afterChange}
                 onVerified={confirmConnectionActivation}
               />
-              ))}
-            </div>
+            ))}
           </section>
         )
       })}
-      </div>
     </div>
   )
 }
 
 type SubscriptionConnectorLoadState = 'loading' | 'ready' | 'error'
 
-type SubscriptionDisplayId = SubscriptionConnector['id'] | 'claude-code'
-
-const SUBSCRIPTION_CONNECTOR_ORDER: readonly SubscriptionDisplayId[] = [
-  'codex',
-  'kimi-code',
-  'claude-code'
-]
+const SUBSCRIPTION_CONNECTOR_ORDER = ['codex', 'kimi-code'] as const
 const SUBSCRIPTION_CONNECTOR_LABEL: Record<(typeof SUBSCRIPTION_CONNECTOR_ORDER)[number], string> = {
   codex: 'Codex',
-  'kimi-code': 'Kimi Code',
-  'claude-code': 'Claude Code'
+  'kimi-code': 'Kimi Code'
 }
 const SUBSCRIPTION_CONNECTOR_LOGIN_COMMAND: Record<
-  SubscriptionConnector['id'],
+  (typeof SUBSCRIPTION_CONNECTOR_ORDER)[number],
   string
 > = {
   codex: 'codex login --device-auth',
@@ -433,6 +403,7 @@ function subscriptionNextStep(
   t: (key: string, options?: Record<string, unknown>) => string
 ): string {
   const provider = SUBSCRIPTION_CONNECTOR_LABEL[connector.id]
+  const command = SUBSCRIPTION_CONNECTOR_LOGIN_COMMAND[connector.id]
   if (connector.state === 'not_installed') {
     return t('conn.subscription.next.install', { provider })
   }
@@ -440,7 +411,7 @@ function subscriptionNextStep(
     return t('conn.subscription.next.probeInstallation', { provider })
   }
   if (connector.state === 'logged_out' || connector.state === 'reauth_required') {
-    return t('conn.subscription.next.login')
+    return t('conn.subscription.next.login', { command })
   }
   if (connector.state === 'login_pending') return t('conn.subscription.next.finishLogin')
   if (connector.state === 'authenticated_unprobed') {
@@ -462,206 +433,87 @@ function subscriptionNextStep(
 export function SubscriptionConnectorSection({
   connectors,
   state,
-  onRefresh,
-  renderAction
+  onRefresh
 }: {
   connectors: SubscriptionConnector[]
   state: SubscriptionConnectorLoadState
   onRefresh: () => void | Promise<void>
-  renderAction?: (connector: SubscriptionConnector) => React.ReactNode
 }): React.ReactNode {
   const { t } = useTranslation()
-  const supported: Array<{
-    id: SubscriptionDisplayId
-    connector: SubscriptionConnector | null
-  }> = SUBSCRIPTION_CONNECTOR_ORDER
-    .map((id) => ({
-      id,
-      connector: connectors.find((candidate) => candidate?.id === id) ?? null
-    }))
-    // Claude Code was explicitly removed from the active catalog for the
-    // current subscription period.  Keep the customer-visible option without
-    // inventing backend status or silently reactivating it in model routing.
-    .filter(({ id, connector }) => connector !== null || id === 'claude-code')
+  const supported = SUBSCRIPTION_CONNECTOR_ORDER.flatMap((id) => {
+    const connector = connectors.find((candidate) => candidate?.id === id)
+    return connector ? [connector] : []
+  })
 
   return (
     <section
       data-connection-section="subscription"
-      className="nachuan-subscription-section"
+      className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-900/30 p-3"
     >
-      <div className="nachuan-connection-section-header">
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="nachuan-connection-section-title">{t('conn.subscription.title')}</div>
-          <div className="nachuan-connection-section-hint">{t('conn.subscription.hint')}</div>
+          <div className="text-sm font-medium">{t('conn.subscription.title')}</div>
+          <div className="mt-1 text-xs text-neutral-500">{t('conn.subscription.hint')}</div>
         </div>
         <button
           type="button"
           onClick={() => void onRefresh()}
           disabled={state === 'loading'}
-          className="nachuan-connection-secondary-button"
+          className="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs hover:bg-neutral-800 disabled:opacity-40"
         >
           {t('conn.subscription.refresh')}
         </button>
       </div>
 
-      {state === 'loading' && <div className="nachuan-connection-loading">{t('conn.subscription.loading')}</div>}
+      {state === 'loading' && (
+        <div className="text-xs text-neutral-400">{t('conn.subscription.loading')}</div>
+      )}
       {state === 'error' && (
-        <div className="nachuan-connection-warning">{t('conn.subscription.error')}</div>
+        <div className="text-xs text-amber-300">{t('conn.subscription.error')}</div>
       )}
       {state === 'ready' && supported.length === 0 && (
-        <div className="nachuan-connection-loading">{t('conn.subscription.empty')}</div>
+        <div className="text-xs text-neutral-400">{t('conn.subscription.empty')}</div>
       )}
-      {state === 'ready' && supported.length > 0 && (
-        <div className="nachuan-subscription-grid">
-          {supported.map(({ id, connector }) => (
+      {state === 'ready' &&
+        supported.map((connector) => (
           <article
-            key={id}
-            data-subscription-connector={id}
-            className="nachuan-subscription-card"
+            key={connector.id}
+            data-subscription-connector={connector.id}
+            className="rounded border border-neutral-800 bg-neutral-950/40 p-3"
           >
-            <div className="nachuan-provider-card-head">
-              <div className="nachuan-provider-identity">
-                <span className="nachuan-provider-mark" aria-hidden="true">
-                  {SUBSCRIPTION_CONNECTOR_LABEL[id].slice(0, 1)}
-                </span>
-                <div>
-                  <div className="nachuan-provider-name">{SUBSCRIPTION_CONNECTOR_LABEL[id]}</div>
-                  <div className="nachuan-provider-kind">{t('conn.subscription.accountType')}</div>
-                </div>
-              </div>
-              <span className={`nachuan-connection-badge nachuan-connection-badge--${connector?.state === 'ready' ? 'ready' : 'idle'}`}>
-                {connector ? t(SUBSCRIPTION_STATE_KEY[connector.state]) : t('conn.subscription.states.disabled')}
+            <div className="flex items-center justify-between gap-3">
+              <div className="font-medium">{SUBSCRIPTION_CONNECTOR_LABEL[connector.id]}</div>
+              <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
+                {t(SUBSCRIPTION_STATE_KEY[connector.state])}
               </span>
             </div>
-            <div className="nachuan-provider-description">
-              {connector ? subscriptionNextStep(connector, t) : t('conn.subscription.next.disabled')}
+            <dl className="mt-2 grid gap-1 text-xs text-neutral-400 sm:grid-cols-2">
+              <div>
+                <dt className="inline">{t('conn.subscription.authLabel')}：</dt>
+                <dd className="inline text-neutral-300">
+                  {t('conn.subscription.auth.deviceCode')}
+                </dd>
+              </div>
+              <div>
+                <dt className="inline">{t('conn.subscription.capabilitiesLabel')}：</dt>
+                <dd className="inline text-neutral-300">
+                  {connector.capabilities
+                    .filter((capability) => capability === 'chat' || capability === 'code')
+                    .map((capability) => t(`conn.subscription.capabilities.${capability}`))
+                    .join('、')}
+                </dd>
+              </div>
+            </dl>
+            <div className="mt-2 text-xs text-blue-200">
+              {subscriptionNextStep(connector, t)}
             </div>
-            {connector ? renderAction?.(connector) : null}
           </article>
-          ))}
-        </div>
-      )}
+        ))}
     </section>
   )
 }
 
-function catalogProviderForSubscription(
-  catalog: CatalogProvider[],
-  connectorId: SubscriptionConnector['id']
-): CatalogProvider | undefined {
-  const expectedType = connectorId === 'codex' ? 'codex' : 'kimi_code'
-  return catalog.find((provider) => provider.auth === 'login' && provider.type === expectedType)
-}
-
-function SubscriptionConnectionAction({
-  connector,
-  provider,
-  connected,
-  connection,
-  onChanged,
-  onVerified,
-  onRefresh
-}: {
-  connector: SubscriptionConnector
-  provider?: CatalogProvider
-  connected: boolean
-  connection?: ConnectionSummary
-  onChanged: () => Promise<void>
-  onVerified: (expectedModelIds: readonly string[]) => Promise<boolean>
-  onRefresh: () => void | Promise<void>
-}): React.ReactNode {
-  const { t } = useTranslation()
-  const [busy, setBusy] = useState(false)
-  const [showLoginHelp, setShowLoginHelp] = useState(false)
-  const [msg, setMsg] = useState<string | null>(null)
-  const loginCmd = SUBSCRIPTION_CONNECTOR_LOGIN_COMMAND[connector.id]
-  const canVerify = connected || connector.state === 'authenticated_unprobed' || connector.state === 'ready'
-  const needsLogin = connector.state === 'logged_out' || connector.state === 'reauth_required' || connector.state === 'login_pending'
-
-  const verify = async (): Promise<void> => {
-    if (!provider || busy) return
-    let verified = false
-    let failureReason: ConnectionFailureReasonCode | undefined
-    setBusy(true)
-    setMsg(null)
-    try {
-      const result = await saveConnection(provider.name, {
-        type: provider.type,
-        api_key: '',
-        base_url: provider.default_base_url || '',
-        enabled_models: loginModelForVerification(provider.models, connection),
-        preserve_existing_credential: false
-      })
-      if (!result.ok) {
-        failureReason = result.reason_code
-        throw new Error('connection verification failed')
-      }
-      verified = true
-      const activationConfirmed = await onVerified(result.models)
-      await onRefresh()
-      setMsg(activationConfirmed ? t('conn.loginOk') : t('conn.connectRefreshUnknown'))
-    } catch {
-      setMsg(verified ? t('conn.connectRefreshUnknown') : loginConnectionFailureMessage(failureReason, loginCmd, t))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const remove = async (): Promise<void> => {
-    if (!provider || busy || !shouldOfferDisconnect(connection)) return
-    setBusy(true)
-    setMsg(null)
-    try {
-      const result = await disconnectStoredConnection(provider.name, deleteConnection, onChanged)
-      setMsg(result.ok ? t('conn.disconnectOk') : result.reason === 'rejected' ? t('conn.disconnectRejected') : t('conn.disconnectFail'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="nachuan-provider-actions-wrap">
-      <div className="nachuan-provider-actions">
-        {canVerify && provider && (
-          <button type="button" onClick={() => void verify()} disabled={busy} className="nachuan-connection-primary-button">
-            {busy ? t('conn.connecting') : connected ? t('conn.recheck') : t('conn.finishConnection')}
-          </button>
-        )}
-        {needsLogin && (
-          <button type="button" onClick={() => setShowLoginHelp((value) => !value)} className="nachuan-connection-secondary-button">
-            {showLoginHelp ? t('conn.hideLoginHelp') : t('conn.loginHelp')}
-          </button>
-        )}
-        {shouldOfferDisconnect(connection) && (
-          <button type="button" onClick={() => void remove()} disabled={busy} className="nachuan-connection-danger-button">
-            {t('conn.delete')}
-          </button>
-        )}
-      </div>
-      {showLoginHelp && (
-        <div className="nachuan-login-help">
-          <span>{t('conn.loginHelpHint')}</span>
-          <code>{loginCmd}</code>
-        </div>
-      )}
-      {msg && <div className="nachuan-connection-message">{msg}</div>}
-    </div>
-  )
-}
-
-function SubscriptionConnectorPanel({
-  catalog,
-  connections,
-  connectedProviders,
-  onChanged,
-  onVerified
-}: {
-  catalog: CatalogProvider[]
-  connections: Record<string, ConnectionSummary>
-  connectedProviders: Set<string>
-  onChanged: () => Promise<void>
-  onVerified: (expectedModelIds: readonly string[]) => Promise<boolean>
-}): React.ReactNode {
+function SubscriptionConnectorPanel(): React.ReactNode {
   const [connectors, setConnectors] = useState<SubscriptionConnector[]>([])
   const [state, setState] = useState<SubscriptionConnectorLoadState>('loading')
   const refreshEpoch = useRef(0)
@@ -690,20 +542,6 @@ function SubscriptionConnectorPanel({
       connectors={connectors}
       state={state}
       onRefresh={refresh}
-      renderAction={(connector) => {
-        const provider = catalogProviderForSubscription(catalog, connector.id)
-        return (
-          <SubscriptionConnectionAction
-            connector={connector}
-            provider={provider}
-            connected={provider ? connectedProviders.has(provider.name) : false}
-            connection={provider ? connections[provider.name] : undefined}
-            onChanged={onChanged}
-            onVerified={onVerified}
-            onRefresh={refresh}
-          />
-        )
-      }}
     />
   )
 }
@@ -819,34 +657,43 @@ function LocalModelPicker(): React.ReactNode {
   return (
     <section
       data-connection-section="local"
-      className="nachuan-local-card"
+      className="space-y-2 border border-neutral-800 rounded-lg p-3 bg-neutral-900/30"
     >
-      <div className="nachuan-connection-section-header">
-        <div>
-          <div className="nachuan-connection-section-title">本地模型</div>
-          <div className="nachuan-connection-section-hint">下载一次，验证后可离线使用</div>
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium">
+          本地模型（验证后离线可用）
+          <span className="ml-2 text-xs text-neutral-500">{cat.enabled ? '运行中' : '未启用'}</span>
         </div>
-        <div className="nachuan-provider-actions">
-          <span className={`nachuan-connection-badge ${cat.enabled ? 'nachuan-connection-badge--ready' : 'nachuan-connection-badge--idle'}`}>
-            {cat.enabled ? '运行中' : '未启用'}
-          </span>
-          <button onClick={() => void load()} className="nachuan-connection-secondary-button">刷新</button>
-        </div>
+        <button
+          onClick={() => void load()}
+          className="px-2 py-0.5 text-xs rounded border border-neutral-700 hover:bg-neutral-800"
+        >
+          刷新
+        </button>
       </div>
-      <div className="nachuan-local-model-list">
+      <div className="space-y-1">
         {cat.models.map((m) => {
           const active = m.active && cat.enabled
           return (
-            <div key={m.id} className="nachuan-local-model-row">
-              <span className={`nachuan-local-status-dot${active ? ' is-active' : m.downloaded ? ' is-downloaded' : ''}`} />
-              <span className="nachuan-local-model-copy">
-                <strong>{m.name}</strong>
-                <small>{gb(m.size_mb)} · {m.desc}</small>
+            <div key={m.id} className="flex items-center justify-between gap-2 text-sm py-0.5">
+              <span className="flex items-center gap-2 min-w-0">
+                <span
+                  className={`inline-block w-2 h-2 rounded-full shrink-0 ${
+                    active ? 'bg-green-500' : m.downloaded ? 'bg-neutral-500' : 'bg-neutral-700'
+                  }`}
+                />
+                <span className="truncate">
+                  {m.name}
+                  <span className="text-neutral-500 text-xs ml-1">{gb(m.size_mb)}</span>
+                </span>
+                <span className="text-neutral-600 text-xs truncate">· {m.desc}</span>
               </span>
               <button
                 onClick={() => void select(m.id)}
                 disabled={!!busy || active}
-                className={active ? 'nachuan-connection-secondary-button' : 'nachuan-connection-primary-button'}
+                className={`px-2 py-0.5 text-xs rounded whitespace-nowrap shrink-0 disabled:opacity-40 ${
+                  active ? 'bg-green-900 text-green-300' : 'bg-blue-600 hover:bg-blue-500'
+                }`}
               >
                 {active ? '使用中' : busy === m.id ? '处理中…' : m.downloaded ? '切换' : '下载并用'}
               </button>
@@ -854,7 +701,7 @@ function LocalModelPicker(): React.ReactNode {
           )
         })}
       </div>
-      {msg && <div className="nachuan-connection-message">{msg}</div>}
+      {msg && <div className="text-xs text-neutral-300">{msg}</div>}
     </section>
   )
 }
@@ -937,36 +784,34 @@ function LocalDetect({
   }
 
   return (
-    <section className="nachuan-local-card">
-      <div className="nachuan-connection-section-header">
-        <div>
-          <div className="nachuan-connection-section-title">{t('conn.localTitle')}</div>
-          <div className="nachuan-connection-section-hint">{t('conn.localDetectHint')}</div>
-        </div>
+    <section className="space-y-2 border border-neutral-800 rounded-lg p-3 bg-neutral-900/30">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium">{t('conn.localTitle')}</div>
         <button
           onClick={() => void detect()}
           disabled={busy || connecting !== null}
-          className="nachuan-connection-secondary-button"
+          className="px-3 py-1 text-sm rounded border border-neutral-700 hover:bg-neutral-800 disabled:opacity-40"
         >
           {busy ? t('conn.detecting') : t('conn.detect')}
         </button>
       </div>
       {servers && servers.filter((s) => s.alive).length === 0 && (
-        <div className="nachuan-connection-loading">{t('conn.noLocal')}</div>
+        <div className="text-xs text-neutral-500">{t('conn.noLocal')}</div>
       )}
       {servers
         ?.filter((s) => s.alive)
         .map((s) => (
-          <div key={s.name} className="nachuan-local-server-row">
-            <span className="nachuan-local-model-copy">
-              <strong><span className="nachuan-local-status-dot is-active" />{s.label}</strong>
-              <small>{t('conn.localModelCount', { n: s.models.length })}</small>
+          <div key={s.name} className="flex items-center justify-between text-sm">
+            <span className="flex items-center gap-2">
+              <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
+              {s.label}
+              <span className="text-neutral-500 text-xs">({s.models.length})</span>
             </span>
             {recommendedLocalChatModel(s.models) ? (
               <button
                 onClick={() => void connect(s)}
                 disabled={busy || connecting !== null}
-                className="nachuan-connection-primary-button"
+                className="px-2 py-0.5 text-xs rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-40"
               >
                 {connecting === s.name
                   ? t('conn.connecting')
@@ -975,11 +820,11 @@ function LocalDetect({
                     : t('conn.connect')}
               </button>
             ) : (
-              <span className="nachuan-connection-warning">{t('conn.localNoChatCandidate')}</span>
+              <span className="text-xs text-amber-300">{t('conn.localNoChatCandidate')}</span>
             )}
           </div>
         ))}
-      {msg && <div className="nachuan-connection-message">{msg}</div>}
+      {msg && <div className="text-xs text-neutral-300">{msg}</div>}
     </section>
   )
 }
@@ -1011,7 +856,6 @@ export function ProviderCard({
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [customModel, setCustomModel] = useState('')
-  const [editorOpen, setEditorOpen] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const removeInFlight = useRef(false)
 
@@ -1063,7 +907,7 @@ export function ProviderCard({
     <button
       onClick={() => void remove()}
       disabled={busy}
-      className="nachuan-connection-danger-button"
+      className="px-3 py-1 rounded border border-red-900 text-red-400 hover:bg-red-950 disabled:opacity-40"
     >
       {t('conn.delete')}
     </button>
@@ -1095,12 +939,12 @@ export function ProviderCard({
 
   const statusBadge = (
     <span
-      className={`nachuan-connection-badge ${
+      className={`text-xs px-2 py-0.5 rounded ${
         connected
-          ? 'nachuan-connection-badge--ready'
+          ? 'bg-green-900 text-green-300'
           : connectionState === 'legacy_unverified'
-            ? 'nachuan-connection-badge--warning'
-            : 'nachuan-connection-badge--idle'
+            ? 'bg-amber-950 text-amber-300'
+            : 'bg-neutral-800 text-neutral-400'
       }`}
     >
       {connected
@@ -1315,7 +1159,6 @@ export function ProviderCard({
           : t('conn.connectOk', { n: res.models.length })
       const activationConfirmed = await onVerified(res.models)
       setMsg(activationConfirmed ? successMessage : t('conn.connectRefreshUnknown'))
-      if (activationConfirmed) setEditorOpen(false)
     } catch (e) {
       setMsg(
         verified
@@ -1330,80 +1173,63 @@ export function ProviderCard({
   return (
     <div
       data-connection-provider={provider.name}
-      className={`nachuan-provider-card${editorOpen ? ' is-open' : ''}`}
+      className="border border-neutral-800 rounded-lg p-4 bg-neutral-900/50"
     >
-      <div className="nachuan-provider-card-head">
-        <div className="nachuan-provider-identity">
-          <span className="nachuan-provider-mark" aria-hidden="true">{provider.label.slice(0, 1)}</span>
-          <div>
-            <div className="nachuan-provider-name">{provider.label}</div>
-            <div className="nachuan-provider-kind">
-              {canReuseCredential ? t('conn.credentialStored') : provider.region === 'local' ? t('conn.localAccountType') : t('conn.apiAccountType')}
-            </div>
-          </div>
+      <div className="flex items-center justify-between">
+        <div className="font-medium">
+          {provider.label}
+          {canReuseCredential && (
+            <span className="ml-2 text-xs text-neutral-600">{t('conn.credentialStored')}</span>
+          )}
         </div>
         {statusBadge}
       </div>
       {verificationReceipt}
-      <div className="nachuan-provider-description">
-        {provider.note || (noKeyNeeded ? t('conn.noKey') : t('conn.providerDefaultHint'))}
-      </div>
-      <div className="nachuan-provider-actions">
-        <button
-          type="button"
-          onClick={() => setEditorOpen((value) => !value)}
-          className={editorOpen ? 'nachuan-connection-secondary-button' : 'nachuan-connection-primary-button'}
-        >
-          {editorOpen ? t('conn.cancel') : connected ? t('conn.manage') : t('conn.connect')}
-        </button>
-        {!editorOpen && disconnectButton}
-      </div>
-      {msg && <div className="nachuan-connection-message">{msg}</div>}
+      {provider.note && <div className="mt-1 text-xs text-neutral-600">· {provider.note}</div>}
 
-      {editorOpen && (
-      <div className="nachuan-provider-editor">
+      <div className="mt-3 space-y-3">
         {!noKeyNeeded && (
-          <label className="nachuan-connection-field">
-            <span>API Key</span>
+          <label className="block text-sm">
+            <span className="text-neutral-400">API Key</span>
             <input
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={canReuseCredential ? t('conn.keyPhSaved') : t('conn.keyPhNew')}
-              className="nachuan-connection-input"
+              className="mt-1 w-full px-2 py-1 rounded bg-neutral-950 border border-neutral-700 text-neutral-100"
             />
           </label>
         )}
         {!noKeyNeeded && credentialPresent && !canReuseCredential && (
-          <div className="nachuan-connection-warning">{t('conn.credentialRequiresReentry')}</div>
+          <div className="text-xs text-amber-300">{t('conn.credentialRequiresReentry')}</div>
         )}
-        {noKeyNeeded && <div className="nachuan-connection-loading">{t('conn.noKey')}</div>}
+        {noKeyNeeded && <div className="text-xs text-neutral-500">{t('conn.noKey')}</div>}
 
         {canAutoDiscoverModels && !showAdvanced && (
-          <div className="nachuan-connection-note">
+          <div className="rounded border border-neutral-800 bg-neutral-950/40 px-3 py-2 text-xs text-neutral-500">
             {t('conn.autoDiscoverModels')}
           </div>
         )}
 
         {!noKeyNeeded && (
-          <div className="nachuan-connection-field-hint">{t('conn.validationProbeNotice')}</div>
+          <div className="text-xs text-neutral-600">{t('conn.validationProbeNotice')}</div>
         )}
 
         {!canAutoDiscoverModels && models.length === 0 && !showAdvanced && (
-          <div className="nachuan-connection-note">
+          <div className="rounded border border-neutral-800 bg-neutral-950/40 px-3 py-2 text-xs text-neutral-500">
             {t('conn.modelIdHint')}
           </div>
         )}
 
         {!canAutoDiscoverModels && models.length > 0 && !showAdvanced && (
-          <div className="nachuan-connection-field-hint">
+          <div className="text-xs text-neutral-500">
             {selectedModels.length === 1
               ? t('conn.recommendedModel', { model: selectedModels[0].id })
               : t('conn.savedModelCount', { n: selectedModels.length })}
           </div>
         )}
 
-        <div className="nachuan-provider-actions">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => void connect()}
             disabled={
@@ -1411,7 +1237,7 @@ export function ProviderCard({
               (!apiKey.trim() && !noKeyNeeded && !canReuseCredential) ||
               (checked.size === 0 && !customModel.trim() && !canAutoDiscoverModels)
             }
-            className="nachuan-connection-primary-button"
+            className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-40"
           >
             {busy ? t('conn.connecting') : connected ? t('conn.reconnect') : t('conn.connect')}
           </button>
@@ -1419,27 +1245,29 @@ export function ProviderCard({
           <button
             type="button"
             onClick={() => setShowAdvanced((value) => !value)}
-            className="nachuan-connection-secondary-button"
+            className="px-2 py-1 text-xs rounded border border-neutral-700 text-neutral-400 hover:bg-neutral-800"
           >
             {showAdvanced ? t('conn.hideAdvanced') : t('conn.advanced')}
           </button>
         </div>
+        {msg && <div className="text-xs text-neutral-300">{msg}</div>}
+
         {showAdvanced && (
-          <div className="nachuan-provider-advanced">
-            <div className="nachuan-connection-field-hint">{t('conn.advancedHint')}</div>
-            <label className="nachuan-connection-field">
-              <span>Base URL</span>
-              <div className="nachuan-connection-inline-field">
+          <div className="space-y-3 rounded border border-neutral-800 bg-neutral-950/40 p-3">
+            <div className="text-xs text-neutral-500">{t('conn.advancedHint')}</div>
+            <label className="block text-sm">
+              <span className="text-neutral-400">Base URL</span>
+              <div className="flex gap-2">
                 <input
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
-                  className="nachuan-connection-input is-mono"
+                  className="mt-1 flex-1 px-2 py-1 rounded bg-neutral-950 border border-neutral-700 text-neutral-100 font-mono text-xs"
                 />
                 {provider.auth === 'none' && (
                   <button
                     onClick={() => void pull()}
                     disabled={busy || !baseUrl}
-                    className="nachuan-connection-secondary-button"
+                    className="mt-1 px-2 py-1 text-xs rounded border border-neutral-700 hover:bg-neutral-800 disabled:opacity-40 whitespace-nowrap"
                   >
                     {t('conn.pull')}
                   </button>
@@ -1447,30 +1275,30 @@ export function ProviderCard({
               </div>
             </label>
 
-            <div className="nachuan-connection-field">
-              <span>{t('conn.models')}</span>
-              <div className="nachuan-connection-model-list">
+            <div className="text-sm">
+              <div className="text-neutral-400 mb-1">{t('conn.models')}</div>
+              <div className="space-y-1 max-h-48 overflow-auto">
                 {models.map((m) => (
-                  <label key={m.id}>
+                  <label key={m.id} className="flex items-center gap-2">
                     <input
                       type="checkbox"
                       checked={checked.has(m.id)}
                       onChange={() => toggle(m.id)}
                     />
-                    <span className="nachuan-connection-model-id">{m.id}</span>
+                    <span className="font-mono text-xs">{m.id}</span>
                     {m.upstream_model && m.upstream_model !== m.id && (
-                      <span>→ {m.upstream_model}</span>
+                      <span className="text-neutral-500 text-xs">→ {m.upstream_model}</span>
                     )}
                     {m.description && (
-                      <span>· {m.description}</span>
+                      <span className="text-neutral-600 text-xs">· {m.description}</span>
                     )}
                   </label>
                 ))}
                 {models.length === 0 && (
-                  <div className="nachuan-connection-field-hint">{t('conn.noCandidates')}</div>
+                  <div className="text-neutral-600 text-xs">{t('conn.noCandidates')}</div>
                 )}
               </div>
-              <div className="nachuan-connection-inline-field">
+              <div className="mt-2 flex gap-2">
                 <input
                   value={customModel}
                   onChange={(e) => setCustomModel(e.target.value)}
@@ -1481,12 +1309,12 @@ export function ProviderCard({
                     }
                   }}
                   placeholder={t('conn.customModelPh')}
-                  className="nachuan-connection-input is-mono"
+                  className="flex-1 px-2 py-1 rounded bg-neutral-950 border border-neutral-700 text-neutral-100 font-mono text-xs"
                 />
                 <button
                   onClick={addCustomModel}
                   disabled={!customModel.trim()}
-                  className="nachuan-connection-secondary-button"
+                  className="px-2 py-1 text-xs rounded border border-neutral-700 hover:bg-neutral-800 disabled:opacity-40 whitespace-nowrap"
                 >
                   {t('conn.addModel')}
                 </button>
@@ -1495,7 +1323,6 @@ export function ProviderCard({
           </div>
         )}
       </div>
-      )}
     </div>
   )
 }

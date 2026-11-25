@@ -9,15 +9,18 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
+from contextvars import ContextVar
 import math
 import os
 import re
 import time
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Iterator, Optional
 
 import httpx
 
 from gateway import quota_state
+from gateway.outbound_guard import OfflineModeBlockedError
 from gateway.provider_call_ledger import (
     CommercialBudgetAuthorization,
     ProviderCallContext,
@@ -44,6 +47,23 @@ GPT_BACKUP = "gpt-5.4"
 LONG_INPUT_CHARS = 400_000
 # 本身上下文/额度就大的模型，不因长度转走。
 _BIG_ENOUGH = {"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "codex-spark", "glm"}
+
+# 同源隔离上下文：开启后禁止 chat_with_fallback / fallback_chain 跳转到其他供应商模型
+# （用于后台记忆抽取、滚动摘要等隐私敏感任务，防失败或长输入时静默跨商泄露）。
+_SAME_ORIGIN_ONLY_FALLBACK: ContextVar[bool] = ContextVar(
+    "nachuan_same_origin_only_fallback",
+    default=False,
+)
+
+
+@contextmanager
+def same_origin_only_fallback() -> Iterator[None]:
+    """在当前异步上下文内锁死单模型直连，禁止任何跨供应商 fallback 或长文本切换。"""
+    token = _SAME_ORIGIN_ONLY_FALLBACK.set(True)
+    try:
+        yield
+    finally:
+        _SAME_ORIGIN_ONLY_FALLBACK.reset(token)
 
 _LEDGER_ERROR_TYPE = re.compile(r"[A-Za-z][A-Za-z0-9_.:-]{0,127}\Z")
 
@@ -170,7 +190,7 @@ class ChatFallbackResult(tuple):
 
 
 def _transport_may_have_submitted(exc: BaseException) -> bool:
-    if isinstance(exc, _DEFINITELY_PRE_SUBMISSION_HTTP_ERRORS):
+    if isinstance(exc, (_DEFINITELY_PRE_SUBMISSION_HTTP_ERRORS, OfflineModeBlockedError)):
         return False
     return isinstance(exc, (httpx.HTTPError, OSError))
 
@@ -284,6 +304,8 @@ def _maybe_compress_long(req: ChatCompletionRequest) -> ChatCompletionRequest:
 
 
 def fallback_chain(model: str, req: Optional[ChatCompletionRequest] = None) -> list[str]:
+    if _SAME_ORIGIN_ONLY_FALLBACK.get():
+        return [model]
     # 超长输入 → 优先 ChatGPT（额度/上下文最大），原模型仍留作其次。
     if req is not None and model not in _BIG_ENOUGH and _input_chars(req) > LONG_INPUT_CHARS:
         chain = [GPT_BACKUP, model]
@@ -699,6 +721,14 @@ async def chat_with_fallback(
             last = e
             if not quota_state.mark_if_quota(mid, e):  # 额度/限流错 → 记冷却
                 quota_state.mark_error(mid)  # 非额度失败(CLI超时/进程挂/5xx) → 连败熔断，别反复撞墙
+        except OfflineModeBlockedError as e:
+            await finish_provider_attempt_durable(
+                provider_attempt,
+                status="provider_error",
+                error_type="OfflineModeBlockedError",
+                error_message=str(e),
+            )
+            raise
         except (httpx.HTTPError, OSError) as e:
             pre_submission_type = _exception_chain_pre_submission_type(e)
             await finish_provider_attempt_durable(
@@ -1127,6 +1157,13 @@ async def stream_with_fallback(
             last_type = "provider_error"
             if not quota_state.mark_if_quota(mid, exc):
                 quota_state.mark_error(mid)
+        except OfflineModeBlockedError as exc:
+            await accounting.finish(
+                "stream_interrupted" if committed else "provider_error",
+                error_type="OfflineModeBlockedError",
+                error_message=str(exc),
+            )
+            raise
         except (httpx.HTTPError, OSError) as exc:
             pre_submission_type = _exception_chain_pre_submission_type(exc)
             await accounting.finish(

@@ -35,6 +35,7 @@ import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 
 import {
+  describeUnavailableEncryptionGuidance,
   hardenLocalSecretAcl,
   loadOrCreateApprovalKey,
   loadOrCreateEngineKey,
@@ -42,6 +43,12 @@ import {
   readSecureConfig,
   writeSecureConfig
 } from './secure-config'
+import {
+  attachOfflineGuardToSession,
+  isDesktopOfflineModeEnabled,
+  isLoopbackOrLocalUrl,
+  setDesktopOfflineModeEnabled
+} from './offline-guard'
 import { nodePaidMediaAtomicIO, PaidMediaLedger } from './paid-media-ledger'
 import { PaidMediaCapacityManager } from './paid-media-capacity'
 import { registerPaidMediaIpc, type PaidMediaIpcRegistration } from './paid-media-ipc'
@@ -121,6 +128,8 @@ import {
   EXPECTED_STORE_RUNTIME_PROFILE_SHA256
 } from './generated-engine-integrity'
 import { assertFixedPackagedUserDataDirectory } from './startup-policy'
+import { localPreviewEngineEnvironment, localPreviewPaths } from './local-preview'
+import { developmentPythonLaunch } from './development-python'
 import { EMBEDDED_UPDATE_TRUST } from './generated-update-trust'
 import { requireStrictAuthenticode } from './authenticode'
 import {
@@ -141,11 +150,14 @@ import {
 import {
   automaticUpdatePolicy,
   debugPolicy,
+  isAllowedPreviewWebviewUrl,
   isHttpUrl,
   ipcSenderAllowed,
   isLoopbackRendererUrl,
   isTrustedRendererNavigation,
   permissionAllowed,
+  PREVIEW_WEBVIEW_PARTITION,
+  sanitizePreviewWebviewAttachment,
   windowSecurityPreferences
 } from './security'
 
@@ -159,7 +171,8 @@ const desktopEngineSessionClient = new DesktopEngineSessionClient({
 const desktopPrivilegedSession = new DesktopPrivilegedSession(desktopEngineSessionClient)
 const rendererEngineProxy = new RendererEngineProxy({
   session: () => engineRootSessions.session(),
-  runtimeKey: () => engineKey
+  runtimeKey: () => engineKey,
+  onOfflineModeChanged: (enabled) => syncDesktopOfflineMode(enabled, 'engine_proxy')
 })
 const installationRootClient = new InstallationRootClient({
   session: () => engineRootSessions.session()
@@ -182,6 +195,30 @@ let secureAutoUpdater: SecureAutoUpdater | null = null
 let updateScheduler: UpdateCheckScheduler | null = null
 let latestUpdateState: UpdateUiState = { phase: 'disabled', reason: 'not-configured' }
 let supportBundleInFlight: Promise<void> | null = null
+let disposeDefaultOfflineGuard: (() => void) | null = null
+let disposePreviewOfflineGuard: (() => void) | null = null
+
+function syncDesktopOfflineMode(enabled: boolean, source: string): void {
+  const prev = isDesktopOfflineModeEnabled()
+  const next = setDesktopOfflineModeEnabled(enabled)
+  if (prev !== next) {
+    auditDesktop('privacy.offline_mode', { enabled: next, source })
+  }
+}
+
+async function syncInitialOfflineModeFromEngine(): Promise<void> {
+  try {
+    await rendererEngineProxy.request({
+      requestId: randomUUID(),
+      method: 'GET',
+      target: '/v1/privacy/offline-mode',
+      bodyKind: 'none',
+      responseKind: 'json'
+    })
+  } catch {
+    // 引擎未实现或短暂不可用时保持当前主进程离线态，不阻断启动
+  }
+}
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -329,6 +366,13 @@ assertFixedPackagedUserDataDirectory({
   isPackaged: app.isPackaged,
   hasUserDataDirSwitch: app.commandLine.hasSwitch('user-data-dir')
 })
+const localPreview = localPreviewPaths(app.isPackaged, process.env['NACHUAN_DESKTOP_PREVIEW'], repoRoot())
+if (localPreview) {
+  for (const directory of [localPreview.userData, localPreview.data, localPreview.workspaces]) {
+    mkdirSync(directory, { recursive: true })
+  }
+  app.setPath('userData', localPreview.userData)
+}
 const ownsSingleInstance = app.requestSingleInstanceLock()
 if (!ownsSingleInstance) {
   isQuitting = true
@@ -649,8 +693,11 @@ async function startEngineOnce(): Promise<void> {
         throw new Error('development Python must be a fixed regular file in .venv')
       }
       bridgeExecutable = pythonPath
+      if (localPreview) Object.assign(env, localPreviewEngineEnvironment(localPreview))
+      const developmentPython = developmentPythonLaunch(repoRoot())
+      Object.assign(env, developmentPython.environment)
       assertEngineAttemptCurrent(attempt)
-      child = spawn(pythonPath, ['-m', 'gateway.app'], {
+      child = spawn(developmentPython.executable, ['-m', 'gateway.app'], {
         cwd: repoRoot(),
         env,
         shell: false,
@@ -730,8 +777,9 @@ async function startEngineOnce(): Promise<void> {
     }, 30000)
     console.log(`[engine] verified child pid=${child.pid} on loopback port ${published.port}`)
     auditDesktop('engine.ready', { pid: child.pid, port: published.port })
+    void syncInitialOfflineModeFromEngine()
     try {
-      const started = weixinBridgeSupervisor.start({
+      const started = !localPreview && weixinBridgeSupervisor.start({
         packaged: app.isPackaged,
         engineExecutable: bridgeExecutable,
         repoRoot: repoRoot(),
@@ -1037,7 +1085,13 @@ function lockLocalRendererNavigation(
   openExternalLinks: boolean
 ): void {
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (openExternalLinks && isHttpUrl(url)) void shell.openExternal(url)
+    if (
+      openExternalLinks &&
+      isHttpUrl(url) &&
+      (!isDesktopOfflineModeEnabled() || isLoopbackOrLocalUrl(url))
+    ) {
+      void shell.openExternal(url)
+    }
     return { action: 'deny' }
   })
   win.webContents.on('will-navigate', (event, url) => {
@@ -1346,7 +1400,7 @@ function createWindow(): void {
     height: 900,
     minWidth: 1000,
     minHeight: 640,
-    title: '纳川 · Nexus',
+    title: localPreview ? '纳川 · 本机体验版' : '纳川 · Nexus',
     backgroundColor: '#f5f5f5',
     titleBarStyle: 'hidden', // 隐藏原生标题栏，把它并进 App 顶栏 → 给聊天区腾高
     titleBarOverlay: { color: '#f5f5f5', symbolColor: '#171717', height: 44 }, // Win 右上角原生 最小化/最大化/关闭（浅色主题：浅底深符号才看得清）
@@ -1384,26 +1438,53 @@ function createWindow(): void {
     (wc, permission) => permissionAllowed(permission, wc === win.webContents)
   )
 
-  // 不信任任何网页提供的 webview 偏好/preload。只准 http(s)，guest 强制沙箱且不能开 Node。
+  // 纯离线（空气间隙）硬拦截器：同时挂在主会话 defaultSession 与右栏非持久化分区 nachuan-preview-ephemeral。
+  disposeDefaultOfflineGuard?.()
+  disposeDefaultOfflineGuard = attachOfflineGuardToSession(
+    session.defaultSession,
+    'defaultSession',
+    (event) => auditDesktop('privacy.offline_blocked', { session: event.sessionName, reason: event.reason })
+  )
+
+  // 右栏 <webview> 独立非持久化隔离分区：与 defaultSession 完全隔离，拒绝一切设备/站点权限。
+  const previewWebviewSession = session.fromPartition(PREVIEW_WEBVIEW_PARTITION, { cache: false })
+  previewWebviewSession.setPermissionRequestHandler((_wc, _permission, callback) => {
+    callback(false)
+  })
+  previewWebviewSession.setPermissionCheckHandler(() => false)
+  disposePreviewOfflineGuard?.()
+  disposePreviewOfflineGuard = attachOfflineGuardToSession(
+    previewWebviewSession,
+    PREVIEW_WEBVIEW_PARTITION,
+    (event) => auditDesktop('privacy.offline_blocked', { session: event.sessionName, reason: event.reason })
+  )
+
+  // 不信任任何网页提供的 webview 偏好/preload/partition。只准 about:blank 与 http(s)，
+  // 强制锁在独立非持久化隔离分区，guest 强制沙箱且不能开 Node。
   win.webContents.on('will-attach-webview', (event, webPreferences, params) => {
-    if (!isHttpUrl(params.src)) {
+    if (
+      !sanitizePreviewWebviewAttachment(webPreferences, params, {
+        devTools: DEBUG.enableDevTools
+      })
+    ) {
       event.preventDefault()
       return
     }
-    delete webPreferences.preload
-    webPreferences.contextIsolation = true
-    webPreferences.nodeIntegration = false
-    webPreferences.sandbox = true
-    webPreferences.webSecurity = true
-    webPreferences.devTools = DEBUG.enableDevTools
   })
   win.webContents.on('did-attach-webview', (_event, guest) => {
     guest.setWindowOpenHandler(({ url }) => {
-      if (isHttpUrl(url)) void shell.openExternal(url)
+      if (isHttpUrl(url) && (!isDesktopOfflineModeEnabled() || isLoopbackOrLocalUrl(url))) {
+        void shell.openExternal(url)
+      }
       return { action: 'deny' }
     })
     const blockUnsafeGuestNavigation = (event: Electron.Event, url: string): void => {
-      if (!isHttpUrl(url)) event.preventDefault()
+      if (
+        !isAllowedPreviewWebviewUrl(url) ||
+        (isDesktopOfflineModeEnabled() && !isLoopbackOrLocalUrl(url))
+      ) {
+        event.preventDefault()
+      }
     }
     guest.on('will-navigate', blockUnsafeGuestNavigation)
     guest.on('will-redirect', blockUnsafeGuestNavigation)
@@ -2195,7 +2276,15 @@ async function setupAutoUpdate(): Promise<void> {
     log: (message) => console.error(message)
   })
   secureAutoUpdater = controller
-  updateScheduler = new UpdateCheckScheduler({ check: (reason) => controller.check(reason) })
+  updateScheduler = new UpdateCheckScheduler({
+    check: async (reason) => {
+      if (isDesktopOfflineModeEnabled()) {
+        auditDesktop('desktop.update_skipped_offline', { reason })
+        return
+      }
+      await controller.check(reason)
+    }
+  })
   updateScheduler.start()
   powerMonitor.on('resume', () => void updateScheduler?.resumed().catch(() => undefined))
   publishUpdateState({ phase: 'idle' })
@@ -2251,7 +2340,7 @@ if (ownsSingleInstance) {
   } catch {
     dialog.showErrorBox(
       '安全存储不可用',
-      '无法用当前 Windows 账户解密或保护本机密钥。为避免明文降级，纳川已停止启动；请检查账户与数据目录权限。'
+      describeUnavailableEncryptionGuidance(process.platform)
     )
     app.quit()
     return

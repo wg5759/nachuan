@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '../i18n'
 import Dropdown from './Dropdown'
 import { useAppStore, type EngineStatus, type ModelInfo } from '../store'
 import { canUseEngineRuntime } from '../engine-status'

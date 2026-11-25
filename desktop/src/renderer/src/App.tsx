@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from './i18n'
 import {
   Panel,
   PanelGroup,
@@ -12,7 +12,7 @@ import {
   fetchModels,
   listRecoverablePaidMediaArchives,
   listPendingPaidMediaOperations,
-  probeEngineStatus,
+  probeEngineHealth,
   recoverPaidMediaArchive,
   type PaidMediaArchiveDiscovery,
   type PendingPaidMediaOperation
@@ -25,6 +25,8 @@ import {
 } from './store'
 import LeftPane from './components/LeftPane'
 import ChatPane from './components/ChatPane'
+import CodingControlPane from './components/CodingControlPane'
+import CodingStudioPane from './components/CodingStudioPane'
 import ConnectionCenter from './components/ConnectionCenter'
 import OrchestratePane from './components/OrchestratePane'
 import UsagePane from './components/UsagePane'
@@ -376,18 +378,31 @@ function PaidMediaRecoveryNotice(): React.ReactNode {
 
 function useEngine(): void {
   const setStatus = useAppStore((s) => s.setStatus)
+  const setEngineFeatures = useAppStore((s) => s.setEngineFeatures)
   const setModels = useAppStore((s) => s.setModels)
+  const hydrateConversationsFromServer = useAppStore((s) => s.hydrateConversationsFromServer)
+  const refreshOfflineMode = useAppStore((s) => s.refreshOfflineMode)
   const status = useAppStore((s) => s.status)
 
   useEffect(() => {
     let timer: number
     const ping = async (): Promise<void> => {
-      setStatus(await probeEngineStatus())
+      const health = await probeEngineHealth()
+      setStatus(health.status)
+      setEngineFeatures(health.features)
       timer = window.setTimeout(ping, 2000)
     }
     void ping()
     return () => window.clearTimeout(timer)
-  }, [setStatus])
+  }, [setStatus, setEngineFeatures])
+
+  // P1-3A：引擎就绪后，将旧 localStorage 会话一次性迁移至服务端并从 /v1/conversations 拉取权威会话列表。
+  // P2：同步读取引擎纯离线（空气间隙）模式状态到顶栏芯片与聊天栏。
+  useEffect(() => {
+    if (!canUseEngineRuntime(status)) return
+    void hydrateConversationsFromServer()
+    void refreshOfflineMode()
+  }, [status, hydrateConversationsFromServer, refreshOfflineMode])
 
   // 引擎在线就拉模型；没拉到（引擎刚重启等场景）每 3 秒快重试。
   // 关键修（机主实测：引擎跑着重启一次→app 一直"无可用模型"要手动刷）：成功后**不永久停**，
@@ -535,12 +550,43 @@ export default function App(): React.ReactNode {
   return (
     <div className="nachuan-root h-full flex flex-col">
       <AppHeader
+        creativeOpen={creativeOpen}
+        codingOpen={view === 'coding'}
+        codingStudioOpen={view === 'coding-studio'}
         onToggleNavigation={() => {
           if (window.matchMedia('(max-width: 760px)').matches) {
             setMobileNavigationOpen((open) => !open)
           } else {
             toggle(leftRef.current)
           }
+        }}
+        onOpenCoding={() => {
+          setMobileNavigationOpen(false)
+          setCreativeOpen(false)
+          setView(view === 'coding' ? 'chat' : 'coding')
+        }}
+        onOpenCodingStudio={() => {
+          setMobileNavigationOpen(false)
+          setCreativeOpen(false)
+          setView(view === 'coding-studio' ? 'chat' : 'coding-studio')
+        }}
+        onToggleCreative={() => {
+          if (creativeOpen) {
+            setCreativeOpen(false)
+          } else {
+            setView('chat')
+            closeBrowser()
+            setCreativeOpen(true)
+          }
+        }}
+        onOpenSettings={() => selectPrimary('settings')}
+        onOpenPrivacyAudit={() => {
+          selectPrimary('settings')
+          window.requestAnimationFrame(() => {
+            document
+              .getElementById('privacy-outbound-audit')
+              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          })
         }}
         onToggleBrowser={toggleBrowser}
       />
@@ -603,6 +649,10 @@ export default function App(): React.ReactNode {
                     }
                   }}
                 />
+              ) : view === 'coding' ? (
+                <CodingControlPane onOpenChat={() => selectPrimary('chat')} />
+              ) : view === 'coding-studio' ? (
+                <CodingStudioPane />
               ) : view === 'brain' ? (
                 <AgentBrainPane />
               ) : view === 'kb' ? (

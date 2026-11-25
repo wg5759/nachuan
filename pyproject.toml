@@ -75,8 +75,10 @@ build-constraint-dependencies = ["setuptools>=83.0.0"]
 packages = [
     "gateway",
     "gateway.providers",
+    "gateway.routes",
     "gateway.web_ui",
     "gateway.web_ui.assets",
+    "storage",
     "orchestrator",
     "orchestrator.workflows",
     "nachuan_sdk",

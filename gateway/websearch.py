@@ -13,6 +13,7 @@ import re
 from typing import Any
 from urllib.parse import urlencode, urlsplit
 
+from gateway.outbound_guard import OfflineModeBlockedError
 from gateway.public_media import fetch_public_text
 
 _UA = (
@@ -85,6 +86,8 @@ async def search(query: str, n: int = 5, *, timeout: float = 15.0) -> list[dict[
             # event alone makes upstream markup drift observable.
             _LOG.warning("bing search parser returned no organic results")
         return out
+    except OfflineModeBlockedError:
+        raise
     except Exception as exc:  # noqa: BLE001
         _LOG.warning("bing search failed (%s)", type(exc).__name__)
         return []
@@ -171,10 +174,30 @@ def _append_untrusted_evidence(messages: list[Any], evidence: str) -> bool:
     return False
 
 
-async def maybe_augment_request(req: Any, n: int = 5) -> int:
-    """请求带 web_search=true（或 ?search=1）时：联网搜索最后一条用户消息，把参考资料作为
-    system 消息插到最前，让模型据实回答。返回命中条数（0=未搜/无结果，不改消息）。可用于任何模型。"""
-    if not getattr(req, "web_search", False):
+async def maybe_augment_request(
+    req: Any,
+    n: int = 5,
+    *,
+    router: Any = None,
+    model: str | None = None,
+    incognito: bool | None = None,
+) -> int:
+    """请求显式带 web_search=True 时联网搜索最后一条用户消息，把参考资料附为不可信证据。
+
+    强制安全门禁（P0-1）：
+    - 未显式开启 web_search=True → 跳过；
+    - 请求处于无痕/隐私模式（incognito / privacy_mode）→ 强制禁止外网搜索；
+    - 目标模型为本地离线模型（local / ollama / llama / loopback 等）→ 强制禁止外网搜索。
+    返回命中条数（0=未搜/被门禁拦截/无结果，不改消息）。
+    """
+    if getattr(req, "web_search", False) is not True:
+        return 0
+    from gateway.privacy import is_incognito_request, is_local_model
+
+    if incognito is True or is_incognito_request(req):
+        return 0
+    target_model = model if model is not None else str(getattr(req, "model", "") or "")
+    if is_local_model(router, target_model):
         return 0
     import asyncio
 

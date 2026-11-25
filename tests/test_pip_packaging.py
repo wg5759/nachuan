@@ -211,6 +211,35 @@ class TestPackageClosure:
         assert "gateway/enterprise_rag_plugins.py" in names
         assert "gateway/local_web_session.py" in names
         assert "gateway/sqlite_runtime.py" in names
+        assert "gateway/installed_channel_file_lock.py" in names
+        assert "gateway/windows_installed_process_manager.py" in names
+        assert "gateway/installed_channel_supervisor_control.py" in names
+        assert "gateway/installed_channel_supervisor_status.py" in names
+        assert "gateway/installed_channel_supervisor_watchdog.py" in names
+        assert "gateway/installed_channel_supervisor_coordinator.py" in names
+        assert "gateway/installed_channel_health_probe.py" in names
+        assert "gateway/installed_channel_supervisor_bootstrap.py" in names
+        assert "gateway/installed_channel_installer_anchor.py" in names
+        assert "gateway/installed_channel_default_paths.py" in names
+        assert "gateway/installed_channel_embedded_trust.py" in names
+        assert "gateway/installed_channel_release_authority.py" in names
+        assert "gateway/installed_channel_installer_provisioning.py" in names
+        assert "gateway/installed_channel_host_enrollment.py" in names
+        assert "gateway/installed_channel_host_anchor.py" in names
+        assert "gateway/installed_channel_cng_host_signer.py" in names
+        assert "gateway/installed_channel_installer_trust_acl.py" in names
+        assert "gateway/installed_channel_provision_lock.py" in names
+        assert "gateway/installed_nachuan_core_identity.py" in names
+        assert "gateway/installed_service_machine_vault.py" in names
+        assert "gateway/installed_service_state_acl.py" in names
+        assert "gateway/windows_nachuan_core_service_host.py" in names
+        assert "gateway/installed_channel_service_runtime.py" in names
+        assert "gateway/installed_channel_drain.py" in names
+        assert "gateway/installed_channel_child_drain_runtime.py" in names
+        assert "gateway/windows_installed_drain_pipe.py" in names
+        assert "gateway/user_session_agent_protocol.py" in names
+        assert "gateway/user_session_operation_ledger.py" in names
+        assert "config/installed-channel-supervisor-trust.v1.json" in names
         assert "orchestrator/durable_event_log.py" in names
         assert "orchestrator/plugin_kernel.py" in names
         assert "orchestrator/isolated_plugin.py" in names

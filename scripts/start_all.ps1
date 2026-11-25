@@ -8,6 +8,8 @@ param(
     [int]$UnhealthyThreshold = 3,
     [int]$BackupIntervalSeconds = 21600,
     [switch]$Scheduled,
+    [switch]$HoldWeixin,
+    [string]$ConnectionsPath = '',
     [switch]$Once,
     [switch]$DryRun,
     [switch]$Json
@@ -15,14 +17,16 @@ param(
 
 # 纳川本机监督器（PowerShell 5.1+）。
 #
+# 先把脚本解析为绝对路径；身份绑定会拒绝相对 -File 路径。
+#   $Supervisor = (Resolve-Path .\scripts\start_all.ps1).Path
 # 启动/守护：
-#   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
+#   powershell -NoProfile -ExecutionPolicy Bypass -File $Supervisor
 # 状态（可给监控采集）：
-#   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_all.ps1 -Action Status -Json
+#   powershell -NoProfile -ExecutionPolicy Bypass -File $Supervisor -Action Status -Json
 # 停止监督器、引擎和桥：
-#   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_all.ps1 -Action Stop
+#   powershell -NoProfile -ExecutionPolicy Bypass -File $Supervisor -Action Stop
 # Stop 会留下持久停机闩锁，计划任务重启也不会绕过。显式恢复：
-#   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_all.ps1 -Action Resume
+#   powershell -NoProfile -ExecutionPolicy Bypass -File $Supervisor -Action Resume
 # 安全演练（不启动/不停止进程）：
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_all.ps1 -Once -DryRun -Json
 # 源码树禁止注册登录任务。正式安装必须由签名安装器从受保护安装目录注册；
@@ -65,6 +69,10 @@ $ApprovalKeyFile = Join-Path $DataDir 'approval_admin_key.txt'
 $WeixinBridgeKeyFile = Join-Path $DataDir 'weixin_bridge_api_key.txt'
 $FeishuBridgeKeyFile = Join-Path $DataDir 'feishu_bridge_api_key.txt'
 $EngineBootTokenFile = Join-Path $DataDir 'engine_boot_token.txt'
+$DefaultConnectionsPath = Join-Path $DataDir 'connections.json'
+$ResolvedConnectionsPath = $DefaultConnectionsPath
+$ConnectionsAuthority = 'runtime-data'
+$ConnectionsPathSha256 = ''
 $MediaConfigFile = Join-Path $DataDir 'media-binaries.json'
 $BackupRoot = Join-Path $DataDir 'backup\sqlite'
 $WeixinTokenFile = Join-Path $DataDir 'ilink_token.json'
@@ -77,6 +85,7 @@ $script:Unhealthy = @{ engine = 0; weixin = 0; feishu = 0 }
 $script:StartAttempt = @{ engine = 0; weixin = 0; feishu = 0 }
 $script:NextStartAt = @{ engine = [DateTimeOffset]::MinValue; weixin = [DateTimeOffset]::MinValue; feishu = [DateTimeOffset]::MinValue }
 $script:StartedAt = @{ engine = [DateTimeOffset]::MinValue; weixin = [DateTimeOffset]::MinValue; feishu = [DateTimeOffset]::MinValue }
+$script:WeixinHoldLogged = $false
 $script:EngineGenerationCounter = [long]0
 $script:ProcessSnapshot = @()
 $script:ProcessSnapshotAt = [datetime]::MinValue
@@ -142,6 +151,43 @@ function Assert-TrustedRegularFile(
         throw ("{0} must be a regular non-reparse file: {1}" -f $Label, $Path)
     }
 }
+
+if (-not [string]::IsNullOrWhiteSpace($ConnectionsPath)) {
+    $rawConnectionsPath = $ConnectionsPath.Trim()
+    if ($rawConnectionsPath -notmatch '^[A-Za-z]:[\\/]') {
+        throw 'ConnectionsPath must be an absolute local drive path'
+    }
+    $candidateConnectionsPath = [IO.Path]::GetFullPath($rawConnectionsPath)
+    if (-not [string]::Equals(
+            [IO.Path]::GetFileName($candidateConnectionsPath),
+            'connections.json',
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw 'ConnectionsPath must name connections.json'
+    }
+    $verificationKeyPath = $candidateConnectionsPath + '.verification-key'
+    Assert-TrustedRegularFile $candidateConnectionsPath 'model connection vault'
+    Assert-TrustedRegularFile $verificationKeyPath 'model connection verification key'
+    if ($Scheduled) {
+        $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+        if ([string]::IsNullOrWhiteSpace($localAppData)) {
+            throw 'scheduled production model vault authority is unavailable'
+        }
+        $installedConnectionsPath = [IO.Path]::GetFullPath(
+            (Join-Path $localAppData 'Nachuan\data\connections.json')
+        )
+        if (-not [string]::Equals(
+                $candidateConnectionsPath,
+                $installedConnectionsPath,
+                [StringComparison]::OrdinalIgnoreCase
+            )) {
+            throw 'scheduled production mode only accepts the installed Nachuan connection vault'
+        }
+    }
+    $ResolvedConnectionsPath = $candidateConnectionsPath
+    $ConnectionsAuthority = 'external-user-vault'
+}
+$ConnectionsPathSha256 = Get-Sha256Hex $ResolvedConnectionsPath.ToLowerInvariant()
 
 if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
     throw "project root does not exist: $Root"
@@ -349,6 +395,27 @@ function Get-SupervisorRecord {
         $recordScript = [string](Get-PropertyValue $document 'script_path' '')
         $instanceId = [string](Get-PropertyValue $document 'instance_id' '')
         $commandHash = [string](Get-PropertyValue $document 'command_line_sha256' '')
+        $weixinOperatorHold = $false
+        $weixinHoldProperty = $document.PSObject.Properties['weixin_operator_hold']
+        if ($null -ne $weixinHoldProperty) {
+            if ($weixinHoldProperty.Value -isnot [bool]) { return $null }
+            $weixinOperatorHold = [bool]$weixinHoldProperty.Value
+        }
+        $connectionsAuthority = 'runtime-data'
+        $connectionsPathSha256 = Get-Sha256Hex $DefaultConnectionsPath.ToLowerInvariant()
+        $connectionsAuthorityProperty = $document.PSObject.Properties['connections_authority']
+        $connectionsPathHashProperty = $document.PSObject.Properties['connections_path_sha256']
+        if ($null -ne $connectionsAuthorityProperty -or $null -ne $connectionsPathHashProperty) {
+            if ($null -eq $connectionsAuthorityProperty -or $null -eq $connectionsPathHashProperty) {
+                return $null
+            }
+            $connectionsAuthority = [string]$connectionsAuthorityProperty.Value
+            $connectionsPathSha256 = [string]$connectionsPathHashProperty.Value
+            if (@('runtime-data', 'external-user-vault') -notcontains $connectionsAuthority -or
+                $connectionsPathSha256 -notmatch '^[0-9a-f]{64}$') {
+                return $null
+            }
+        }
         $ignoredGuid = [Guid]::Empty
         if (-not [string]::Equals($recordRoot, $Root, [StringComparison]::OrdinalIgnoreCase) -or
             -not [string]::Equals($recordScript, $SupervisorScriptPath, [StringComparison]::OrdinalIgnoreCase) -or
@@ -364,6 +431,9 @@ function Get-SupervisorRecord {
             instance_id = $instanceId
             started_utc_ticks = $startedTicks
             command_line_sha256 = $commandHash
+            weixin_operator_hold = $weixinOperatorHold
+            connections_authority = $connectionsAuthority
+            connections_path_sha256 = $connectionsPathSha256
         }
     } catch {
         return $null
@@ -417,6 +487,9 @@ function Write-SupervisorRecord([string]$InstanceId) {
         started_utc_ticks = $process.StartTime.ToUniversalTime().Ticks
         command_line_sha256 = Get-Sha256Hex $commandLine
         started_at = [DateTimeOffset]::UtcNow.ToString('o')
+        weixin_operator_hold = [bool]$HoldWeixin
+        connections_authority = $ConnectionsAuthority
+        connections_path_sha256 = $ConnectionsPathSha256
     }
     Write-AtomicJson $SupervisorPidFile $payload
 }
@@ -539,7 +612,16 @@ function Protect-PrivateRuntimeTree([string]$Path) {
             if ($child.PSIsContainer) {
                 $pending.Push([IO.DirectoryInfo]$child)
             } else {
-                $verifiedChild = Get-Item -LiteralPath $child.FullName -Force -ErrorAction Stop
+                try {
+                    $verifiedChild = Get-Item -LiteralPath $child.FullName -Force -ErrorAction Stop
+                } catch [Management.Automation.ItemNotFoundException] {
+                    # SQLite may delete a transient -shm/-wal sidecar after the
+                    # directory snapshot but before this exact-object recheck.
+                    # A vanished object has no ACL left to harden.  Every other
+                    # error, and every surviving reparse/type change, remains
+                    # fail-closed below.
+                    continue
+                }
                 if ($verifiedChild.PSIsContainer -or
                     (($verifiedChild.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
                     throw 'runtime data file changed during ACL hardening'
@@ -809,7 +891,7 @@ function Get-ManagedServiceEnvironment([string]$Service) {
     $result = Get-MinimalPythonEnvironment
     $injection = @(
         'BASH_ENV','ENV','NODE_OPTIONS','NODE_PATH','PROMPT_COMMAND','PYTHONHOME',
-        'PYTHONINSPECT','PYTHONPATH','PYTHONSTARTUP'
+        'PYTHONINSPECT','PYTHONPATH','PYTHONSTARTUP','NACHUAN_CONNECTIONS_PATH'
     )
     if ($Service -eq 'engine') {
         $engineAllowed = @(
@@ -863,6 +945,9 @@ function Get-ManagedServiceEnvironment([string]$Service) {
          $result['NACHUAN_PAID_MEDIA_API_KEY'] = [string]$env:NACHUAN_PAID_MEDIA_API_KEY
          $result['NACHUAN_WEIXIN_BRIDGE_API_KEY'] = [string]$env:NACHUAN_WEIXIN_BRIDGE_API_KEY
         $result['NACHUAN_FEISHU_BRIDGE_API_KEY'] = [string]$env:NACHUAN_FEISHU_BRIDGE_API_KEY
+        if ($ConnectionsAuthority -eq 'external-user-vault') {
+            $result['NACHUAN_CONNECTIONS_PATH'] = $ResolvedConnectionsPath
+        }
     } else {
         $prefix = $Service.ToUpperInvariant() + '_'
         foreach ($item in @(Get-ChildItem Env:)) {
@@ -1150,6 +1235,7 @@ function Get-WeixinHealth {
             age_sec = $null; state = 'missing'; pid = 0; fresh_until = 0
             pending_inbound = 0; pending_outbound = 0
             dead_inbound = 0; dead_outbound = 0
+            closed_without_replay_inbound = 0; closed_without_replay_outbound = 0
             oldest_processing_age_seconds = $null; processing_stuck = $false
             consecutive_poll_failures = 0; access_configured = $false
             bridge_key_configured = $false; engine_available = $false
@@ -1210,6 +1296,14 @@ function Get-WeixinHealth {
         $pendingOutbound = Get-StrictHealthCount $h 'pending_outbound'
         $deadInbound = Get-StrictHealthCount $h 'dead_inbound'
         $deadOutbound = Get-StrictHealthCount $h 'dead_outbound'
+        $closedInbound = [long]0
+        $closedOutbound = [long]0
+        if ($null -ne $h.PSObject.Properties['closed_without_replay_inbound']) {
+            $closedInbound = Get-StrictHealthCount $h 'closed_without_replay_inbound'
+        }
+        if ($null -ne $h.PSObject.Properties['closed_without_replay_outbound']) {
+            $closedOutbound = Get-StrictHealthCount $h 'closed_without_replay_outbound'
+        }
         $pollFailures = Get-StrictHealthCount $h 'consecutive_poll_failures'
         $oldestProcessingAge = Get-StrictFiniteNonNegativeHealthNumber `
             $h 'oldest_processing_age_seconds'
@@ -1248,6 +1342,8 @@ function Get-WeixinHealth {
             pending_outbound = $pendingOutbound
             dead_inbound = $deadInbound
             dead_outbound = $deadOutbound
+            closed_without_replay_inbound = $closedInbound
+            closed_without_replay_outbound = $closedOutbound
             oldest_processing_age_seconds = $oldestProcessingAge
             processing_stuck = $processingStuck
             consecutive_poll_failures = $pollFailures
@@ -1263,6 +1359,7 @@ function Get-WeixinHealth {
             age_sec = $null; state = 'invalid'; pid = 0; fresh_until = 0
             pending_inbound = 0; pending_outbound = 0
             dead_inbound = 0; dead_outbound = 0
+            closed_without_replay_inbound = 0; closed_without_replay_outbound = 0
             oldest_processing_age_seconds = $null; processing_stuck = $false
             consecutive_poll_failures = 0; access_configured = $false
             bridge_key_configured = $false; engine_available = $false
@@ -1633,6 +1730,23 @@ function Get-RuntimeState([switch]$Plan) {
         )
     }
     $stopState = Get-StopState
+    $supervisorRecord = Get-SupervisorRecord
+    $supervisorRecordPresent = [bool]($null -ne $supervisorRecord)
+    $supervisorIdentityBound = [bool](
+        $supervisorRecordPresent -and (Test-SupervisorRecordOwnership $supervisorRecord)
+    )
+    $supervisorPid = 0
+    if ($supervisorIdentityBound) {
+        $supervisorPid = [int]$supervisorRecord.pid
+    }
+    $effectiveWeixinHold = [bool]$HoldWeixin
+    $effectiveConnectionsAuthority = $ConnectionsAuthority
+    $effectiveConnectionsPathSha256 = $ConnectionsPathSha256
+    if ($supervisorIdentityBound) {
+        $effectiveWeixinHold = [bool]$supervisorRecord.weixin_operator_hold
+        $effectiveConnectionsAuthority = [string]$supervisorRecord.connections_authority
+        $effectiveConnectionsPathSha256 = [string]$supervisorRecord.connections_path_sha256
+    }
 
     $services = @(
         [pscustomobject][ordered]@{
@@ -1651,9 +1765,10 @@ function Get-RuntimeState([switch]$Plan) {
             name = 'weixin'
             configured = $weixinConfigured
             running = [bool]($weixinProc.Count -gt 0)
-            ready = [bool]($engineReady -and $weixinConfigured -and $weixinHealth.ready)
+            ready = [bool](-not $effectiveWeixinHold -and $engineReady -and $weixinConfigured -and $weixinHealth.ready)
             action = $(
                 if ($Plan -and $stopState.active) { 'blocked-suspended' }
+                elseif ($effectiveWeixinHold) { 'blocked-operator-hold' }
                 elseif ($Plan -and $weixinConfigured -and $weixinProc.Count -eq 0) { 'would-start' }
                 elseif ($Plan -and $weixinConfigured -and -not $weixinHealth.ready) { 'degraded' }
                 else { 'none' }
@@ -1678,6 +1793,13 @@ function Get-RuntimeState([switch]$Plan) {
         dry_run = [bool]$DryRun
         scheduled = [bool]$Scheduled
         supervisor = [pscustomobject][ordered]@{
+            record_present = $supervisorRecordPresent
+            running = $supervisorIdentityBound
+            identity_bound = $supervisorIdentityBound
+            pid = $supervisorPid
+            weixin_operator_hold = $effectiveWeixinHold
+            connections_authority = $effectiveConnectionsAuthority
+            connections_path_sha256 = $effectiveConnectionsPathSha256
             suspended = [bool]$stopState.active
             stop_latch_valid = [bool]$stopState.valid
             stop_requested_at = [string]$stopState.requested_at
@@ -1862,7 +1984,18 @@ function Invoke-WatchdogCycle {
         Write-SupervisorLog 'channel runtime allowed while providers are unavailable; overall readiness remains degraded'
     }
 
-    Invoke-WeixinWatchdog $weixinProc
+    if ($HoldWeixin) {
+        if ($weixinProc.Count -gt 0) {
+            Stop-ProjectProcesses @('run_weixin_ilink_bridge.py') 'weixin'
+        }
+        if (-not $script:WeixinHoldLogged) {
+            Write-SupervisorLog 'weixin startup is blocked by explicit operator hold'
+            $script:WeixinHoldLogged = $true
+        }
+    } else {
+        $script:WeixinHoldLogged = $false
+        Invoke-WeixinWatchdog $weixinProc
+    }
 
     if (Test-FeishuConfigured) {
         $health = Get-FeishuHealth
@@ -2063,6 +2196,7 @@ try {
             Env:NACHUAN_ALLOW_ANONYMOUS_LOCAL,`
             Env:NACHUAN_ENGINE_BOOT_TOKEN,Env:NACHUAN_WEIXIN_BRIDGE_API_KEY,`
             Env:NACHUAN_FEISHU_BRIDGE_API_KEY,Env:BRIDGE_API_KEY,Env:BRIDGE_ENGINE_URL,`
+            Env:NACHUAN_CONNECTIONS_PATH,`
             Env:USAGE_DB_PATH,Env:DATA_DIR,Env:WEIXIN_ALLOW_ALL,Env:FEISHU_ALLOW_ALL,`
             Env:WEIXIN_ALLOWED,Env:WEIXIN_OWNER,Env:FEISHU_ALLOWED_USERS,Env:FEISHU_OWNER_OPEN_ID `
             -ErrorAction SilentlyContinue

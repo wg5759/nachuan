@@ -22,6 +22,7 @@ def test_chinese_maintenance_entry_points_to_single_project_sources() -> None:
     status = _command("查看运行状态.cmd")
     stop = _command("停止纳川.cmd")
     resume = _command("恢复并启动纳川.cmd")
+    hold_weixin = _command("仅启动引擎与飞书-暂缓微信.cmd")
     build = _command("构建本地安装包-精简版.cmd")
     desktop_dev = _command("开发模式启动桌面端.cmd")
 
@@ -29,6 +30,16 @@ def test_chinese_maintenance_entry_points_to_single_project_sources() -> None:
     assert "scripts\\start_all.ps1" in stop and "-action stop" in stop
     assert "scripts\\start_all.ps1" in resume and "-action','resume'" in resume
     assert "start-process -windowstyle hidden" in resume
+    assert "connections.json" in resume
+    assert "connections.json.verification-key" in resume
+    assert "-connectionspath" in resume
+    assert "scripts\\start_all.ps1" in hold_weixin
+    assert "-action','resume'" in hold_weixin
+    assert "-holdweixin" in hold_weixin
+    assert "start-process -windowstyle hidden" in hold_weixin
+    assert "connections.json" in hold_weixin
+    assert "connections.json.verification-key" in hold_weixin
+    assert "-connectionspath" in hold_weixin
     assert "scripts\\build-local.ps1" in build and " lean" in build
     assert "%~dp0..\\desktop" in desktop_dev and "npm run dev" in desktop_dev
     assert not (ROOT / "启动引擎.bat").exists()
@@ -40,6 +51,7 @@ def test_maintenance_commands_do_not_reference_a_second_project_copy() -> None:
         "查看运行状态.cmd",
         "停止纳川.cmd",
         "恢复并启动纳川.cmd",
+        "仅启动引擎与飞书-暂缓微信.cmd",
         "构建本地安装包-精简版.cmd",
         "开发模式启动桌面端.cmd",
     ):

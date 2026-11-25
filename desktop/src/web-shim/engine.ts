@@ -28,7 +28,11 @@ function checkRequest(input: RendererEngineRequest): void {
     !input ||
     typeof input !== 'object' ||
     !isRendererEngineRequestId(input.requestId) ||
-    (input.method !== 'GET' && input.method !== 'POST') ||
+    (input.method !== 'GET' &&
+      input.method !== 'POST' &&
+      input.method !== 'PATCH' &&
+      input.method !== 'PUT' &&
+      input.method !== 'DELETE') ||
     (input.bodyKind !== 'none' && input.bodyKind !== 'json') ||
     (input.bodyKind === 'none' && input.body !== undefined) ||
     (input.bodyKind === 'json' && typeof input.body !== 'string')

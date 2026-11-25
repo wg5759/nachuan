@@ -369,8 +369,15 @@ _CURRENT_SCHEMA_DDL = (
 )
 
 
+_WEIXIN_IDEMPOTENCY_OWNED_TABLES = frozenset(
+    {"weixin_agent_idempotency", "weixin_agent_idempotency_meta"}
+)
+
+
 def _persistent_schema_rows(
     connection: sqlite3.Connection,
+    *,
+    unified: bool = False,
 ) -> tuple[tuple[object, object, object, object], ...]:
     """Return the complete materialized sqlite_master closed set."""
 
@@ -385,6 +392,7 @@ def _persistent_schema_rows(
     return tuple(
         (kind, name, table_name, sql.rstrip() if isinstance(sql, str) else sql)
         for kind, name, table_name, sql in rows
+        if not unified or str(table_name) in _WEIXIN_IDEMPOTENCY_OWNED_TABLES
     )
 
 
@@ -624,7 +632,10 @@ class WeixinIdempotencyStore:
         self._closed = False
         self._trusted_data_version: int | None = None
         self._trusted_schema_version: int | None = None
+        from storage.unified_db import is_unified_db_path
+
         self.path = Path(os.path.abspath(os.fspath(path)))
+        self._unified = is_unified_db_path(self.path)
         self.lease_seconds = max(10.0, min(float(lease_seconds), 15 * 60.0))
         requested_busy_timeout = max(100, min(int(busy_timeout_ms), 30_000))
         # A renewal must leave time to cancel/fence business work before the
@@ -652,37 +663,41 @@ class WeixinIdempotencyStore:
             self._assert_database_path()
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._assert_database_path()
-            # Classify the complete SQLite family before a writer exists.
-            # mode=ro is required for a complete WAL+SHM pair because
-            # immutable=1 intentionally ignores committed WAL frames.
-            (
-                preflight_generation,
-                preflight_identity,
-                preflight_family,
-            ) = self._stabilized_preflight_generation()
-            if self._database_family_presence() != preflight_family:
+            preflight_generation: str | None = None
+            preflight_identity: os.stat_result | None = None
+            if not self._unified:
+                # Classify the complete SQLite family before a writer exists.
+                # mode=ro is required for a complete WAL+SHM pair because
+                # immutable=1 intentionally ignores committed WAL frames.
                 (
                     preflight_generation,
                     preflight_identity,
                     preflight_family,
                 ) = self._stabilized_preflight_generation()
+                if self._database_family_presence() != preflight_family:
+                    (
+                        preflight_generation,
+                        preflight_identity,
+                        preflight_family,
+                    ) = self._stabilized_preflight_generation()
             with closing(self._open_connection()) as connection:
                 connection.execute("BEGIN IMMEDIATE")
-                generation = self._classify_generation(connection)
-                opened_identity = os.lstat(self.path)
-                if preflight_identity is not None and not os.path.samestat(
-                    preflight_identity, opened_identity
-                ):
-                    raise sqlite3.DatabaseError(
-                        "idempotency database identity changed before locked open"
+                generation = self._classify_generation(connection, unified=self._unified)
+                if not self._unified:
+                    opened_identity = os.lstat(self.path)
+                    if preflight_identity is not None and not os.path.samestat(
+                        preflight_identity, opened_identity
+                    ):
+                        raise sqlite3.DatabaseError(
+                            "idempotency database identity changed before locked open"
+                        )
+                    peer_converged = (
+                        preflight_generation != "current" and generation == "current"
                     )
-                peer_converged = (
-                    preflight_generation != "current" and generation == "current"
-                )
-                if generation != preflight_generation and not peer_converged:
-                    raise sqlite3.DatabaseError(
-                        "idempotency database changed during initialization"
-                    )
+                    if generation != preflight_generation and not peer_converged:
+                        raise sqlite3.DatabaseError(
+                            "idempotency database changed during initialization"
+                        )
                 if generation == "empty":
                     self._provision_current(connection)
                 elif generation in {
@@ -696,8 +711,9 @@ class WeixinIdempotencyStore:
                     self._migrate_generation(connection)
                 elif generation == "current_unversioned":
                     self._validate_current(connection, require_identity=False)
-                    connection.execute(f"PRAGMA application_id={_APPLICATION_ID}")
-                    connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+                    if not self._unified:
+                        connection.execute(f"PRAGMA application_id={_APPLICATION_ID}")
+                        connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
                 elif generation != "current":
                     raise sqlite3.DatabaseError(
                         "unsupported idempotency database generation"
@@ -713,7 +729,8 @@ class WeixinIdempotencyStore:
             # autocheckpointing still bounds WAL growth.
             self._keeper = self._open_connection()
             self._keeper.execute("PRAGMA wal_autocheckpoint=1000")
-            self._apply_page_cap(self._keeper)
+            if not self._unified:
+                self._apply_page_cap(self._keeper)
             self._trusted_data_version, self._trusted_schema_version = (
                 self._database_versions(self._keeper)
             )
@@ -771,7 +788,7 @@ class WeixinIdempotencyStore:
                     raise sqlite3.DatabaseError(
                         "idempotency database integrity check failed"
                     )
-                generation = self._classify_generation(connection)
+                generation = self._classify_generation(connection, unified=self._unified)
             finally:
                 connection.rollback()
         if self._database_family_presence() != presence:
@@ -817,11 +834,24 @@ class WeixinIdempotencyStore:
         ) from last_change
 
     @staticmethod
-    def _classify_generation(connection: sqlite3.Connection) -> str:
+    def _classify_generation(
+        connection: sqlite3.Connection,
+        *,
+        unified: bool = False,
+    ) -> str:
+        rows = _persistent_schema_rows(connection, unified=unified)
+        current = _materialized_schema_rows(_CURRENT_SCHEMA_DDL)
+        if unified:
+            if not rows:
+                return "empty"
+            if rows == current:
+                return "current"
+            generation = _allowed_unversioned_generations().get(rows)
+            if generation is not None:
+                return generation
+            raise sqlite3.DatabaseError("unknown unified idempotency database subset")
         application_id = int(connection.execute("PRAGMA application_id").fetchone()[0])
         user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-        rows = _persistent_schema_rows(connection)
-        current = _materialized_schema_rows(_CURRENT_SCHEMA_DDL)
         if (
             application_id == _APPLICATION_ID
             and user_version == _SCHEMA_VERSION
@@ -851,8 +881,9 @@ class WeixinIdempotencyStore:
                 self.max_database_bytes,
             ),
         )
-        connection.execute(f"PRAGMA application_id={_APPLICATION_ID}")
-        connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+        if not self._unified:
+            connection.execute(f"PRAGMA application_id={_APPLICATION_ID}")
+            connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
 
     def _migrate_generation(self, connection: sqlite3.Connection) -> None:
         columns = {
@@ -950,7 +981,9 @@ class WeixinIdempotencyStore:
         if response_bytes > self.max_total_response_bytes:
             raise sqlite3.DatabaseError("legacy response ledger exceeds byte capacity")
 
-        for object_type, name, _table_name, _sql in _persistent_schema_rows(connection):
+        for object_type, name, _table_name, _sql in _persistent_schema_rows(
+            connection, unified=self._unified
+        ):
             if str(object_type) in {"index", "trigger", "view"}:
                 escaped = str(name).replace('"', '""')
                 connection.execute(f'DROP {str(object_type).upper()} "{escaped}"')
@@ -990,8 +1023,9 @@ class WeixinIdempotencyStore:
                 self.max_database_bytes,
             ),
         )
-        connection.execute(f"PRAGMA application_id={_APPLICATION_ID}")
-        connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+        if not self._unified:
+            connection.execute(f"PRAGMA application_id={_APPLICATION_ID}")
+            connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
 
     def _validate_current(
         self,
@@ -1000,11 +1034,11 @@ class WeixinIdempotencyStore:
         require_identity: bool = True,
         quick_check: bool = False,
     ) -> None:
-        if _persistent_schema_rows(connection) != _materialized_schema_rows(
-            _CURRENT_SCHEMA_DDL
-        ):
+        if _persistent_schema_rows(
+            connection, unified=self._unified
+        ) != _materialized_schema_rows(_CURRENT_SCHEMA_DDL):
             raise sqlite3.DatabaseError("idempotency schema is not exact")
-        if require_identity and (
+        if require_identity and not self._unified and (
             int(connection.execute("PRAGMA application_id").fetchone()[0])
             != _APPLICATION_ID
             or int(connection.execute("PRAGMA user_version").fetchone()[0])

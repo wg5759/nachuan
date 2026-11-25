@@ -538,8 +538,21 @@ _CHANNEL_MEDIA_SCHEMA_AUXILIARY_DDL: dict[tuple[str, str], str] = {
 }
 
 
+_DURABLE_MEDIA_OWNED_TABLES = frozenset(
+    {
+        "durable_media_requests",
+        "durable_media_requests_meta",
+        "durable_media_asset_capacity",
+        "durable_media_asset_authority",
+        "durable_channel_media_admissions",
+    }
+)
+
+
 def _persistent_schema_rows(
     connection: sqlite3.Connection,
+    *,
+    unified: bool = False,
 ) -> list[tuple[object, object, object, object]]:
     """Enumerate every non-internal persistent schema object.
 
@@ -549,9 +562,12 @@ def _persistent_schema_rows(
     ``sqlite_*`` object from hiding behind a prefix exemption.
     """
 
-    return connection.execute(
+    rows = connection.execute(
         "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name"
     ).fetchall()
+    if unified:
+        return [row for row in rows if str(row[2]) in _DURABLE_MEDIA_OWNED_TABLES]
+    return rows
 
 
 @lru_cache(maxsize=8)
@@ -1107,7 +1123,10 @@ class DurableMediaRequestStore:
         max_database_bytes: int = _DEFAULT_MAX_DATABASE_BYTES,
         max_asset_reservation_bytes: int = _DEFAULT_MAX_ASSET_RESERVATION_BYTES,
     ) -> None:
+        from storage.unified_db import is_unified_db_path
+
         self.path = Path(os.path.abspath(os.fspath(db_path)))
+        self._unified = is_unified_db_path(self.path)
         self.anchor_path = Path(f"{self.path}.rollback-anchor")
         if schema_profile not in _SCHEMA_PROFILES:
             raise ValueError("durable media schema profile is invalid")
@@ -1223,11 +1242,15 @@ class DurableMediaRequestStore:
             elif construction_policy == "open_bound":
                 if not self.path.is_file() or not self.anchor_path.is_file():
                     raise OSError("bound durable media state is missing")
-            self._preflight_schema_generation()
-            self._assert_preflight_still_current()
+            if not self._unified:
+                self._preflight_schema_generation()
+                self._assert_preflight_still_current()
+            else:
+                self._preflight_database_identity = None
             with closing(self._connect(configure_page_budget=False)) as connection:
                 if (
-                    self._preflight_database_identity is not None
+                    not self._unified
+                    and self._preflight_database_identity is not None
                     and self._database_path_identity()
                     != self._preflight_database_identity
                 ):
@@ -1249,7 +1272,8 @@ class DurableMediaRequestStore:
                         expected_database_identity=self._expected_database_identity,
                         allow_migration=construction_policy == "dev",
                     )
-                self._configure_page_budget(connection)
+                if not self._unified:
+                    self._configure_page_budget(connection)
                 connection.commit()
                 enable_wal_with_deadline(
                     connection,
@@ -1290,8 +1314,29 @@ class DurableMediaRequestStore:
     def _classify_schema_generation(self, connection: sqlite3.Connection) -> str:
         actual = {
             (str(kind), str(name)): (str(tbl_name), sql)
-            for kind, name, tbl_name, sql in _persistent_schema_rows(connection)
+            for kind, name, tbl_name, sql in _persistent_schema_rows(
+                connection, unified=self._unified
+            )
         }
+        if self._unified:
+            if not actual:
+                return "empty"
+            declarations = {
+                ("table", "durable_media_requests"): _REQUEST_TABLE_DDL,
+                ("table", "durable_media_requests_meta"): _META_TABLE_DDL,
+                **self._schema_auxiliary_ddl,
+            }
+            expected = _expected_schema_sql(declarations)
+            if set(actual) != set(expected) or any(
+                actual[identity][0] != expected_table
+                or self._canonical_sql(actual[identity][1])
+                != self._canonical_sql(expected_sql)
+                for identity, (expected_table, expected_sql) in expected.items()
+            ):
+                raise sqlite3.DatabaseError(
+                    "unified durable media schema subset is incompatible"
+                )
+            return "current"
         application_id = int(
             connection.execute("PRAGMA application_id").fetchone()[0]
         )
@@ -1494,7 +1539,7 @@ class DurableMediaRequestStore:
         expected_database_identity: str | None,
         allow_migration: bool,
     ) -> None:
-        existing_objects = _persistent_schema_rows(connection)
+        existing_objects = _persistent_schema_rows(connection, unified=self._unified)
         existing_tables = {
             str(name)
             for object_type, name, _tbl_name, _sql in existing_objects
@@ -1557,8 +1602,9 @@ class DurableMediaRequestStore:
                 "(singleton,max_capacity_bytes,reserved_total_bytes) VALUES(1,?,0)",
                 (self.max_asset_reservation_bytes,),
             )
-            connection.execute(f"PRAGMA application_id={self._application_id}")
-            connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+            if not self._unified:
+                connection.execute(f"PRAGMA application_id={self._application_id}")
+                connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         elif allow_migration and self._schema_profile == _PAID_MEDIA_SCHEMA_PROFILE:
             user_version = int(
                 connection.execute("PRAGMA user_version").fetchone()[0]
@@ -2133,10 +2179,11 @@ class DurableMediaRequestStore:
             raise sqlite3.DatabaseError(
                 "durable media foreign-key enforcement is disabled"
             )
-        application_id = int(connection.execute("PRAGMA application_id").fetchone()[0])
-        user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-        if application_id != self._application_id or user_version != _SCHEMA_VERSION:
-            raise sqlite3.DatabaseError("durable media schema identity is invalid")
+        if not self._unified:
+            application_id = int(connection.execute("PRAGMA application_id").fetchone()[0])
+            user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+            if application_id != self._application_id or user_version != _SCHEMA_VERSION:
+                raise sqlite3.DatabaseError("durable media schema identity is invalid")
 
         request_columns = tuple(
             str(row[1])
@@ -2157,7 +2204,7 @@ class DurableMediaRequestStore:
             **self._schema_auxiliary_ddl,
         }
         expected_sql_objects = _expected_schema_sql(expected_objects)
-        actual_rows = _persistent_schema_rows(connection)
+        actual_rows = _persistent_schema_rows(connection, unified=self._unified)
         actual_objects = {
             (str(object_type), str(name)): (str(tbl_name), sql)
             for object_type, name, tbl_name, sql in actual_rows

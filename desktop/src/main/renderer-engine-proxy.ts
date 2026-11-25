@@ -27,12 +27,13 @@ const MAX_SSE_RESPONSE_BYTES = 8 * 1024 * 1024
 const MAX_LEGACY_MEDIA_RESPONSE_BYTES = 16 * 1024 * 1024
 const MAX_BINARY_ERROR_RESPONSE_BYTES = 1024 * 1024
 
+export type RendererEngineMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
 export type RendererEngineBodyKind = 'none' | 'json' | 'binary'
 export type RendererEngineResponseKind = 'json' | 'binary' | 'stream'
 
 export interface RendererEngineRequest {
   readonly requestId: string
-  readonly method: 'GET' | 'POST'
+  readonly method: RendererEngineMethod
   readonly target: string
   readonly bodyKind: 'none' | 'json'
   readonly body?: string
@@ -66,7 +67,7 @@ export interface RendererEngineStreamResult {
 
 type ValidatedRequest = Readonly<{
   requestId: string
-  method: 'GET' | 'POST'
+  method: RendererEngineMethod
   target: string
   body: Buffer
   bodyKind: RendererEngineBodyKind
@@ -109,6 +110,7 @@ export interface RendererEngineProxyDependencies {
   readonly runtimeKey: () => string
   readonly now?: () => number
   readonly transport?: RendererEngineTransport
+  readonly onOfflineModeChanged?: (enabled: boolean) => void
 }
 
 type RendererEngineAdmissionKind = 'request' | 'stream' | 'binary' | 'upload'
@@ -396,12 +398,300 @@ function exactLapianQuery(target: string): boolean {
   return visionModel === null || (visionModel.length >= 1 && visionModel.length <= 256)
 }
 
+function exactOutboundAuditQuery(target: string): boolean {
+  if (target === '/v1/privacy/outbound-audit') return true
+  if (!target.startsWith('/v1/privacy/outbound-audit?')) return false
+  const raw = target.slice('/v1/privacy/outbound-audit?'.length)
+  if (!raw) return false
+  const params = new URLSearchParams(raw)
+  if (params.toString() !== raw) return false
+  const observed = [...params.keys()]
+  if (observed.length === 0 || new Set(observed).size !== observed.length) return false
+  if (observed.some((key) => !['limit', 'since_id', 'blocked_only'].includes(key))) return false
+  const limit = params.get('limit')
+  if (limit !== null && (!/^[1-9][0-9]{0,3}$/.test(limit) || Number(limit) > 1000)) {
+    return false
+  }
+  const sinceId = params.get('since_id')
+  if (
+    sinceId !== null &&
+    (!/^(0|[1-9][0-9]{0,12})$/.test(sinceId) || !Number.isSafeInteger(Number(sinceId)))
+  ) {
+    return false
+  }
+  const blockedOnly = params.get('blocked_only')
+  if (
+    blockedOnly !== null &&
+    blockedOnly !== 'true' &&
+    blockedOnly !== 'false' &&
+    blockedOnly !== '1' &&
+    blockedOnly !== '0'
+  ) {
+    return false
+  }
+  return true
+}
+
+function exactWorkspaceWorktreesQuery(target: string): boolean {
+  if (target === '/v1/workspace/worktrees') return true
+  return exactOneQuery(target, '/v1/workspace/worktrees', 'repo_path', 1, 4_096)
+}
+
+function exactWorkspaceDiffQuery(target: string): boolean {
+  const prefix = '/v1/workspace/diff?'
+  if (!target.startsWith(prefix)) return false
+  const raw = target.slice(prefix.length)
+  if (!raw) return false
+  const parts = raw.split('&')
+  if (parts.length < 1 || parts.length > 2) return false
+  const seen = new Set<string>()
+  let hasWorktreePath = false
+  for (const part of parts) {
+    const eq = part.indexOf('=')
+    if (eq <= 0) return false
+    const key = part.slice(0, eq)
+    const val = part.slice(eq + 1)
+    if (seen.has(key)) return false
+    seen.add(key)
+    if (key === 'worktree_path') {
+      if (decodedExact(val, 1, 4_096) === null) return false
+      hasWorktreePath = true
+    } else if (key === 'staged') {
+      if (val !== 'true' && val !== 'false') return false
+    } else {
+      return false
+    }
+  }
+  return hasWorktreePath
+}
+
+function isNonEmptyString(value: unknown, maxLength: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= maxLength
+}
+
+function validateWorkspaceJsonPayload(target: string, parsed: Record<string, unknown>): boolean {
+  if (target === '/v1/workspace/worktrees') {
+    return (
+      isNonEmptyString(parsed.repo_path, 4_096) &&
+      isNonEmptyString(parsed.task_name, 256) &&
+      (parsed.base_ref === undefined || isNonEmptyString(parsed.base_ref, 256))
+    )
+  }
+  if (target === '/v1/workspace/worktrees/remove') {
+    return (
+      isNonEmptyString(parsed.repo_path, 4_096) &&
+      isNonEmptyString(parsed.worktree_path, 4_096) &&
+      (parsed.force === undefined || typeof parsed.force === 'boolean') &&
+      (parsed.delete_branch === undefined || typeof parsed.delete_branch === 'boolean')
+    )
+  }
+  if (target === '/v1/workspace/revert-file') {
+    return (
+      isNonEmptyString(parsed.worktree_path, 4_096) &&
+      isNonEmptyString(parsed.file_path, 4_096)
+    )
+  }
+  if (target === '/v1/workspace/commit') {
+    return (
+      isNonEmptyString(parsed.worktree_path, 4_096) &&
+      isNonEmptyString(parsed.message, 16_384) &&
+      parsed.message.trim().length > 0 &&
+      (parsed.files === undefined ||
+        (Array.isArray(parsed.files) &&
+          parsed.files.every((item) => isNonEmptyString(item, 4_096))))
+    )
+  }
+  if (target === '/v1/workspace/exec-plan') {
+    return (
+      isNonEmptyString(parsed.worktree_path, 4_096) &&
+      (parsed.mode === 'plan' || parsed.mode === 'build') &&
+      isNonEmptyString(parsed.command, 8_192) &&
+      parsed.command.trim().length > 0 &&
+      (parsed.approval_id === undefined || isNonEmptyString(parsed.approval_id, 128))
+    )
+  }
+  return true
+}
+
+function exactConversationIdTail(target: string, suffix = ''): string | null {
+  const id = exactEncodedTail(target, '/v1/conversations/', suffix)
+  if (id === null) return null
+  if (!suffix && id === 'import') return null
+  return id
+}
+
+const CODING_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/
+const CODING_MODES = new Set(['plan', 'build'])
+const CODING_AGENT_ENGINES = new Set([
+  'codex',
+  'claude-code',
+  'opencode',
+  'kimi-code',
+  'local-ollama',
+  'byok-cloud'
+])
+const CODING_APPROVAL_STATUSES = new Set(['pending', 'approved', 'rejected', 'expired'])
+const CODING_EXEC_TIMEOUT_OVERRIDES = Object.freeze({
+  totalTimeoutMs: 3 * 60 * 1000,
+  firstByteTimeoutMs: 130_000,
+  bodyIdleTimeoutMs: 60_000
+})
+
+function isSafeCodingId(raw: string): boolean {
+  return CODING_ID_PATTERN.test(raw) && raw !== '.' && raw !== '..'
+}
+
+function exactCodingSessionId(target: string, suffix = ''): string | null {
+  const prefix = '/v1/coding/sessions/'
+  if (!target.startsWith(prefix) || (suffix && !target.endsWith(suffix))) return null
+  const end = suffix ? target.length - suffix.length : target.length
+  const id = target.slice(prefix.length, end)
+  return isSafeCodingId(id) ? id : null
+}
+
+function exactCodingSessionDeleteTarget(target: string): boolean {
+  const queryIndex = target.indexOf('?')
+  if (queryIndex === -1) return exactCodingSessionId(target) !== null
+  if (target.indexOf('?', queryIndex + 1) !== -1) return false
+  const path = target.slice(0, queryIndex)
+  const query = target.slice(queryIndex + 1)
+  if (exactCodingSessionId(path) === null) return false
+  return query === 'delete_branch=true' || query === 'delete_branch=false'
+}
+
+function exactCodingApprovalsQuery(target: string): boolean {
+  if (target === '/v1/coding/approvals') return true
+  if (!target.startsWith('/v1/coding/approvals?')) return false
+  const raw = target.slice('/v1/coding/approvals?'.length)
+  if (!raw) return false
+  const params = new URLSearchParams(raw)
+  if (params.toString() !== raw) return false
+  const observed = [...params.keys()]
+  if (observed.length !== 1 || observed[0] !== 'status') return false
+  const status = params.get('status')
+  return status !== null && CODING_APPROVAL_STATUSES.has(status)
+}
+
+function exactCodingApprovalResolveId(target: string): string | null {
+  const prefix = '/v1/coding/approvals/'
+  const suffix = '/resolve'
+  if (!target.startsWith(prefix) || !target.endsWith(suffix)) return null
+  const id = target.slice(prefix.length, target.length - suffix.length)
+  return isSafeCodingId(id) ? id : null
+}
+
+function validateCodingJsonBody(target: string, parsed: Record<string, unknown>): boolean {
+  if (target === '/v1/coding/sessions') {
+    if (
+      typeof parsed.repo_path !== 'string' ||
+      parsed.repo_path.trim().length === 0 ||
+      parsed.repo_path.length > 1024
+    ) {
+      return false
+    }
+    if (
+      typeof parsed.title !== 'string' ||
+      parsed.title.trim().length === 0 ||
+      parsed.title.length > 120
+    ) {
+      return false
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(parsed, 'base_ref') &&
+      (typeof parsed.base_ref !== 'string' ||
+        parsed.base_ref.trim().length === 0 ||
+        parsed.base_ref.length > 64)
+    ) {
+      return false
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(parsed, 'mode') &&
+      (typeof parsed.mode !== 'string' || !CODING_MODES.has(parsed.mode))
+    ) {
+      return false
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(parsed, 'agent_engine') &&
+      (typeof parsed.agent_engine !== 'string' || !CODING_AGENT_ENGINES.has(parsed.agent_engine))
+    ) {
+      return false
+    }
+    return true
+  }
+  if (exactCodingSessionId(target, '/mode') !== null) {
+    return typeof parsed.mode === 'string' && CODING_MODES.has(parsed.mode)
+  }
+  if (exactCodingSessionId(target, '/revert') !== null) {
+    return (
+      typeof parsed.path === 'string' &&
+      parsed.path.trim().length > 0 &&
+      parsed.path.length <= 1024
+    )
+  }
+  if (exactCodingSessionId(target, '/commit') !== null) {
+    if (
+      typeof parsed.message !== 'string' ||
+      parsed.message.trim().length === 0 ||
+      parsed.message.length > 500
+    ) {
+      return false
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed, 'files')) {
+      if (
+        !Array.isArray(parsed.files) ||
+        parsed.files.length > 2000 ||
+        !parsed.files.every(
+          (item) => typeof item === 'string' && item.trim().length > 0 && item.length <= 1024
+        )
+      ) {
+        return false
+      }
+    }
+    return true
+  }
+  if (exactCodingSessionId(target, '/exec') !== null) {
+    if (
+      typeof parsed.command !== 'string' ||
+      parsed.command.trim().length === 0 ||
+      parsed.command.length > 2000
+    ) {
+      return false
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed, 'timeout')) {
+      if (
+        typeof parsed.timeout !== 'number' ||
+        !Number.isFinite(parsed.timeout) ||
+        parsed.timeout < 1 ||
+        parsed.timeout > 120
+      ) {
+        return false
+      }
+    }
+    return true
+  }
+  if (exactCodingApprovalResolveId(target) !== null) {
+    if (parsed.decision !== 'approve' && parsed.decision !== 'reject') return false
+    if (
+      Object.prototype.hasOwnProperty.call(parsed, 'note') &&
+      (typeof parsed.note !== 'string' || parsed.note.length > 300)
+    ) {
+      return false
+    }
+    return true
+  }
+  return false
+}
+
 function routePolicy(
   method: unknown,
   target: unknown
 ): RoutePolicy | null {
   if (
-    (method !== 'GET' && method !== 'POST') ||
+    (method !== 'GET' &&
+      method !== 'POST' &&
+      method !== 'PATCH' &&
+      method !== 'PUT' &&
+      method !== 'DELETE') ||
     typeof target !== 'string' ||
     Buffer.byteLength(target, 'utf8') > MAX_TARGET_BYTES ||
     !/^\/[\x21-\x7e]*$/.test(target) ||
@@ -416,10 +706,16 @@ function routePolicy(
     if (
       ['/health', '/v1/local/catalog', '/v1/audio/model', '/v1/models', '/v1/scoreboard',
         '/admin/catalog', '/admin/connections', '/admin/local/detect', '/v1/mcp',
-        '/v1/mcp/presets', '/v1/sync/status'].includes(target)
+        '/v1/mcp/presets', '/v1/sync/status', '/v1/conversations',
+        '/v1/privacy/offline-mode', '/v1/coding/sessions'].includes(target)
     ) {
       return GET_SIMPLE
     }
+    if (exactOutboundAuditQuery(target)) return GET_SIMPLE
+    if (exactCodingSessionId(target, '/diff') !== null) return GET_SIMPLE
+    if (exactCodingApprovalsQuery(target)) return GET_SIMPLE
+    if (exactWorkspaceWorktreesQuery(target) || exactWorkspaceDiffQuery(target)) return GET_SIMPLE
+    if (exactConversationIdTail(target) !== null) return GET_SIMPLE
     if (target === '/admin/financial-usage?period=month') return GET_SIMPLE
     if (
       exactOneQuery(target, '/v1/kb/docs', 'user_id', 1, 128) ||
@@ -453,9 +749,93 @@ function routePolicy(
     return null
   }
 
+  if (method === 'DELETE') {
+    if (target === '/v1/privacy/outbound-audit') return GET_SIMPLE
+    if (exactCodingSessionDeleteTarget(target)) return GET_SIMPLE
+    if (exactConversationIdTail(target) !== null) return GET_SIMPLE
+    return null
+  }
+
+  if (method === 'PATCH') {
+    if (exactConversationIdTail(target) !== null) {
+      return jsonPolicy(['title', 'kind', 'workdir', 'archived'], [])
+    }
+    return null
+  }
+
+  if (method === 'PUT') {
+    if (exactConversationIdTail(target, '/messages') !== null) {
+      return jsonPolicy(['messages'], ['messages'], { requestBytes: 16 * 1024 * 1024 })
+    }
+    return null
+  }
+
   const exactJson = (path: string, allowed: readonly string[], required: readonly string[] = []): RoutePolicy | null =>
     target === path ? jsonPolicy(allowed, required) : null
   let policy: RoutePolicy | null
+  policy = exactJson('/v1/conversations', ['id', 'title', 'kind', 'workdir', 'archived', 'messages'])
+  if (policy) return Object.freeze({ ...policy, requestBytes: 16 * 1024 * 1024 })
+  policy = exactJson('/v1/conversations/import', ['conversations'], ['conversations'])
+  if (policy) return Object.freeze({ ...policy, requestBytes: 32 * 1024 * 1024 })
+  policy = exactJson('/v1/privacy/offline-mode', ['enabled'], ['enabled'])
+  if (policy) return policy
+  policy = exactJson(
+    '/v1/coding/sessions',
+    ['repo_path', 'title', 'base_ref', 'mode', 'agent_engine'],
+    ['repo_path', 'title']
+  )
+  if (policy) return policy
+  if (exactCodingSessionId(target, '/mode') !== null) {
+    return jsonPolicy(['mode'], ['mode'])
+  }
+  if (exactCodingSessionId(target, '/revert') !== null) {
+    return jsonPolicy(['path'], ['path'])
+  }
+  if (exactCodingSessionId(target, '/commit') !== null) {
+    return jsonPolicy(['message', 'files'], ['message'])
+  }
+  if (exactCodingSessionId(target, '/exec') !== null) {
+    return jsonPolicy(['command', 'timeout'], ['command'], CODING_EXEC_TIMEOUT_OVERRIDES)
+  }
+  if (exactCodingApprovalResolveId(target) !== null) {
+    return jsonPolicy(['decision', 'note'], ['decision'], CODING_EXEC_TIMEOUT_OVERRIDES)
+  }
+  policy = exactJson(
+    '/v1/workspace/worktrees',
+    ['repo_path', 'task_name', 'base_ref'],
+    ['repo_path', 'task_name']
+  )
+  if (policy) return policy
+  policy = exactJson(
+    '/v1/workspace/worktrees/remove',
+    ['repo_path', 'worktree_path', 'force', 'delete_branch'],
+    ['repo_path', 'worktree_path']
+  )
+  if (policy) return policy
+  policy = exactJson(
+    '/v1/workspace/revert-file',
+    ['worktree_path', 'file_path'],
+    ['worktree_path', 'file_path']
+  )
+  if (policy) return policy
+  policy = exactJson(
+    '/v1/workspace/commit',
+    ['worktree_path', 'message', 'files'],
+    ['worktree_path', 'message']
+  )
+  if (policy) return policy
+  policy = exactJson(
+    '/v1/workspace/exec-plan',
+    ['worktree_path', 'mode', 'command', 'approval_id'],
+    ['worktree_path', 'mode', 'command']
+  )
+  if (policy) {
+    return Object.freeze({
+      ...policy,
+      totalTimeoutMs: 10 * 60 * 1000,
+      firstByteTimeoutMs: 5 * 60 * 1000
+    })
+  }
   policy = exactJson('/v1/local/select', ['model_id', 'task', 'approval_id', 'user_id'], ['model_id'])
   if (policy) return policy
   policy = exactJson('/v1/kb/docs', ['user_id', 'title', 'text'], ['user_id', 'title', 'text'])
@@ -488,7 +868,7 @@ function routePolicy(
   policy = exactJson(
     '/v1/agent/run',
     ['task', 'model', 'workdir', 'allow', 'max_steps', 'history', 'mode', 'approval_id',
-      'orchestrate', 'user_id', 'stream', 'conversation_id'],
+      'orchestrate', 'user_id', 'stream', 'conversation_id', 'incognito', 'privacy_mode', 'inject_memory'],
     ['task']
   )
   if (policy) {
@@ -520,17 +900,21 @@ function routePolicy(
   }
   policy = exactJson(
     '/v1/route',
-    ['mode', 'messages', 'web_search', 'reasoning_effort', 'conversation_id'],
+    ['mode', 'messages', 'web_search', 'reasoning_effort', 'conversation_id', 'incognito', 'privacy_mode', 'inject_memory'],
     ['mode', 'messages', 'web_search']
   )
   if (policy) return Object.freeze({ ...policy, requestBytes: 16 * 1024 * 1024 })
-  policy = exactJson('/v1/agent/chat', ['message', 'user_id', 'chat_id', 'channel', 'model'], ['message', 'user_id', 'chat_id', 'channel'])
+  policy = exactJson(
+    '/v1/agent/chat',
+    ['message', 'user_id', 'chat_id', 'channel', 'model', 'incognito', 'privacy_mode', 'inject_memory'],
+    ['message', 'user_id', 'chat_id', 'channel']
+  )
   if (policy) return policy
   policy = exactJson('/v1/agent/memory/clear', ['user_id', 'approval_id'], ['user_id'])
   if (policy) return policy
   policy = exactJson(
     '/v1/chat/completions',
-    ['model', 'messages', 'stream', 'web_search', 'reasoning_effort', 'conversation_id'],
+    ['model', 'messages', 'stream', 'web_search', 'reasoning_effort', 'conversation_id', 'incognito', 'privacy_mode', 'inject_memory'],
     ['model', 'messages', 'stream', 'web_search']
   )
   if (policy) {
@@ -670,7 +1054,11 @@ function captureRequest(input: unknown): ValidatedRequest {
     keys.some((key, index) => key !== expected[index]) ||
     typeof value.requestId !== 'string' ||
     !REQUEST_ID.test(value.requestId) ||
-    (value.method !== 'GET' && value.method !== 'POST') ||
+    (value.method !== 'GET' &&
+      value.method !== 'POST' &&
+      value.method !== 'PATCH' &&
+      value.method !== 'PUT' &&
+      value.method !== 'DELETE') ||
     typeof value.target !== 'string' ||
     !policy ||
     (value.bodyKind !== 'none' && value.bodyKind !== 'json') ||
@@ -693,7 +1081,10 @@ function captureRequest(input: unknown): ValidatedRequest {
     if (
       (value.responseKind === 'stream' && parsed.stream !== true) ||
       (value.target === '/v1/chat/completions' && parsed.stream !== true) ||
-      (value.target === '/v1/agent/run' && value.responseKind === 'json' && parsed.stream === true)
+      (value.target === '/v1/agent/run' && value.responseKind === 'json' && parsed.stream === true) ||
+      (value.target === '/v1/privacy/offline-mode' && typeof parsed.enabled !== 'boolean') ||
+      (value.target.startsWith('/v1/coding/') && !validateCodingJsonBody(value.target, parsed)) ||
+      !validateWorkspaceJsonPayload(value.target, parsed)
     ) {
       throw forbidden()
     }
@@ -781,25 +1172,60 @@ export class RendererEngineProxy {
     if (capturedInput.responseKind !== 'json') throw forbidden()
     const controller = this.begin(capturedInput.requestId, 'request')
     try {
-      if (this.dependencies.transport) return await this.dependencies.transport(capturedInput)
-      const captured = exactSession(this.dependencies.session())
-      const agent = new Agent({ keepAlive: true, maxSockets: 1, maxFreeSockets: 1 })
-      try {
-        const socket = await this.challenge(captured, agent, controller.signal)
-        const key = this.runtimeKey()
-        return await this.exchange(
-          captured,
-          socket,
-          agent,
-          key,
-          capturedInput,
-          controller.signal
-        )
-      } finally {
-        agent.destroy()
+      let response: RendererEngineResponse
+      if (this.dependencies.transport) {
+        response = await this.dependencies.transport(capturedInput)
+      } else {
+        const captured = exactSession(this.dependencies.session())
+        const agent = new Agent({ keepAlive: true, maxSockets: 1, maxFreeSockets: 1 })
+        try {
+          const socket = await this.challenge(captured, agent, controller.signal)
+          const key = this.runtimeKey()
+          response = await this.exchange(
+            captured,
+            socket,
+            agent,
+            key,
+            capturedInput,
+            controller.signal
+          )
+        } finally {
+          agent.destroy()
+        }
       }
+      this.syncOfflineModeFromResponse(capturedInput, response)
+      return response
     } finally {
       this.finish(capturedInput.requestId, controller)
+    }
+  }
+
+  private syncOfflineModeFromResponse(
+    input: ValidatedRequest,
+    response: RendererEngineResponse
+  ): void {
+    if (!this.dependencies.onOfflineModeChanged) return
+    if (response.status < 200 || response.status >= 300) return
+    const isOfflineEndpoint =
+      input.target === '/v1/privacy/offline-mode' &&
+      (input.method === 'POST' || input.method === 'GET')
+    const isAuditEndpoint =
+      input.method === 'GET' &&
+      (input.target === '/v1/privacy/outbound-audit' ||
+        input.target.startsWith('/v1/privacy/outbound-audit?'))
+    if (!isOfflineEndpoint && !isAuditEndpoint) return
+    try {
+      const parsed = JSON.parse(Buffer.from(response.body).toString('utf8')) as Record<
+        string,
+        unknown
+      >
+      if (isOfflineEndpoint && typeof parsed.enabled === 'boolean') {
+        this.dependencies.onOfflineModeChanged(parsed.enabled)
+      } else if (isAuditEndpoint && typeof parsed.offline_mode === 'boolean') {
+        this.dependencies.onOfflineModeChanged(parsed.offline_mode)
+      }
+    } catch {
+      // 非 JSON 或缺省字段时保持当前主进程状态不变
     }
   }
 

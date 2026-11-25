@@ -17,6 +17,7 @@
     "MANIFEST.in",
     "NOTICE",
     "PACKAGING.md",
+    "README.zh-CN.md",
     "install.ps1",
     "SECURITY.md",
     "TRADEMARKS.md",
@@ -73,6 +74,7 @@
     "orchestrator",
     "scripts",
     "skills",
+    "storage",
     "tests",
     "train"
   ],

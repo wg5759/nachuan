@@ -52,9 +52,42 @@ export class SecureConfigError extends Error {
   }
 }
 
-function requireEncryption(storage: SafeStringStorage): void {
+export function describeUnavailableEncryptionGuidance(
+  platform: NodeJS.Platform = process.platform
+): string {
+  if (platform === 'linux') {
+    return (
+      'Linux 环境未检测到可用的系统密钥环（Secret Service / gnome-keyring 或 KWallet）。' +
+      '为避免明文密钥回退（fail-closed），纳川已停止启动。请安装并解锁 gnome-keyring 或 kwalletd，' +
+      '确保桌面 D-Bus Secret Service 会话正常运行后重新启动。'
+    )
+  }
+  if (platform === 'darwin') {
+    return (
+      '无法访问 macOS 钥匙串（Keychain）来加密或解密本机密钥。' +
+      '为避免明文降级（fail-closed），纳川已停止启动；请解锁登录钥匙串并授予访问权限后重试。'
+    )
+  }
+  if (platform === 'win32') {
+    return (
+      '无法用当前 Windows 账户的 DPAPI 安全存储解密或保护本机密钥。' +
+      '为避免明文降级（fail-closed），纳川已停止启动；请检查用户账户与数据目录权限。'
+    )
+  }
+  return (
+    '当前系统未提供受操作系统保护的密钥加密存储。' +
+    '为避免明文降级（fail-closed），纳川已停止启动；请配置系统级安全凭据服务后重试。'
+  )
+}
+
+function requireEncryption(
+  storage: SafeStringStorage,
+  platform: NodeJS.Platform = process.platform
+): void {
   if (!storage.isEncryptionAvailable()) {
-    throw new SecureConfigError('OS-backed secret encryption is unavailable; refusing plaintext fallback')
+    throw new SecureConfigError(
+      `OS-backed secret encryption is unavailable; refusing plaintext fallback. ${describeUnavailableEncryptionGuidance(platform)}`
+    )
   }
 }
 

@@ -1,7 +1,7 @@
 import { createInstance, type i18n as I18nInstance } from 'i18next'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { I18nextProvider, initReactI18next } from 'react-i18next'
+import { I18nextProvider, initReactI18next } from '../i18n'
 import { describe, expect, it } from 'vitest'
 import type { OrchestrationCapabilities } from '../api'
 import en from '../locales/en.json'

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '../i18n'
 
 import { clearConvSummary, getPluginUiSnapshot } from '../api'
 import type { PluginUiSnapshot } from '../../../plugin-ui-contract'
@@ -165,6 +165,37 @@ export default function LeftPane({
           <Glyph name="browser" />
         </button>
       </div>
+
+      <button
+        type="button"
+        data-testid="nav-coding-studio"
+        aria-current={view === 'coding-studio' ? 'page' : undefined}
+        className={`nachuan-coding-entry${view === 'coding-studio' ? ' is-active' : ''}`}
+        onClick={() => {
+          setView('coding-studio')
+          onNavigate?.()
+        }}
+      >
+        <Glyph name="code" />
+        <span className="nachuan-coding-entry-copy">
+          <strong>{t('left.codingStudio')}</strong>
+          <small>{t('left.codingStudioHint')}</small>
+        </span>
+      </button>
+
+      <button
+        type="button"
+        data-testid="left-coding-entry"
+        className={`nachuan-left-coding-entry${view === 'coding' ? ' is-active' : ''}`}
+        aria-current={view === 'coding' ? 'page' : undefined}
+        onClick={() => {
+          setView('coding')
+          onNavigate?.()
+        }}
+      >
+        <Glyph name="code" />
+        <span>{t('left.codingControl')}</span>
+      </button>
 
       <label className="nachuan-conversation-search">
         <Glyph name="search" />

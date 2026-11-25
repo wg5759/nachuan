@@ -21,6 +21,7 @@ from gateway.admission import (
 )
 from gateway.media_call_metering import begin_media_http_attempt
 from gateway.model_identity import exact_verified_model_identity, model_family_from_identifier
+from gateway.outbound_guard import OfflineModeBlockedError, create_async_client
 from gateway.provider_call_ledger import (
     financial_usage_from_payload,
     finish_provider_attempt_durable,
@@ -492,7 +493,8 @@ class OpenAICompatProvider(ChatProvider):
         self._headers = {"Content-Type": "application/json"}
         if api_key:
             self._headers["Authorization"] = f"Bearer {api_key}"
-        self._client = httpx.AsyncClient(
+        self._client = create_async_client(
+            caller=f"gateway.providers.openai_compat:{name}",
             timeout=timeout,
             # Local model servers must never be silently retargeted through an
             # HTTP(S)_PROXY inherited from the desktop/service environment.
@@ -639,7 +641,7 @@ class OpenAICompatProvider(ChatProvider):
                     raise ProviderSubmissionOutcomeUnknown(
                         "上游聊天响应超过安全大小限制", status_code=502
                     ) from exc
-        except ProviderError:
+        except (ProviderError, OfflineModeBlockedError):
             raise
         except (httpx.HTTPError, OSError) as e:
             # OSError 覆盖 ssl.SSLError（大 payload 过代理时 TLS 记录损坏可裸穿 httpx——
@@ -709,7 +711,7 @@ class OpenAICompatProvider(ChatProvider):
                     raise ProviderSubmissionOutcomeUnknown(
                         "上游探测响应过大", status_code=502
                     ) from exc
-        except ProviderError:
+        except (ProviderError, OfflineModeBlockedError):
             raise
         except (httpx.HTTPError, OSError) as exc:
             raise ProviderError(f"上游探测请求失败：{friendly_error(exc)}") from exc
@@ -804,6 +806,8 @@ class OpenAICompatProvider(ChatProvider):
                     raise ProviderSubmissionOutcomeUnknown(
                         "上游返回了空流或无效流", status_code=502
                     )
+        except OfflineModeBlockedError:
+            raise
         except _ProviderBodyTooLarge as exc:
             raise ProviderSubmissionOutcomeUnknown(
                 "上游流式响应超过安全大小限制", status_code=502
@@ -876,6 +880,16 @@ class OpenAICompatProvider(ChatProvider):
                         "image submission cancelled after provider invocation; "
                         "submission outcome unknown; automatic retry forbidden"
                     ),
+                )
+            raise
+        except OfflineModeBlockedError as exc:
+            if accounting is not None:
+                await finish_provider_attempt_durable(
+                    accounting,
+                    status="provider_error",
+                    usage=billing_usage,
+                    error_type="OfflineModeBlockedError",
+                    error_message=str(exc),
                 )
             raise
         except (httpx.HTTPError, OSError) as exc:
@@ -1004,6 +1018,16 @@ class OpenAICompatProvider(ChatProvider):
                         "image submission cancelled after provider invocation; "
                         "submission outcome unknown; automatic retry forbidden"
                     ),
+                )
+            raise
+        except OfflineModeBlockedError as e:
+            if accounting is not None:
+                await finish_provider_attempt_durable(
+                    accounting,
+                    status="provider_error",
+                    usage=billing_usage,
+                    error_type="OfflineModeBlockedError",
+                    error_message=str(e),
                 )
             raise
         except (httpx.HTTPError, OSError) as e:  # OSError 覆盖 ssl.SSLError(TLS 损坏裸穿)
@@ -1150,6 +1174,16 @@ class OpenAICompatProvider(ChatProvider):
                             if outcome_unknown
                             else f"{what} cancelled"
                         ),
+                    )
+                raise
+            except OfflineModeBlockedError as e:
+                if accounting is not None:
+                    await finish_provider_attempt_durable(
+                        accounting,
+                        status="provider_error",
+                        usage=billing_usage,
+                        error_type="OfflineModeBlockedError",
+                        error_message=str(e),
                     )
                 raise
             except _VIDEO_TRANSIENT_NET as e:

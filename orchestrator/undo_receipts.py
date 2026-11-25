@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from gateway.sqlite_runtime import enable_wal_with_deadline
+from storage.unified_db import is_unified_db_path
 
 _MAX_TEXT_BYTES = 2 * 1024 * 1024
 _TTL_SECONDS = 24 * 60 * 60
@@ -77,14 +78,15 @@ class UndoReceiptStore:
         self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.execute("PRAGMA journal_size_limit=8388608")
         self._conn.execute("PRAGMA wal_autocheckpoint=1000")
-        page_size = int(self._conn.execute("PRAGMA page_size").fetchone()[0])
-        max_pages = max(1, _MAX_DB_BYTES // page_size)
-        actual_pages = int(
-            self._conn.execute(f"PRAGMA max_page_count={max_pages}").fetchone()[0]
-        )
-        if actual_pages * page_size > _MAX_DB_BYTES:
-            self._conn.close()
-            raise RuntimeError("undo receipt database exceeds its hard size limit")
+        if not is_unified_db_path(db_path):
+            page_size = int(self._conn.execute("PRAGMA page_size").fetchone()[0])
+            max_pages = max(1, _MAX_DB_BYTES // page_size)
+            actual_pages = int(
+                self._conn.execute(f"PRAGMA max_page_count={max_pages}").fetchone()[0]
+            )
+            if actual_pages * page_size > _MAX_DB_BYTES:
+                self._conn.close()
+                raise RuntimeError("undo receipt database exceeds its hard size limit")
         self._conn.execute(
             """CREATE TABLE IF NOT EXISTS undo_receipts (
                 jti TEXT PRIMARY KEY,

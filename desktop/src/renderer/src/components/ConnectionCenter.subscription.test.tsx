@@ -1,7 +1,7 @@
 import { createInstance, type i18n as I18nInstance } from 'i18next'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { I18nextProvider, initReactI18next } from 'react-i18next'
+import { I18nextProvider, initReactI18next } from '../i18n'
 import { describe, expect, it } from 'vitest'
 import type { CatalogProvider, SubscriptionConnector } from '../api'
 import en from '../locales/en.json'
@@ -98,13 +98,13 @@ describe('Connection Center subscription status', () => {
 
     expect(chooseHtml).toContain('DeepSeek API Key')
     expect(chooseHtml).toContain('Kimi API Key')
-    expect(chooseHtml).toContain('Codex / Kimi / Claude Code')
+    expect(chooseHtml).toContain('Codex / Kimi 订阅')
     expect(chooseHtml).toContain('本地模型')
     expect(chooseHtml).not.toMatch(/管理员|日志|发布|恢复/)
     expect(readyHtml).toContain('开始对话')
   })
 
-  it('shows Codex, Kimi, and a truthful disabled Claude Code option without terminal details', async () => {
+  it('shows only Codex and Kimi public status with a concrete local-login next step', async () => {
     const html = await renderConnectors([
       {
         id: 'codex',
@@ -133,24 +133,23 @@ describe('Connection Center subscription status', () => {
       } as unknown as SubscriptionConnector
     ])
 
-    expect(html).toContain('个人订阅（官方账号）')
+    expect(html).toContain('个人订阅（官方 CLI）')
     expect(html).toContain('Codex')
     expect(html).toContain('未登录')
-    expect(html).not.toContain('codex login --device-auth')
+    expect(html).toContain('codex login --device-auth')
     expect(html).toContain('Kimi Code')
     expect(html).toContain('未安装')
-    expect(html).toContain('先安装官方 Kimi Code 工具')
-    expect(html).not.toContain('官方设备码登录')
-    expect(html).toContain('Claude Code')
-    expect(html).toContain('未启用')
-    expect(html).toContain('不会加入模型路由')
+    expect(html).toContain('先安装官方 Kimi Code CLI')
+    expect(html).toContain('官方设备码登录')
+    expect(html).toContain('聊天')
+    expect(html).toContain('编程')
     expect(html).not.toContain('forged label')
     expect(html).not.toContain('unexpected')
     expect(html).not.toMatch(/api.?key|token|cookie|auth\.json|认证文件/i)
     expect(html).not.toContain('一键登录')
   })
 
-  it('directs an authenticated Codex account to finish the connection in the same card', async () => {
+  it('directs an authenticated Codex account to the lower connection card', async () => {
     const html = await renderConnectors([
       {
         id: 'codex',
@@ -166,12 +165,13 @@ describe('Connection Center subscription status', () => {
     ])
 
     expect(html).toContain('已登录，待能力核验')
-    expect(html).toContain('点击“完成连接”做一次最小能力核验')
-    expect(html).not.toContain('下方 Codex 连接卡')
+    expect(html).toContain('下方 Codex 连接卡')
+    expect(html).toContain('最小文本能力核验')
+    expect(html).not.toContain('点“刷新状态”完成能力核验')
   })
 
   it.each(['logged_out', 'reauth_required'] as const)(
-    'keeps the Kimi command out of the compact status card for state %s',
+    'shows the Nachuan product login command for Kimi Code state %s',
     async (connectorState) => {
       const html = await renderConnectors([
         {
@@ -187,37 +187,13 @@ describe('Connection Center subscription status', () => {
         }
       ])
 
-      expect(html).not.toContain('nachuan kimi login')
+      expect(html).toContain('nachuan kimi login')
       expect(html).not.toContain('PowerShell 运行 kimi login')
     }
   )
 })
 
 describe('Connection Center catalog login cards', () => {
-  it('keeps API provider credentials collapsed until the customer chooses Connect', async () => {
-    const i18n = await translationInstance('zh')
-    const provider: CatalogProvider = {
-      name: 'deepseek',
-      label: 'DeepSeek',
-      region: 'cn',
-      auth: 'api_key',
-      type: 'openai',
-      default_base_url: 'https://api.deepseek.com/v1',
-      models: [{ id: 'deepseek-chat', upstream_model: 'deepseek-chat', tier: 'default', description: '' }]
-    }
-    const html = renderToStaticMarkup(
-      <I18nextProvider i18n={i18n}>
-        <ProviderCard provider={provider} connected={false} onChanged={async () => undefined} onVerified={async () => true} />
-      </I18nextProvider>
-    )
-
-    expect(html).toContain('DeepSeek')
-    expect(html).toContain('API 账号')
-    expect(html).toContain('>连接<')
-    expect(html).not.toContain('type="password"')
-    expect(html).not.toContain('Base URL')
-  })
-
   it.each([
     ['invalid_credentials', 'API Key 无效'],
     ['quota_or_rate_limited', '额度不足'],

@@ -23,6 +23,7 @@ from typing import Any, Callable, Mapping
 _SCHEMA = "nachuan.protected-json.v1"
 _PROTECTION = "windows-dpapi-current-user"
 _DPAPI_DOMAIN = b"nachuan/runtime-secrets/v1\0"
+_DPAPI_MACHINE_DOMAIN = b"nachuan/service-machine-secrets/v1\0"
 _MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
 _ACL_RECHECK_SECONDS = 300.0
 _ACL_CACHE: dict[
@@ -128,7 +129,12 @@ def _blob(data: bytes) -> tuple[_DataBlob, ctypes.Array]:
     )
 
 
-def _crypt_protect(data: bytes, *, purpose: str) -> bytes:
+def _crypt_protect(
+    data: bytes,
+    *,
+    purpose: str,
+    machine_scope: bool = False,
+) -> bytes:
     _require_windows()
     crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -145,7 +151,10 @@ def _crypt_protect(data: bytes, *, purpose: str) -> bytes:
     ]
     crypt32.CryptProtectData.restype = wintypes.BOOL
     source, source_buf = _blob(data)
-    entropy, entropy_buf = _blob(_DPAPI_DOMAIN + purpose.encode("utf-8"))
+    entropy, entropy_buf = _blob(
+        (_DPAPI_MACHINE_DOMAIN if machine_scope else _DPAPI_DOMAIN)
+        + purpose.encode("utf-8")
+    )
     output = _DataBlob()
     # CRYPTPROTECT_UI_FORBIDDEN：后台服务永不弹交互框；失败就关闭。
     if not crypt32.CryptProtectData(
@@ -154,7 +163,7 @@ def _crypt_protect(data: bytes, *, purpose: str) -> bytes:
         ctypes.byref(entropy),
         None,
         None,
-        0x1,
+        0x1 | (0x4 if machine_scope else 0),
         ctypes.byref(output),
     ):
         raise SecureStorageError("Windows DPAPI 加密失败") from ctypes.WinError(
@@ -168,7 +177,12 @@ def _crypt_protect(data: bytes, *, purpose: str) -> bytes:
         kernel32.LocalFree(ctypes.cast(output.pbData, wintypes.LPVOID))
 
 
-def _crypt_unprotect(data: bytes, *, purpose: str) -> bytes:
+def _crypt_unprotect(
+    data: bytes,
+    *,
+    purpose: str,
+    machine_scope: bool = False,
+) -> bytes:
     _require_windows()
     crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -185,7 +199,10 @@ def _crypt_unprotect(data: bytes, *, purpose: str) -> bytes:
     ]
     crypt32.CryptUnprotectData.restype = wintypes.BOOL
     source, source_buf = _blob(data)
-    entropy, entropy_buf = _blob(_DPAPI_DOMAIN + purpose.encode("utf-8"))
+    entropy, entropy_buf = _blob(
+        (_DPAPI_MACHINE_DOMAIN if machine_scope else _DPAPI_DOMAIN)
+        + purpose.encode("utf-8")
+    )
     output = _DataBlob()
     description = wintypes.LPWSTR()
     if not crypt32.CryptUnprotectData(
@@ -942,7 +959,19 @@ def _write_protected_json(
 def write_protected_json(
     path: str | Path, payload: Mapping[str, Any], *, purpose: str
 ) -> None:
-    """把 JSON 对象加密后原子写盘；不提供任何明文回退。"""
+    """把 JSON 对象加密后原子写盘；不提供任何明文回退。
+
+    Windows 使用原生 DPAPI；macOS / Linux 自动委派给跨平台 SecretStore
+    （macOS Keychain / Linux SecretService / AES-256-GCM 加密密钥文件）。
+    """
+    if os.name != "nt":
+        from gateway.secret_store import CrossPlatformSecretError, write_secret_json
+
+        try:
+            write_secret_json(path, payload, purpose=purpose)
+            return
+        except CrossPlatformSecretError as exc:
+            raise SecureStorageError(str(exc)) from exc
 
     _write_protected_json(
         path,
@@ -955,7 +984,17 @@ def write_protected_json(
 def write_protected_json_if_absent(
     path: str | Path, payload: Mapping[str, Any], *, purpose: str
 ) -> bool:
-    """Atomically create one DPAPI document without replacing an existing one."""
+    """Atomically create one protected JSON document without replacing an existing one."""
+    if os.name != "nt":
+        from gateway.secret_store import (
+            CrossPlatformSecretError,
+            write_secret_json_if_absent,
+        )
+
+        try:
+            return write_secret_json_if_absent(path, payload, purpose=purpose)
+        except CrossPlatformSecretError as exc:
+            raise SecureStorageError(str(exc)) from exc
 
     return _write_protected_json(
         path,
@@ -972,7 +1011,19 @@ def read_protected_json(
     migrate_plaintext: bool = False,
     plaintext_migrator: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """读取 DPAPI JSON；可把旧版明文对象一次性迁移为密文。"""
+    """读取受保护 JSON；Windows 走 DPAPI，macOS/Linux 走跨平台 SecretStore。"""
+    if os.name != "nt":
+        from gateway.secret_store import CrossPlatformSecretError, read_secret_json
+
+        try:
+            return read_secret_json(
+                path,
+                purpose=purpose,
+                migrate_plaintext=migrate_plaintext,
+                plaintext_migrator=plaintext_migrator,
+            )
+        except CrossPlatformSecretError as exc:
+            raise SecureStorageError(str(exc)) from exc
     target = Path(path)
     if not target.exists():
         raise FileNotFoundError(target)
@@ -993,8 +1044,29 @@ def read_protected_json(
         raise SecureStorageError("运行态密钥文件格式非法")
 
     if document.get("schema") == _SCHEMA:
-        if document.get("protection") != _PROTECTION:
-            raise SecureStorageError("运行态密钥保护方式不受支持")
+        protection = str(document.get("protection") or "")
+        if protection != _PROTECTION:
+            from gateway.secret_store import (
+                CrossPlatformSecretError,
+                PROTECTION_WINDOWS_DPAPI,
+                backend_for_protection,
+            )
+
+            if protection == PROTECTION_WINDOWS_DPAPI:
+                raise SecureStorageError("运行态密钥保护方式不受支持")
+            try:
+                backend = backend_for_protection(protection)
+                plaintext = backend.decrypt(document, purpose=purpose)
+                decoded = json.loads(plaintext.decode("utf-8"))
+            except (
+                CrossPlatformSecretError,
+                UnicodeError,
+                json.JSONDecodeError,
+            ) as exc:
+                raise SecureStorageError(f"运行态密钥解密失败：{exc}") from exc
+            if not isinstance(decoded, dict):
+                raise SecureStorageError("解密后的运行态配置不是 JSON 对象")
+            return decoded
         try:
             ciphertext = base64.b64decode(document["ciphertext"], validate=True)
             if len(ciphertext) > _MAX_DOCUMENT_BYTES:

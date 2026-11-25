@@ -58,6 +58,9 @@ from bridge.access import ChannelAccessPolicy, explicit_development_allow_all  #
 from bridge.policy import RateLimiter, parse_command, resolve_user_id  # noqa: E402
 from gateway.config import get_isolated_bridge_settings  # noqa: E402
 from gateway.bridge_protocol import request_bridge_bytes  # noqa: E402
+from gateway.installed_channel_drain import InstalledChannelClaimTracker  # noqa: E402
+
+_INSTALLED_CLAIMS = InstalledChannelClaimTracker("weixin")
 from gateway.channel_media_protocol import encode_channel_media_frame  # noqa: E402
 from gateway.channel_delivery_claim import (  # noqa: E402
     ClaimLeaseLost,
@@ -2258,7 +2261,7 @@ def _validate_recovery_receipts(conn: sqlite3.Connection) -> None:
         counts = record.get("affected_counts")
         affected_rows = record.get("affected_rows")
         if (
-            record.get("target_kind") not in _WEIXIN_RECOVERY_KINDS
+            record.get("target_kind") not in _WEIXIN_RECOVERY_TARGETS
             or not isinstance(counts, dict)
             or set(counts) != _WEIXIN_RECOVERY_KINDS
             or any(type(counts[kind]) is not int or counts[kind] < 0 for kind in counts)
@@ -2300,8 +2303,13 @@ def _validate_recovery_receipts(conn: sqlite3.Connection) -> None:
                 raise sqlite3.DatabaseError("invalid Weixin recovery receipt")
             previous_identity = identity
             observed[str(kind)] += 1
+            target_member_kind = (
+                "inbound"
+                if record["target_kind"] == "pending-inbound"
+                else record["target_kind"]
+            )
             target_seen = target_seen or (
-                kind == record["target_kind"]
+                kind == target_member_kind
                 and member["target_key_sha256"] == record["target_key_sha256"]
             )
         record_digests = (
@@ -2368,10 +2376,12 @@ def _validate_recovery_receipts(conn: sqlite3.Connection) -> None:
 
 _WEIXIN_RECOVERY_TARGETS = {
     "inbound": ("inbound_message", "message_key", "from_user_id", "id"),
+    "pending-inbound": ("inbound_message", "message_key", "from_user_id", "id"),
     "delivery": ("pending_delivery", "delivery_id", "to_user_id", "id"),
     "video": ("pending_video", "task_id", "to_user_id", "task_id"),
 }
 _WEIXIN_RECOVERY_KIND_ORDER = {"inbound": 0, "delivery": 1, "video": 2}
+_WEIXIN_STALE_PENDING_MIN_AGE_SECONDS = 24 * 60 * 60
 _WEIXIN_RECOVERY_OPERATION_DOMAIN = b"nachuan.weixin.close-without-replay.operation/v1\0"
 _WEIXIN_RECOVERY_SET_DOMAIN = b"nachuan.weixin.close-without-replay.set/v1\0"
 _WEIXIN_RECOVERY_ROW_DOMAIN = b"nachuan.weixin.close-without-replay.row/v1\0"
@@ -2427,7 +2437,7 @@ def _validated_weixin_recovery_target(
 ) -> tuple[str, str]:
     if target_kind not in _WEIXIN_RECOVERY_TARGETS:
         raise ValueError(
-            "Weixin recovery target kind must be inbound, delivery, or video"
+            "Weixin recovery target kind must be inbound, pending-inbound, delivery, or video"
         )
     return str(target_kind), _require_weixin_recovery_text(
         target_key, "target key", max_bytes=512
@@ -2538,6 +2548,45 @@ def _weixin_recovery_row_is_unclaimed(record: dict[str, object]) -> bool:
 def _weixin_recovery_target_rows_in_transaction(
     conn: sqlite3.Connection, target_kind: str, target_key: str
 ) -> tuple[str, list[dict[str, object]]]:
+    if target_kind == "pending-inbound":
+        table, key_column, principal_column, identity_column = (
+            _WEIXIN_RECOVERY_TARGETS[target_kind]
+        )
+        principals = conn.execute(
+            f"SELECT DISTINCT {principal_column} FROM {table} "
+            f"WHERE {key_column}=? AND status='pending'",
+            (target_key,),
+        ).fetchall()
+        if len(principals) != 1 or not str(principals[0][0]):
+            raise WeixinRecoveryConflict(
+                "Weixin stale pending target is not a pending inbound row"
+            )
+        principal = str(principals[0][0])
+        columns = _weixin_recovery_columns(conn, table)
+        rows = conn.execute(
+            f"SELECT {','.join(columns)} FROM {table} "
+            f"WHERE {principal_column}=? AND status='pending' ORDER BY {identity_column}",
+            (principal,),
+        ).fetchall()
+        affected: list[dict[str, object]] = []
+        stale_before = time.time() - _WEIXIN_STALE_PENDING_MIN_AGE_SECONDS
+        for row in rows:
+            record = _weixin_recovery_record("inbound", columns, tuple(row))
+            if not _weixin_recovery_row_is_unclaimed(record):
+                raise WeixinRecoveryConflict(
+                    "Weixin stale pending principal contains an actively claimed row"
+                )
+            values = record["values"]
+            assert isinstance(values, dict)
+            if float(values["received_at"]) > stale_before:
+                raise WeixinRecoveryConflict(
+                    "Weixin pending inbound row is not old enough for no-replay closure"
+                )
+            affected.append(record)
+        if not affected:
+            raise WeixinRecoveryConflict("Weixin stale pending affected set is empty")
+        return principal, affected
+
     table, key_column, principal_column, _identity_column = (
         _WEIXIN_RECOVERY_TARGETS[target_kind]
     )
@@ -2743,40 +2792,55 @@ def _weixin_close_without_replay(
             kind: sum(row["kind"] == kind for row in before_rows)
             for kind in ("inbound", "delivery", "video")
         }
-        changed_inbound = conn.execute(
-            """
-            UPDATE inbound_message
-            SET status='dead',from_user_id=?,payload=?,last_error='closed_without_replay',
-                claim_token='',claimed_at=0,claim_deadline=0,heartbeat_at=0
-            WHERE from_user_id=? AND status='recovery_required' AND claimed_at=0
-              AND claim_token='' AND claim_deadline=0 AND heartbeat_at=0
-            """,
-            (opaque_principal, _RECOVERY_TOMBSTONE, principal),
-        ).rowcount
-        changed_delivery = conn.execute(
-            """
-            UPDATE pending_delivery
-            SET status='dead',to_user_id=?,context_token='',text='',
-                last_error='closed_without_replay',claim_token='',claimed_at=0,
-                claim_deadline=0,heartbeat_at=0,
-                terminal_verification='closed_without_replay'
-            WHERE to_user_id=? AND status='recovery_required' AND claimed_at=0
-              AND claim_token='' AND claim_deadline=0 AND heartbeat_at=0
-            """,
-            (opaque_principal, principal),
-        ).rowcount
-        changed_video = conn.execute(
-            """
-            UPDATE pending_video
-            SET status='dead',to_user_id=?,context_token='',result_url='',
-                last_error='closed_without_replay',claim_token='',claimed_at=0,
-                claim_deadline=0,heartbeat_at=0,finished_at=?,
-                terminal_verification='closed_without_replay'
-            WHERE to_user_id=? AND status='recovery_required' AND claimed_at=0
-              AND claim_token='' AND claim_deadline=0 AND heartbeat_at=0
-            """,
-            (opaque_principal, closed_seconds, principal),
-        ).rowcount
+        if request.target_kind == "pending-inbound":
+            changed_inbound = conn.execute(
+                """
+                UPDATE inbound_message
+                SET status='dead',from_user_id=?,payload=?,
+                    last_error='closed_without_replay',claim_token='',claimed_at=0,
+                    claim_deadline=0,heartbeat_at=0
+                WHERE from_user_id=? AND status='pending' AND claimed_at=0
+                  AND claim_token='' AND claim_deadline=0 AND heartbeat_at=0
+                """,
+                (opaque_principal, _RECOVERY_TOMBSTONE, principal),
+            ).rowcount
+            changed_delivery = 0
+            changed_video = 0
+        else:
+            changed_inbound = conn.execute(
+                """
+                UPDATE inbound_message
+                SET status='dead',from_user_id=?,payload=?,last_error='closed_without_replay',
+                    claim_token='',claimed_at=0,claim_deadline=0,heartbeat_at=0
+                WHERE from_user_id=? AND status='recovery_required' AND claimed_at=0
+                  AND claim_token='' AND claim_deadline=0 AND heartbeat_at=0
+                """,
+                (opaque_principal, _RECOVERY_TOMBSTONE, principal),
+            ).rowcount
+            changed_delivery = conn.execute(
+                """
+                UPDATE pending_delivery
+                SET status='dead',to_user_id=?,context_token='',text='',
+                    last_error='closed_without_replay',claim_token='',claimed_at=0,
+                    claim_deadline=0,heartbeat_at=0,
+                    terminal_verification='closed_without_replay'
+                WHERE to_user_id=? AND status='recovery_required' AND claimed_at=0
+                  AND claim_token='' AND claim_deadline=0 AND heartbeat_at=0
+                """,
+                (opaque_principal, principal),
+            ).rowcount
+            changed_video = conn.execute(
+                """
+                UPDATE pending_video
+                SET status='dead',to_user_id=?,context_token='',result_url='',
+                    last_error='closed_without_replay',claim_token='',claimed_at=0,
+                    claim_deadline=0,heartbeat_at=0,finished_at=?,
+                    terminal_verification='closed_without_replay'
+                WHERE to_user_id=? AND status='recovery_required' AND claimed_at=0
+                  AND claim_token='' AND claim_deadline=0 AND heartbeat_at=0
+                """,
+                (opaque_principal, closed_seconds, principal),
+            ).rowcount
         changed = {
             "inbound": int(changed_inbound),
             "delivery": int(changed_delivery),
@@ -2801,6 +2865,13 @@ def _weixin_close_without_replay(
             assert isinstance(before_values, dict) and isinstance(after_values, dict)
             if before_values[identity_column] != after_values[identity_column]:
                 raise WeixinRecoveryConflict("Weixin recovery row identity drifted")
+            manifest_target_kind = kind
+            if (
+                request.target_kind == "pending-inbound"
+                and kind == "inbound"
+                and str(before_values[key_column]) == request.target_key
+            ):
+                manifest_target_kind = request.target_kind
             affected_manifest.append(
                 {
                     "kind": kind,
@@ -2812,7 +2883,7 @@ def _weixin_close_without_replay(
                         },
                     ),
                     "target_key_sha256": _weixin_recovery_target_key_sha256(
-                        kind, str(before_values[key_column])
+                        manifest_target_kind, str(before_values[key_column])
                     ),
                     "before_sha256": _weixin_recovery_digest(
                         _WEIXIN_RECOVERY_ROW_DOMAIN, before
@@ -2965,16 +3036,37 @@ def _preflight_outbox_schema(
         raise _OutboxDatabaseFamilyChanged(
             "Weixin state rollback journal has not stabilized"
         )
+    empty_wal_identity: os.stat_result | None = None
+    wal_aware = presence["-wal"]
     if presence["-wal"] != presence["-shm"]:
-        raise _OutboxDatabaseFamilyChanged(
-            "Weixin state WAL and SHM sidecars have not stabilized"
-        )
+        if presence["-wal"] and not presence["-shm"]:
+            try:
+                empty_wal_identity = os.lstat(f"{_OUTBOX_DB}-wal")
+            except FileNotFoundError as exc:
+                raise _OutboxDatabaseFamilyChanged(
+                    "Weixin state WAL sidecar disappeared during preflight"
+                ) from exc
+            if (
+                not _is_regular_nonreparse(empty_wal_identity)
+                or empty_wal_identity.st_size != 0
+            ):
+                raise _OutboxDatabaseFamilyChanged(
+                    "Weixin state WAL and SHM sidecars have not stabilized"
+                )
+            # SQLite can leave a zero-byte WAL after the final connection
+            # removes SHM.  It contains no committed frames, so inspect the
+            # main database immutably and bind the empty WAL identity below.
+            wal_aware = False
+        else:
+            raise _OutboxDatabaseFamilyChanged(
+                "Weixin state WAL and SHM sidecars have not stabilized"
+            )
     identity = os.lstat(_OUTBOX_DB)
     remaining = _remaining_outbox_finish_budget(deadline_monotonic)
     connect_timeout = 10.0 if remaining is None else min(10.0, remaining)
     with closing(
         sqlite3.connect(
-            _outbox_readonly_uri(wal_aware=presence["-wal"]),
+            _outbox_readonly_uri(wal_aware=wal_aware),
             uri=True,
             timeout=max(0.0, connect_timeout),
             isolation_level=None,
@@ -2999,6 +3091,21 @@ def _preflight_outbox_schema(
         raise _OutboxDatabaseFamilyChanged(
             "Weixin state database family changed during read-only preflight"
         )
+    if empty_wal_identity is not None:
+        try:
+            current_empty_wal = os.lstat(f"{_OUTBOX_DB}-wal")
+        except FileNotFoundError as exc:
+            raise _OutboxDatabaseFamilyChanged(
+                "Weixin empty WAL sidecar disappeared during read-only preflight"
+            ) from exc
+        if (
+            not os.path.samestat(empty_wal_identity, current_empty_wal)
+            or not _is_regular_nonreparse(current_empty_wal)
+            or current_empty_wal.st_size != 0
+        ):
+            raise _OutboxDatabaseFamilyChanged(
+                "Weixin empty WAL sidecar changed during read-only preflight"
+            )
     try:
         current_identity = os.lstat(_OUTBOX_DB)
     except FileNotFoundError as exc:
@@ -3720,8 +3827,7 @@ def _claim_pending_video(*, now: float | None = None) -> dict[str, object] | Non
         if changed != 1:
             conn.rollback()
             return None
-        conn.commit()
-        return {
+        claim = {
             "task_id": str(row[0]),
             "to_user_id": str(row[1]),
             "context_token": str(row[2]),
@@ -3735,6 +3841,11 @@ def _claim_pending_video(*, now: float | None = None) -> dict[str, object] | Non
             "claim_token": claim_token,
             "claim_epoch": int(row[10] or 0) + 1,
         }
+        key = ("video", claim["task_id"], claim_token, claim["claim_epoch"])
+        if not _INSTALLED_CLAIMS.commit(key, conn.commit):
+            conn.rollback()
+            return None
+        return claim
     except BaseException:
         conn.rollback()
         raise
@@ -4052,6 +4163,11 @@ class _PendingVideoFinishRequest:
         self.terminal_verification = verification
 
 
+@_INSTALLED_CLAIMS.finishes(
+    lambda claim, *_args, **_kwargs: (
+        "video", str(claim["task_id"]), str(claim["claim_token"]), int(claim["claim_epoch"])
+    )
+)
 def _commit_pending_video_finish(
     claim: dict[str, object],
     outcome: _PendingVideoFinishRequest,
@@ -4168,6 +4284,11 @@ def _commit_pending_video_finish(
         conn.close()
 
 
+@_INSTALLED_CLAIMS.finishes(
+    lambda claim, *_args, **_kwargs: (
+        "video", str(claim["task_id"]), str(claim["claim_token"]), int(claim["claim_epoch"])
+    )
+)
 def _pending_video_finish_was_committed(
     claim: dict[str, object],
     outcome: _PendingVideoFinishRequest,
@@ -4983,6 +5104,8 @@ def _update_health(state: str, **fields) -> dict[str, object]:
             recovery_required_outbound,
             recovery_required_video,
             oldest_processing_age_seconds,
+            closed_without_replay_inbound,
+            closed_without_replay_outbound,
         ) = _queue_health_counts(now=current_time)
         counts = {
             "pending_inbound": _strict_health_count(pending_inbound),
@@ -4990,6 +5113,12 @@ def _update_health(state: str, **fields) -> dict[str, object]:
             "pending_video": _strict_health_count(pending_video),
             "dead_inbound": _strict_health_count(dead_inbound),
             "dead_outbound": _strict_health_count(dead_outbound),
+            "closed_without_replay_inbound": _strict_health_count(
+                closed_without_replay_inbound
+            ),
+            "closed_without_replay_outbound": _strict_health_count(
+                closed_without_replay_outbound
+            ),
         }
         workers_configured, workers_alive = _inbound_worker_counts()
         poll_failures = _strict_health_count(
@@ -5012,7 +5141,14 @@ def _update_health(state: str, **fields) -> dict[str, object]:
         reasons: list[str] = []
         if not connected:
             reasons.append("disconnected")
-        for name, count in counts.items():
+        for name in (
+            "pending_inbound",
+            "pending_outbound",
+            "pending_video",
+            "dead_inbound",
+            "dead_outbound",
+        ):
+            count = counts[name]
             if count:
                 reasons.append(name)
         for name, count in (
@@ -5385,7 +5521,7 @@ def _inbox_pending_count() -> int:
 
 def _queue_health_counts(
     *, now: float | None = None
-) -> tuple[int, int, int, int, int, int, int, int, float]:
+) -> tuple[int, int, int, int, int, int, int, int, float, int, int]:
     """Read every readiness queue count from one SQLite snapshot/connection."""
     current = time.time() if now is None else now
     with closing(_outbox_connect()) as conn, conn:
@@ -5398,21 +5534,42 @@ def _queue_health_counts(
                WHERE status IN ('pending', 'processing', 'recovery_required')),
               (SELECT COUNT(*) FROM pending_video
                WHERE status IN ('reserved', 'pending', 'processing', 'recovery_required')),
-              (SELECT COUNT(*) FROM inbound_message WHERE status = 'dead'),
-              (SELECT COUNT(*) FROM pending_delivery WHERE status = 'dead'),
+              (SELECT COUNT(*) FROM inbound_message
+               WHERE status = 'dead'
+                 AND NOT (last_error = 'closed_without_replay'
+                          AND payload IN (?, ?))),
+              (SELECT COUNT(*) FROM pending_delivery
+               WHERE status = 'dead'
+                 AND NOT (last_error = 'closed_without_replay'
+                          AND terminal_verification = 'closed_without_replay'
+                          AND context_token = '' AND text = '')),
               (SELECT COUNT(*) FROM inbound_message WHERE status = 'recovery_required'),
               (SELECT COUNT(*) FROM pending_delivery WHERE status = 'recovery_required'),
               (SELECT COUNT(*) FROM pending_video WHERE status = 'recovery_required'),
               (SELECT MIN(claimed_at) FROM inbound_message
-               WHERE status = 'processing' AND claimed_at > 0)
-            """
+               WHERE status = 'processing' AND claimed_at > 0),
+              (SELECT COUNT(*) FROM inbound_message
+               WHERE status = 'dead' AND last_error = 'closed_without_replay'
+                 AND payload IN (?, ?)),
+              (SELECT COUNT(*) FROM pending_delivery
+               WHERE status = 'dead' AND last_error = 'closed_without_replay'
+                 AND terminal_verification = 'closed_without_replay'
+                 AND context_token = '' AND text = '')
+            """,
+            (
+                _RECOVERY_TOMBSTONE,
+                _DEAD_INBOUND_TOMBSTONE,
+                _RECOVERY_TOMBSTONE,
+                _DEAD_INBOUND_TOMBSTONE,
+            ),
         ).fetchone()
     if row is None:
-        return 0, 0, 0, 0, 0, 0, 0, 0, 0.0
+        return 0, 0, 0, 0, 0, 0, 0, 0, 0.0, 0, 0
     counts = tuple(max(0, int(value or 0)) for value in row[:8])
     oldest_claimed_at = _strict_health_time(row[8])
     oldest_age = max(0.0, float(current) - oldest_claimed_at) if oldest_claimed_at else 0.0
-    return (*counts, _strict_health_time(oldest_age))
+    closed_counts = tuple(max(0, int(value or 0)) for value in row[9:11])
+    return (*counts, _strict_health_time(oldest_age), *closed_counts)
 
 
 def _policy_time(now=None) -> float:
@@ -5481,13 +5638,17 @@ def _claim_inbound(
                 current,
             ),
         ).rowcount
-        conn.commit()
         if changed != 1:
+            conn.commit()
             return None
         message = json.loads(row[1])
         if not isinstance(message, dict):
             raise RuntimeError("invalid durable inbound payload")
         message["_nachuan_message_key"] = str(row[2])
+        claim_key = ("inbound", int(row[0]), claim_token, int(row[3]) + 1)
+        if not _INSTALLED_CLAIMS.commit(claim_key, conn.commit):
+            conn.rollback()
+            return None
         return int(row[0]), message, claim_token, int(row[3]) + 1
     finally:
         conn.close()
@@ -5557,6 +5718,11 @@ def _authorized_inbound_reply_route(
     return None
 
 
+@_INSTALLED_CLAIMS.finishes(
+    lambda row_id, **kwargs: (
+        "inbound", int(row_id), kwargs["claim_token"], int(kwargs["claim_epoch"])
+    )
+)
 def _finish_inbound(
     row_id: int,
     *,
@@ -6497,10 +6663,10 @@ def _claim_delivery(
             """,
             (claim_token, now, claim_deadline, now, row[0]),
         ).rowcount
-        conn.commit()
         if changed != 1:
+            conn.commit()
             return None
-        return {
+        claim = {
             "id": int(row[0]),
             "attempts": int(row[1]),
             "to_user_id": str(row[2]),
@@ -6515,6 +6681,11 @@ def _claim_delivery(
             "claim_deadline": claim_deadline,
             "parent_message_key": str(row[10]),
         }
+        key = ("outbox", claim["id"], claim_token, claim["claim_epoch"])
+        if not _INSTALLED_CLAIMS.commit(key, conn.commit):
+            conn.rollback()
+            return None
+        return claim
     finally:
         conn.close()
 
@@ -6634,6 +6805,11 @@ class _DeliveryFinishRequest:
         self.platform_response_sha256 = str(platform_response_sha256)
 
 
+@_INSTALLED_CLAIMS.finishes(
+    lambda claim, *_args, **_kwargs: (
+        "outbox", int(claim["id"]), str(claim["claim_token"]), int(claim["claim_epoch"])
+    )
+)
 def _finish_delivery(
     claim: dict,
     *,
@@ -6818,6 +6994,11 @@ def _finish_delivery(
         conn.close()
 
 
+@_INSTALLED_CLAIMS.finishes(
+    lambda claim, *_args, **_kwargs: (
+        "outbox", int(claim["id"]), str(claim["claim_token"]), int(claim["claim_epoch"])
+    )
+)
 def _delivery_finish_was_committed(
     claim: dict,
     outcome: _DeliveryFinishRequest,
@@ -6958,6 +7139,9 @@ def _release_delivery_claim(claim: dict) -> None:
         if changed != 1:
             raise DeliveryFinishFenceLost("delivery_release_fence_lost")
         conn.commit()
+    _INSTALLED_CLAIMS.finish(
+        ("outbox", int(claim["id"]), str(claim["claim_token"]), int(claim["claim_epoch"]))
+    )
 
 
 def _recover_delivery_claims(*, force: bool = False, now: float | None = None) -> int:
@@ -7893,6 +8077,8 @@ def _inbound_worker(token_ref: dict[str, str], stop: threading.Event) -> None:
                     delattr(_HANDLE_CONTEXT, name)
                 except AttributeError:
                     pass
+        if committed:
+            _INSTALLED_CLAIMS.finish(("inbound", row_id, claim_token, claim_epoch))
         if stop.is_set() or not committed:
             continue
         try:

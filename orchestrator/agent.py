@@ -34,6 +34,7 @@ from gateway.provider_call_ledger import bind_provider_call_scope
 from gateway.route_attestation import bind_agent_author_receipt
 from gateway.schemas import ChatCompletionRequest
 from gateway.sqlite_runtime import enable_wal_with_deadline
+from storage.unified_db import is_unified_db_path
 from orchestrator.cases import decide_route, format_case
 from orchestrator.classify import classify
 from orchestrator.intent import classify_intent
@@ -305,6 +306,48 @@ _CAPACITY_TRIGGER_SQL = {
 }
 
 
+_CONV_META_SCHEMA_SQL = (
+    "CREATE TABLE conversation_meta ("
+    "conv_id TEXT PRIMARY KEY,"
+    "user_id TEXT NOT NULL DEFAULT 'default',"
+    "title TEXT NOT NULL DEFAULT '',"
+    "kind TEXT NOT NULL DEFAULT 'chat',"
+    "workdir TEXT NOT NULL DEFAULT '',"
+    "archived INTEGER NOT NULL DEFAULT 0,"
+    "draft_json TEXT NOT NULL DEFAULT '{}',"
+    "created_at REAL NOT NULL,"
+    "updated_at REAL NOT NULL)"
+)
+
+_CONV_META_INDEX_SQL = (
+    "CREATE INDEX idx_conversation_meta_user_updated "
+    "ON conversation_meta(user_id,updated_at)"
+)
+
+_CONV_RICH_MESSAGES_SCHEMA_SQL = (
+    "CREATE TABLE conversation_rich_messages ("
+    "conv_id TEXT PRIMARY KEY,"
+    "messages_json TEXT NOT NULL DEFAULT '[]',"
+    "updated_at REAL NOT NULL)"
+)
+
+_CONVERSATION_CORE_TABLES = frozenset(
+    {
+        "conv",
+        "agent_turn_receipt",
+        "agent_turn_reservation",
+        "conversation_capacity_meta",
+    }
+)
+_CONVERSATION_RICH_TABLES = frozenset(
+    {
+        "conversation_meta",
+        "conversation_rich_messages",
+    }
+)
+_CONVERSATION_OWNED_TABLES = _CONVERSATION_CORE_TABLES | _CONVERSATION_RICH_TABLES
+
+
 def _conversation_schema_declarations(
     conv_sql: str,
     receipt_sql: str | None,
@@ -314,6 +357,7 @@ def _conversation_schema_declarations(
     *,
     conv_index: bool = True,
     receipt_index: bool = True,
+    include_rich_tables: bool = False,
 ) -> tuple[tuple[str, str, str], ...]:
     items: list[tuple[str, str, str]] = [("table", "conv", conv_sql)]
     if conv_index:
@@ -332,6 +376,14 @@ def _conversation_schema_declarations(
         items.append(("table", "agent_turn_reservation", reservation_sql))
     if meta_sql is not None:
         items.append(("table", "conversation_capacity_meta", meta_sql))
+    if include_rich_tables:
+        items.append(("table", "conversation_meta", _CONV_META_SCHEMA_SQL))
+        items.append(
+            ("index", "idx_conversation_meta_user_updated", _CONV_META_INDEX_SQL)
+        )
+        items.append(
+            ("table", "conversation_rich_messages", _CONV_RICH_MESSAGES_SCHEMA_SQL)
+        )
     items.extend(("trigger", name, ddl) for name, ddl in triggers.items())
     return tuple(items)
 
@@ -418,6 +470,17 @@ def _conversation_schema_variants(
                 _CAPACITY_TRIGGER_SQL,
             ),
         ),
+        (
+            "current_with_meta",
+            declarations(
+                _CONV_SCHEMA_SQL,
+                _TURN_RECEIPT_SCHEMA_SQL,
+                _TURN_RESERVATION_SCHEMA_SQL,
+                _CAPACITY_META_SCHEMA_SQL,
+                _CAPACITY_TRIGGER_SQL,
+                include_rich_tables=True,
+            ),
+        ),
     )
 
 
@@ -452,36 +515,77 @@ def _materialized_conversation_schema_objects(
 
 def _actual_conversation_schema_objects(
     connection: sqlite3.Connection,
+    *,
+    unified: bool = False,
 ) -> dict[tuple[str, str], tuple[str, str | None]]:
+    rows = connection.execute(
+        "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name"
+    ).fetchall()
+    if unified:
+        has_conv_table = any(
+            str(kind) == "table" and str(name) == "conv"
+            for kind, name, _tbl, _sql in rows
+        )
+        filtered = {}
+        for kind, name, tbl_name, sql in rows:
+            skind, sname, stbl = str(kind), str(name), str(tbl_name)
+            if stbl in _CONVERSATION_OWNED_TABLES or (
+                has_conv_table and sname == "sqlite_sequence" and stbl == "sqlite_sequence"
+            ):
+                filtered[(skind, sname)] = (
+                    stbl,
+                    sql if isinstance(sql, str) else None,
+                )
+        return filtered
     return {
         (str(kind), str(name)): (
             str(tbl_name),
             sql if isinstance(sql, str) else None,
         )
-        for kind, name, tbl_name, sql in connection.execute(
-            "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name"
-        ).fetchall()
+        for kind, name, tbl_name, sql in rows
     }
 
 
-def _conversation_schema_generation(connection: sqlite3.Connection) -> str:
-    actual = _actual_conversation_schema_objects(connection)
+def _conversation_schema_generation(
+    connection: sqlite3.Connection,
+    *,
+    unified: bool = False,
+) -> str:
+    actual = _actual_conversation_schema_objects(connection, unified=unified)
     if not actual:
         return "empty"
     for name, declarations in _conversation_schema_variants():
         if actual == _materialized_conversation_schema_objects(declarations):
-            return name
+            return "current" if name == "current_with_meta" else name
+    if unified:
+        # 统一库允许仅有核心表或核心表+会话元表并存；仅当本模块自有表集完整匹配时通过
+        core_only = {
+            k: v
+            for k, v in actual.items()
+            if v[0] in _CONVERSATION_CORE_TABLES or k == ("table", "sqlite_sequence")
+        }
+        if not core_only:
+            return "empty"
+        for name, declarations in _conversation_schema_variants():
+            if core_only == _materialized_conversation_schema_objects(declarations):
+                return "current" if name == "current_with_meta" else name
     raise sqlite3.DatabaseError(
         "conversation database is neither empty nor a complete recognized schema"
     )
 
 
-def _conversation_database_generation(connection: sqlite3.Connection) -> str:
+def _conversation_database_generation(
+    connection: sqlite3.Connection,
+    *,
+    unified: bool = False,
+) -> str:
     """Classify exact schema and its SQLite application identity together."""
 
+    generation = _conversation_schema_generation(connection, unified=unified)
+    if unified:
+        return generation
     application_id = int(connection.execute("PRAGMA application_id").fetchone()[0])
     user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-    generation = _conversation_schema_generation(connection)
     if application_id == 0 and user_version == 0:
         return generation
     if (
@@ -626,9 +730,12 @@ class ConversationStore:
         # 不落库——反馈钩子是「锦上添花」，重启后拿不到就跳过（不瞎猜模型）。
         self._last_model: OrderedDict[str, str] = OrderedDict()
         self._conn: sqlite3.Connection | None = None
+        self._unified: bool = bool(db_path and is_unified_db_path(db_path))
         self._data_version: int | None = None
         self._lock = threading.Lock()
         self._turn_results: dict[str, tuple[str, dict[str, Any]]] = {}
+        self._mem_meta: dict[str, dict[str, Any]] = {}
+        self._mem_rich_messages: dict[str, list[dict[str, Any]]] = {}
         if db_path:
             connection: sqlite3.Connection | None = None
             try:
@@ -636,17 +743,20 @@ class ConversationStore:
                 self._assert_safe_database_path(p, require_database=False)
                 p.parent.mkdir(parents=True, exist_ok=True)
                 self._assert_safe_database_path(p, require_database=False)
-                (
-                    preflight_generation,
-                    preflight_identity,
-                    preflight_family,
-                ) = self._stabilized_database_preflight(p)
-                if self._database_family_presence(p) != preflight_family:
+                preflight_generation: str | None = None
+                preflight_identity: os.stat_result | None = None
+                if not self._unified:
                     (
                         preflight_generation,
                         preflight_identity,
                         preflight_family,
                     ) = self._stabilized_database_preflight(p)
+                    if self._database_family_presence(p) != preflight_family:
+                        (
+                            preflight_generation,
+                            preflight_identity,
+                            preflight_family,
+                        ) = self._stabilized_database_preflight(p)
                 connection = sqlite3.connect(
                     str(p), check_same_thread=False, timeout=5.0
                 )
@@ -655,33 +765,39 @@ class ConversationStore:
                 connection.execute("PRAGMA busy_timeout=5000")
                 connection.execute("PRAGMA trusted_schema=OFF")
                 self._begin_initialization_transaction(connection)
-                schema_generation = _conversation_database_generation(connection)
-                expected_generation = (
-                    "empty" if preflight_generation == "missing" else preflight_generation
+                schema_generation = _conversation_database_generation(
+                    connection, unified=self._unified
                 )
-                peer_converged = (
-                    expected_generation != "current"
-                    and schema_generation == "current"
-                )
-                if schema_generation != expected_generation and not peer_converged:
-                    raise sqlite3.DatabaseError(
-                        "conversation database changed during initialization"
+                if not self._unified:
+                    expected_generation = (
+                        "empty"
+                        if preflight_generation == "missing"
+                        else preflight_generation
                     )
-                opened_identity = os.lstat(p)
-                if preflight_identity is not None and not os.path.samestat(
-                    preflight_identity, opened_identity
-                ):
-                    raise sqlite3.DatabaseError(
-                        "conversation database identity changed before locked open"
+                    peer_converged = (
+                        expected_generation != "current"
+                        and schema_generation == "current"
                     )
+                    if schema_generation != expected_generation and not peer_converged:
+                        raise sqlite3.DatabaseError(
+                            "conversation database changed during initialization"
+                        )
+                    opened_identity = os.lstat(p)
+                    if preflight_identity is not None and not os.path.samestat(
+                        preflight_identity, opened_identity
+                    ):
+                        raise sqlite3.DatabaseError(
+                            "conversation database identity changed before locked open"
+                        )
                 page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
                 max_pages = self._max_database_bytes // page_size
                 page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
-                configured = int(
-                    connection.execute(f"PRAGMA max_page_count={max_pages}").fetchone()[0]
-                )
-                if configured != max_pages or page_count > max_pages:
-                    raise RuntimeError("existing conversation database exceeds capacity")
+                if not self._unified:
+                    configured = int(
+                        connection.execute(f"PRAGMA max_page_count={max_pages}").fetchone()[0]
+                    )
+                    if configured != max_pages or page_count > max_pages:
+                        raise RuntimeError("existing conversation database exceeds capacity")
                 existing_conv = connection.execute(
                     "SELECT sql FROM sqlite_master WHERE type='table' AND name='conv'"
                 ).fetchone()
@@ -690,13 +806,19 @@ class ConversationStore:
                     existing_conv,
                     schema_generation=schema_generation,
                 )
-                connection.execute(
-                    f"PRAGMA application_id={_CONVERSATION_APPLICATION_ID}"
-                )
-                connection.execute(
-                    f"PRAGMA user_version={_CONVERSATION_SCHEMA_VERSION}"
-                )
-                if _conversation_database_generation(connection) != "current":
+                if self._unified:
+                    self._ensure_rich_conversation_tables(connection)
+                else:
+                    connection.execute(
+                        f"PRAGMA application_id={_CONVERSATION_APPLICATION_ID}"
+                    )
+                    connection.execute(
+                        f"PRAGMA user_version={_CONVERSATION_SCHEMA_VERSION}"
+                    )
+                if (
+                    _conversation_database_generation(connection, unified=self._unified)
+                    != "current"
+                ):
                     raise RuntimeError("conversation migration did not produce current schema")
                 self._validate_runtime_contract(connection)
                 # Capture the external-change baseline while BEGIN IMMEDIATE still
@@ -713,7 +835,11 @@ class ConversationStore:
                 self._ensure_initialization_wal_mode(connection)
                 connection.execute("PRAGMA synchronous=FULL")
                 self._assert_safe_database_path(p, require_database=True)
-                if int(connection.execute("PRAGMA page_count").fetchone()[0]) > max_pages:
+                if (
+                    not self._unified
+                    and int(connection.execute("PRAGMA page_count").fetchone()[0])
+                    > max_pages
+                ):
                     raise RuntimeError("conversation database exceeded capacity during setup")
             except Exception as exc:
                 if connection is not None:
@@ -991,14 +1117,35 @@ class ConversationStore:
         connection.execute("DROP TABLE conversation_capacity_meta")
 
     @staticmethod
-    def _validate_schema_closed_set(connection: sqlite3.Connection) -> None:
-        current_declarations = next(
-            declarations
+    def _ensure_rich_conversation_tables(connection: sqlite3.Connection) -> None:
+        existing = {
+            (str(kind), str(name))
+            for kind, name in connection.execute(
+                "SELECT type,name FROM sqlite_master "
+                "WHERE name IN ('conversation_meta','idx_conversation_meta_user_updated',"
+                "'conversation_rich_messages')"
+            ).fetchall()
+        }
+        if ("table", "conversation_meta") not in existing:
+            connection.execute(_CONV_META_SCHEMA_SQL)
+        if ("index", "idx_conversation_meta_user_updated") not in existing:
+            connection.execute(_CONV_META_INDEX_SQL)
+        if ("table", "conversation_rich_messages") not in existing:
+            connection.execute(_CONV_RICH_MESSAGES_SCHEMA_SQL)
+
+    @staticmethod
+    def _validate_schema_closed_set(
+        connection: sqlite3.Connection,
+        *,
+        unified: bool = False,
+    ) -> None:
+        allowed = tuple(
+            _materialized_conversation_schema_objects(declarations)
             for name, declarations in _conversation_schema_variants()
-            if name == "current"
+            if name in {"current", "current_with_meta"}
         )
-        expected = _materialized_conversation_schema_objects(current_declarations)
-        if _actual_conversation_schema_objects(connection) != expected:
+        actual = _actual_conversation_schema_objects(connection, unified=unified)
+        if actual not in allowed:
             raise RuntimeError("conversation database schema is not exact current authority")
 
     @staticmethod
@@ -1066,7 +1213,10 @@ class ConversationStore:
             raise RuntimeError("durable Turn receipt usage exceeds its capacity contract")
 
     def _validate_runtime_contract(self, connection: sqlite3.Connection) -> None:
-        if _conversation_database_generation(connection) != "current":
+        if (
+            _conversation_database_generation(connection, unified=self._unified)
+            != "current"
+        ):
             raise RuntimeError("conversation database identity changed")
         expected_tables = {
             "conv": _CONV_SCHEMA_SQL,
@@ -1104,7 +1254,7 @@ class ConversationStore:
             for name in _CAPACITY_TRIGGER_SQL
         ):
             raise RuntimeError("conversation database trigger contract changed")
-        self._validate_schema_closed_set(connection)
+        self._validate_schema_closed_set(connection, unified=self._unified)
         self._verify_capacity_totals(connection)
         self._verify_receipt_capacity_contract(connection)
 
@@ -1500,7 +1650,7 @@ class ConversationStore:
             ("created_at", "turn_key"),
         )
         self._initialize_capacity_meta(connection)
-        self._validate_schema_closed_set(connection)
+        self._validate_schema_closed_set(connection, unified=self._unified)
 
     def _slot(self, key: str) -> deque[dict[str, str]]:
         d = self._h.get(key)
@@ -2620,6 +2770,578 @@ class ConversationStore:
                 else:
                     self._last_model.pop(key, None)
             return json.loads(encoded)
+
+    # ── P1-3: 服务端会话真相源 CRUD（conversation_meta + conversation_rich_messages） ──
+
+    @staticmethod
+    def _normalize_conv_user(user_id: str | None) -> str:
+        text = str(user_id or "").strip()
+        return text or "default"
+
+    @staticmethod
+    def _parse_json_dict(raw: Any) -> dict[str, Any]:
+        if isinstance(raw, dict):
+            return dict(raw)
+        if isinstance(raw, str) and raw.strip():
+            try:
+                decoded = json.loads(raw)
+                if isinstance(decoded, dict):
+                    return decoded
+            except json.JSONDecodeError:
+                pass
+        return {}
+
+    @staticmethod
+    def _parse_json_list(raw: Any) -> list[dict[str, Any]]:
+        if isinstance(raw, list):
+            return [dict(item) for item in raw if isinstance(item, dict)]
+        if isinstance(raw, str) and raw.strip():
+            try:
+                decoded = json.loads(raw)
+                if isinstance(decoded, list):
+                    return [dict(item) for item in decoded if isinstance(item, dict)]
+            except json.JSONDecodeError:
+                pass
+        return []
+
+    @staticmethod
+    def _serialize_conv_row(
+        row: tuple[Any, ...],
+        *,
+        messages: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        (
+            conv_id,
+            user_id,
+            title,
+            kind,
+            workdir,
+            archived,
+            draft_json,
+            created_at,
+            updated_at,
+        ) = row
+        payload: dict[str, Any] = {
+            "id": str(conv_id),
+            "conv_id": str(conv_id),
+            "user_id": str(user_id),
+            "title": str(title or ""),
+            "kind": str(kind or "chat"),
+            "workdir": str(workdir or ""),
+            "archived": bool(archived),
+            "draft": ConversationStore._parse_json_dict(draft_json),
+            "created_at": float(created_at),
+            "updated_at": float(updated_at),
+            "createdAt": float(created_at),
+            "updatedAt": float(updated_at),
+        }
+        if messages is not None:
+            payload["messages"] = messages
+        return payload
+
+    def _ensure_rich_tables_locked(self) -> None:
+        if self._conn is None:
+            return
+        connection = self._conn
+        existing = connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master "
+            "WHERE type='table' AND name IN ('conversation_meta','conversation_rich_messages')"
+        ).fetchone()
+        if existing is not None and int(existing[0]) == 2:
+            return
+        started = not connection.in_transaction
+        if started:
+            connection.execute("BEGIN IMMEDIATE")
+        try:
+            self._ensure_rich_conversation_tables(connection)
+            if started:
+                connection.commit()
+        except Exception:
+            if started:
+                connection.rollback()
+            raise
+
+    def list_conversations(
+        self,
+        user_id: str = "default",
+        *,
+        include_archived: bool = True,
+    ) -> list[dict[str, Any]]:
+        uid = self._normalize_conv_user(user_id)
+        with self._lock:
+            if self._conn is None:
+                items = [
+                    dict(meta)
+                    for meta in self._mem_meta.values()
+                    if meta["user_id"] == uid
+                    and (include_archived or not meta["archived"])
+                ]
+                items.sort(key=lambda item: float(item["updated_at"]), reverse=True)
+                return items
+            self._ensure_rich_tables_locked()
+            sql = (
+                "SELECT conv_id,user_id,title,kind,workdir,archived,draft_json,created_at,updated_at "
+                "FROM conversation_meta WHERE user_id=?"
+            )
+            if not include_archived:
+                sql += " AND archived=0"
+            sql += " ORDER BY updated_at DESC, created_at DESC"
+            rows = self._conn.execute(sql, (uid,)).fetchall()
+            return [self._serialize_conv_row(row) for row in rows]
+
+    def create_conversation(
+        self,
+        *,
+        conv_id: str | None = None,
+        user_id: str = "default",
+        title: str = "",
+        kind: str = "chat",
+        workdir: str = "",
+        archived: bool = False,
+        draft: dict[str, Any] | None = None,
+        messages: list[dict[str, Any]] | None = None,
+        created_at: float | None = None,
+        updated_at: float | None = None,
+    ) -> dict[str, Any]:
+        import uuid as _uuid
+
+        uid = self._normalize_conv_user(user_id)
+        cid = str(conv_id or "").strip() or f"conv_{_uuid.uuid4().hex[:16]}"
+        self._validated_key(cid)
+        now = time.time()
+        c_ts = now if created_at is None else float(created_at)
+        u_ts = c_ts if updated_at is None else float(updated_at)
+        clean_title = str(title or "")
+        clean_kind = str(kind or "chat").strip() or "chat"
+        clean_workdir = str(workdir or "")
+        clean_archived = 1 if archived else 0
+        clean_draft = self._parse_json_dict(draft)
+        clean_messages = self._parse_json_list(messages)
+        draft_str = json.dumps(clean_draft, ensure_ascii=False, separators=(",", ":"))
+        messages_str = json.dumps(clean_messages, ensure_ascii=False, separators=(",", ":"))
+
+        with self._lock:
+            if self._conn is None:
+                record = self._serialize_conv_row(
+                    (
+                        cid,
+                        uid,
+                        clean_title,
+                        clean_kind,
+                        clean_workdir,
+                        clean_archived,
+                        draft_str,
+                        c_ts,
+                        u_ts,
+                    ),
+                    messages=clean_messages,
+                )
+                self._mem_meta[cid] = {k: v for k, v in record.items() if k != "messages"}
+                self._mem_rich_messages[cid] = clean_messages
+                return record
+            self._ensure_rich_tables_locked()
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._conn.execute(
+                    "INSERT INTO conversation_meta("
+                    "conv_id,user_id,title,kind,workdir,archived,draft_json,created_at,updated_at"
+                    ") VALUES(?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(conv_id) DO UPDATE SET "
+                    "user_id=excluded.user_id,title=excluded.title,kind=excluded.kind,"
+                    "workdir=excluded.workdir,archived=excluded.archived,"
+                    "draft_json=excluded.draft_json,updated_at=excluded.updated_at",
+                    (
+                        cid,
+                        uid,
+                        clean_title,
+                        clean_kind,
+                        clean_workdir,
+                        clean_archived,
+                        draft_str,
+                        c_ts,
+                        u_ts,
+                    ),
+                )
+                self._conn.execute(
+                    "INSERT INTO conversation_rich_messages(conv_id,messages_json,updated_at) "
+                    "VALUES(?,?,?) "
+                    "ON CONFLICT(conv_id) DO UPDATE SET "
+                    "messages_json=excluded.messages_json,updated_at=excluded.updated_at",
+                    (cid, messages_str, u_ts),
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+            return self._serialize_conv_row(
+                (
+                    cid,
+                    uid,
+                    clean_title,
+                    clean_kind,
+                    clean_workdir,
+                    clean_archived,
+                    draft_str,
+                    c_ts,
+                    u_ts,
+                ),
+                messages=clean_messages,
+            )
+
+    def get_conversation(
+        self,
+        conv_id: str,
+        user_id: str = "default",
+    ) -> dict[str, Any] | None:
+        cid = str(conv_id or "").strip()
+        if not cid:
+            return None
+        uid = self._normalize_conv_user(user_id)
+        with self._lock:
+            if self._conn is None:
+                meta = self._mem_meta.get(cid)
+                if meta is None or meta["user_id"] != uid:
+                    return None
+                return {**meta, "messages": list(self._mem_rich_messages.get(cid, []))}
+            self._ensure_rich_tables_locked()
+            row = self._conn.execute(
+                "SELECT conv_id,user_id,title,kind,workdir,archived,draft_json,created_at,updated_at "
+                "FROM conversation_meta WHERE conv_id=? AND user_id=?",
+                (cid, uid),
+            ).fetchone()
+            if row is None:
+                return None
+            msg_row = self._conn.execute(
+                "SELECT messages_json FROM conversation_rich_messages WHERE conv_id=?",
+                (cid,),
+            ).fetchone()
+            messages = self._parse_json_list(msg_row[0]) if msg_row else []
+            return self._serialize_conv_row(row, messages=messages)
+
+    def patch_conversation(
+        self,
+        conv_id: str,
+        user_id: str = "default",
+        *,
+        title: str | None = None,
+        kind: str | None = None,
+        workdir: str | None = None,
+        archived: bool | None = None,
+        draft: dict[str, Any] | None = None,
+        updated_at: float | None = None,
+    ) -> dict[str, Any] | None:
+        cid = str(conv_id or "").strip()
+        if not cid:
+            return None
+        uid = self._normalize_conv_user(user_id)
+        ts = time.time() if updated_at is None else float(updated_at)
+        with self._lock:
+            if self._conn is None:
+                meta = self._mem_meta.get(cid)
+                if meta is None or meta["user_id"] != uid:
+                    return None
+                if title is not None:
+                    meta["title"] = str(title)
+                if kind is not None:
+                    meta["kind"] = str(kind).strip() or meta["kind"]
+                if workdir is not None:
+                    meta["workdir"] = str(workdir)
+                if archived is not None:
+                    meta["archived"] = bool(archived)
+                if draft is not None:
+                    meta["draft"] = self._parse_json_dict(draft)
+                meta["updated_at"] = ts
+                meta["updatedAt"] = ts
+                return {**meta, "messages": list(self._mem_rich_messages.get(cid, []))}
+            self._ensure_rich_tables_locked()
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._conn.execute(
+                    "SELECT conv_id,user_id,title,kind,workdir,archived,draft_json,created_at,updated_at "
+                    "FROM conversation_meta WHERE conv_id=? AND user_id=?",
+                    (cid, uid),
+                ).fetchone()
+                if row is None:
+                    self._conn.commit()
+                    return None
+                new_title = str(row[2]) if title is None else str(title)
+                new_kind = str(row[3]) if kind is None else (str(kind).strip() or str(row[3]))
+                new_workdir = str(row[4]) if workdir is None else str(workdir)
+                new_archived = int(row[5]) if archived is None else (1 if archived else 0)
+                new_draft = (
+                    str(row[6])
+                    if draft is None
+                    else json.dumps(
+                        self._parse_json_dict(draft),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
+                self._conn.execute(
+                    "UPDATE conversation_meta "
+                    "SET title=?,kind=?,workdir=?,archived=?,draft_json=?,updated_at=? "
+                    "WHERE conv_id=? AND user_id=?",
+                    (
+                        new_title,
+                        new_kind,
+                        new_workdir,
+                        new_archived,
+                        new_draft,
+                        ts,
+                        cid,
+                        uid,
+                    ),
+                )
+                msg_row = self._conn.execute(
+                    "SELECT messages_json FROM conversation_rich_messages WHERE conv_id=?",
+                    (cid,),
+                ).fetchone()
+                self._conn.commit()
+                messages = self._parse_json_list(msg_row[0]) if msg_row else []
+                return self._serialize_conv_row(
+                    (
+                        cid,
+                        uid,
+                        new_title,
+                        new_kind,
+                        new_workdir,
+                        new_archived,
+                        new_draft,
+                        float(row[7]),
+                        ts,
+                    ),
+                    messages=messages,
+                )
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    def upsert_rich_messages(
+        self,
+        conv_id: str,
+        user_id: str = "default",
+        messages: list[dict[str, Any]] | None = None,
+        *,
+        updated_at: float | None = None,
+    ) -> dict[str, Any] | None:
+        cid = str(conv_id or "").strip()
+        if not cid:
+            return None
+        uid = self._normalize_conv_user(user_id)
+        clean_messages = self._parse_json_list(messages)
+        ts = time.time() if updated_at is None else float(updated_at)
+        encoded = json.dumps(clean_messages, ensure_ascii=False, separators=(",", ":"))
+        with self._lock:
+            if self._conn is None:
+                meta = self._mem_meta.get(cid)
+                if meta is None or meta["user_id"] != uid:
+                    return None
+                self._mem_rich_messages[cid] = clean_messages
+                meta["updated_at"] = ts
+                meta["updatedAt"] = ts
+                return {**meta, "messages": clean_messages}
+            self._ensure_rich_tables_locked()
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._conn.execute(
+                    "SELECT conv_id,user_id,title,kind,workdir,archived,draft_json,created_at,updated_at "
+                    "FROM conversation_meta WHERE conv_id=? AND user_id=?",
+                    (cid, uid),
+                ).fetchone()
+                if row is None:
+                    self._conn.commit()
+                    return None
+                self._conn.execute(
+                    "INSERT INTO conversation_rich_messages(conv_id,messages_json,updated_at) "
+                    "VALUES(?,?,?) "
+                    "ON CONFLICT(conv_id) DO UPDATE SET "
+                    "messages_json=excluded.messages_json,updated_at=excluded.updated_at",
+                    (cid, encoded, ts),
+                )
+                self._conn.execute(
+                    "UPDATE conversation_meta SET updated_at=? WHERE conv_id=? AND user_id=?",
+                    (ts, cid, uid),
+                )
+                self._conn.commit()
+                return self._serialize_conv_row(
+                    (
+                        row[0],
+                        row[1],
+                        row[2],
+                        row[3],
+                        row[4],
+                        row[5],
+                        row[6],
+                        float(row[7]),
+                        ts,
+                    ),
+                    messages=clean_messages,
+                )
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    def delete_conversation(
+        self,
+        conv_id: str,
+        user_id: str = "default",
+    ) -> bool:
+        cid = str(conv_id or "").strip()
+        if not cid:
+            return False
+        uid = self._normalize_conv_user(user_id)
+        with self._lock:
+            if self._conn is None:
+                meta = self._mem_meta.get(cid)
+                if meta is None or meta["user_id"] != uid:
+                    return False
+                self._mem_meta.pop(cid, None)
+                self._mem_rich_messages.pop(cid, None)
+                self._h.pop(cid, None)
+                self._last_model.pop(cid, None)
+                return True
+            self._ensure_rich_tables_locked()
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                cur = self._conn.execute(
+                    "DELETE FROM conversation_meta WHERE conv_id=? AND user_id=?",
+                    (cid, uid),
+                )
+                deleted = cur.rowcount > 0
+                if deleted:
+                    self._conn.execute(
+                        "DELETE FROM conversation_rich_messages WHERE conv_id=?",
+                        (cid,),
+                    )
+                    self._conn.execute("DELETE FROM conv WHERE key=?", (cid,))
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+            if deleted:
+                self._h.pop(cid, None)
+                self._last_model.pop(cid, None)
+            return deleted
+
+    def bulk_import_conversations(
+        self,
+        user_id: str = "default",
+        items: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    ) -> dict[str, int]:
+        """幂等批量导入会话：同 ID 仅在导入版本 updated_at 更新时覆盖，否则跳过。"""
+
+        uid = self._normalize_conv_user(user_id)
+        imported = 0
+        updated = 0
+        skipped = 0
+        now = time.time()
+
+        with self._lock:
+            if self._conn is not None:
+                self._ensure_rich_tables_locked()
+                self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                for raw in items:
+                    if not isinstance(raw, dict):
+                        skipped += 1
+                        continue
+                    cid = str(raw.get("id") or raw.get("conv_id") or "").strip()
+                    if not cid:
+                        skipped += 1
+                        continue
+                    self._validated_key(cid)
+                    created_val = raw.get("created_at")
+                    if created_val is None:
+                        created_val = raw.get("createdAt")
+                    updated_val = raw.get("updated_at")
+                    if updated_val is None:
+                        updated_val = raw.get("updatedAt")
+                    c_ts = now if created_val is None else float(created_val)
+                    u_ts = c_ts if updated_val is None else float(updated_val)
+                    title = str(raw.get("title") or "")
+                    kind = str(raw.get("kind") or "chat").strip() or "chat"
+                    workdir = str(raw.get("workdir") or "")
+                    archived = 1 if bool(raw.get("archived", False)) else 0
+                    draft_obj = self._parse_json_dict(raw.get("draft"))
+                    draft_str = json.dumps(
+                        draft_obj, ensure_ascii=False, separators=(",", ":")
+                    )
+                    messages = self._parse_json_list(raw.get("messages"))
+                    messages_str = json.dumps(
+                        messages, ensure_ascii=False, separators=(",", ":")
+                    )
+
+                    if self._conn is None:
+                        existing = self._mem_meta.get(cid)
+                        if existing is not None:
+                            if float(existing["updated_at"]) >= u_ts:
+                                skipped += 1
+                                continue
+                            updated += 1
+                        else:
+                            imported += 1
+                        record = self._serialize_conv_row(
+                            (cid, uid, title, kind, workdir, archived, draft_str, c_ts, u_ts),
+                            messages=messages,
+                        )
+                        self._mem_meta[cid] = {
+                            k: v for k, v in record.items() if k != "messages"
+                        }
+                        self._mem_rich_messages[cid] = messages
+                        continue
+
+                    existing_row = self._conn.execute(
+                        "SELECT user_id, updated_at FROM conversation_meta WHERE conv_id=?",
+                        (cid,),
+                    ).fetchone()
+                    if existing_row is not None:
+                        existing_uid, existing_updated = str(existing_row[0]), float(
+                            existing_row[1]
+                        )
+                        if existing_uid != uid or existing_updated >= u_ts:
+                            skipped += 1
+                            continue
+                        self._conn.execute(
+                            "UPDATE conversation_meta "
+                            "SET title=?,kind=?,workdir=?,archived=?,draft_json=?,updated_at=? "
+                            "WHERE conv_id=? AND user_id=?",
+                            (title, kind, workdir, archived, draft_str, u_ts, cid, uid),
+                        )
+                        self._conn.execute(
+                            "INSERT INTO conversation_rich_messages(conv_id,messages_json,updated_at) "
+                            "VALUES(?,?,?) "
+                            "ON CONFLICT(conv_id) DO UPDATE SET "
+                            "messages_json=excluded.messages_json,updated_at=excluded.updated_at",
+                            (cid, messages_str, u_ts),
+                        )
+                        updated += 1
+                    else:
+                        self._conn.execute(
+                            "INSERT INTO conversation_meta("
+                            "conv_id,user_id,title,kind,workdir,archived,draft_json,created_at,updated_at"
+                            ") VALUES(?,?,?,?,?,?,?,?,?)",
+                            (cid, uid, title, kind, workdir, archived, draft_str, c_ts, u_ts),
+                        )
+                        self._conn.execute(
+                            "INSERT INTO conversation_rich_messages(conv_id,messages_json,updated_at) "
+                            "VALUES(?,?,?) "
+                            "ON CONFLICT(conv_id) DO UPDATE SET "
+                            "messages_json=excluded.messages_json,updated_at=excluded.updated_at",
+                            (cid, messages_str, u_ts),
+                        )
+                        imported += 1
+                if self._conn is not None:
+                    self._conn.commit()
+            except Exception:
+                if self._conn is not None:
+                    self._conn.rollback()
+                raise
+        return {
+            "imported": imported,
+            "updated": updated,
+            "skipped": skipped,
+            "total": imported + updated + skipped,
+        }
 
 
 class BufferedConversationStore:

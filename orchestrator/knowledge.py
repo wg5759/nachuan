@@ -80,7 +80,12 @@ class KnowledgeBase:
     def __init__(self, db_path: str):
         p = Path(db_path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(p), check_same_thread=False)
+        self._conn = sqlite3.connect(str(p), check_same_thread=False, timeout=5.0)
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        from storage.unified_db import ensure_unified_wal, is_unified_db_path
+
+        if is_unified_db_path(p):
+            ensure_unified_wal(self._conn, busy_timeout_ms=5000)
         self._lock = threading.Lock()
         self._fts = False  # FTS5 是否可用（不可用时检索退回纯覆盖率，行为与升级前一致）
         self._init()

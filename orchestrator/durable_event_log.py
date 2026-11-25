@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Any
 
 from gateway.sqlite_runtime import enable_wal_with_deadline
+from storage.unified_db import is_unified_db_path
+
+_OWNED_TABLES = frozenset({"workflow_events", "workflow_event_meta"})
 
 _APPLICATION_ID = 0x4E435745  # "NCWE"
 _SCHEMA_VERSION = 1
@@ -144,6 +147,7 @@ def _contains_forbidden_raw_field(value: object) -> bool:
 class DurableWorkflowEventLog:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(os.path.abspath(os.fspath(path)))
+        self._unified = is_unified_db_path(self.path)
         self._lock = threading.RLock()
         self._closed = False
         self._conn: sqlite3.Connection | None = None
@@ -160,19 +164,43 @@ class DurableWorkflowEventLog:
             connection.execute("PRAGMA busy_timeout=5000")
             connection.execute("PRAGMA trusted_schema=OFF")
             connection.execute("BEGIN IMMEDIATE")
-            objects = {
-                (str(row[0]), str(row[1]), str(row[2])): (
-                    None if row[3] is None else str(row[3])
+            all_rows = connection.execute(
+                "SELECT type,name,tbl_name,sql FROM sqlite_master"
+            ).fetchall()
+            if self._unified:
+                has_events_table = any(
+                    str(r[0]) == "table" and str(r[1]) == "workflow_events"
+                    for r in all_rows
                 )
-                for row in connection.execute(
-                    "SELECT type,name,tbl_name,sql FROM sqlite_master"
-                ).fetchall()
-            }
+                objects = {
+                    (str(row[0]), str(row[1]), str(row[2])): (
+                        None if row[3] is None else str(row[3])
+                    )
+                    for row in all_rows
+                    if str(row[2]) in _OWNED_TABLES
+                    or (
+                        has_events_table
+                        and str(row[1]) == "sqlite_sequence"
+                        and str(row[2]) == "sqlite_sequence"
+                    )
+                }
+            else:
+                objects = {
+                    (str(row[0]), str(row[1]), str(row[2])): (
+                        None if row[3] is None else str(row[3])
+                    )
+                    for row in all_rows
+                }
             application_id = int(
                 connection.execute("PRAGMA application_id").fetchone()[0]
             )
             user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if not objects and application_id == 0 and user_version == 0:
+            if self._unified:
+                if not objects:
+                    _install_schema(connection)
+                elif objects != _EXPECTED_SCHEMA:
+                    raise sqlite3.DatabaseError("workflow event schema authority mismatch")
+            elif not objects and application_id == 0 and user_version == 0:
                 _install_schema(connection)
                 connection.execute(f"PRAGMA application_id={_APPLICATION_ID}")
                 connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
@@ -189,14 +217,15 @@ class DurableWorkflowEventLog:
                 error_message="workflow event database requires WAL mode",
             )
             connection.execute("PRAGMA synchronous=FULL")
-            page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
-            max_pages = max(1, _MAX_DATABASE_BYTES // page_size)
-            page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
-            configured = int(
-                connection.execute(f"PRAGMA max_page_count={max_pages}").fetchone()[0]
-            )
-            if page_count > max_pages or configured != max_pages:
-                raise sqlite3.DatabaseError("workflow event database exceeds capacity")
+            if not self._unified:
+                page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
+                max_pages = max(1, _MAX_DATABASE_BYTES // page_size)
+                page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
+                configured = int(
+                    connection.execute(f"PRAGMA max_page_count={max_pages}").fetchone()[0]
+                )
+                if page_count > max_pages or configured != max_pages:
+                    raise sqlite3.DatabaseError("workflow event database exceeds capacity")
             self.verify_chain()
         except Exception as exc:
             if self._conn is not None:

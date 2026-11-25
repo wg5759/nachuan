@@ -499,6 +499,14 @@ describe('final packaged ASAR and engine binding', () => {
       'gateway.media_binary',
       'gateway.providers.cli_env',
       'gateway.runtime_profile',
+      'gateway.windows_nachuan_core_service_host',
+      'gateway.installed_channel_service_runtime',
+      'gateway.installed_channel_drain',
+      'gateway.installed_channel_child_drain_runtime',
+      'gateway.windows_installed_drain_pipe',
+      'gateway.installed_nachuan_core_identity',
+      'gateway.installed_service_machine_vault',
+      'gateway.installed_service_state_acl',
       'orchestrator.studio',
       'orchestrator.tool_agent',
       'config/store-runtime-profile.v1.json'
@@ -534,6 +542,18 @@ describe('final packaged ASAR and engine binding', () => {
     await expect(
       verifyPackagedStoreRuntimeProfile({ repoRoot: root, resourcesRoot, pythonPayload })
     ).resolves.toMatchObject({ profileDigest: digest })
+    await expect(
+      verifyPackagedStoreRuntimeProfile({
+        repoRoot: root,
+        resourcesRoot,
+        pythonPayload: {
+          ...pythonPayload,
+          archiveEntries: requiredImports.filter(
+            (entry) => entry !== 'gateway.windows_nachuan_core_service_host'
+          )
+        }
+      })
+    ).rejects.toThrow(/missing.*windows_nachuan_core_service_host/i)
     await expect(
       verifyPackagedStoreRuntimeProfile({
         repoRoot: root,

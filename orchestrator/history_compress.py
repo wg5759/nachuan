@@ -34,20 +34,33 @@ async def compress_history(
     *,
     keep_recent: int = _KEEP_RECENT,
     threshold_chars: int = _COMPRESS_THRESHOLD_CHARS,
+    source_model: str | None = None,
+    incognito: bool = False,
 ) -> list[dict[str, Any]] | None:
     """长对话历史压缩：老对话摘要成主线要点（system 消息），近的原样保留。
 
+    隐私隔离（P0-2）：
+    - 无痕模式（incognito=True）或后台摘要开关关闭 → 直接原样返回；
+    - 仅允许使用当前对话所属同源模型（绝不静默跨供应商发给 agnes-flash 或其他便宜模型），
+      并锁定单模型直连禁止跨商 fallback。
     返回新的 history 列表（[摘要 system 消息] + 最近 keep_recent 条）；不长或压缩失败 → 原样返回。
     """
-    if not history or len(history) <= keep_recent + 2:
+    if not history or incognito or len(history) <= keep_recent + 2:
         return history
+    try:
+        from gateway.config import get_settings
+
+        if not get_settings().background_summary_enabled:
+            return history
+    except Exception:  # noqa: BLE001
+        pass
     if _history_chars(history) <= threshold_chars:
         return history  # 不长，原样（零开销）
 
     older = history[:-keep_recent]
     recent = history[-keep_recent:]
 
-    # 把较早的对话铺成裸文本喂给便宜模型摘要（每条截断，防个别超长条撑爆摘要输入）。
+    # 把较早的对话铺成裸文本喂给同源模型摘要（每条截断，防个别超长条撑爆摘要输入）。
     convo = "\n".join(
         f"{m.get('role', '?')}: {str(m.get('content') or '')[:1500]}" for m in older
     )[:16000]
@@ -59,16 +72,18 @@ async def compress_history(
     )
 
     try:
-        from gateway.failover import chat_with_fallback
+        from gateway.failover import chat_with_fallback, same_origin_only_fallback
+        from gateway.privacy import select_same_origin_helper_model
         from gateway.provider_call_ledger import bind_provider_call_scope
         from gateway.schemas import ChatCompletionRequest
-        from orchestrator.modes import pick_model
 
-        cheap = "agnes-flash" if router.resolve("agnes-flash") else pick_model(router, "cheap")
-        if not cheap:
-            return history  # 没有可用便宜模型 → 原样（不升级烧强模型做摘要）
-        req = ChatCompletionRequest(model=cheap, messages=[{"role": "user", "content": prompt}])  # type: ignore[arg-type]
-        with bind_provider_call_scope(role="history.compress"):
+        helper_model = select_same_origin_helper_model(
+            router, source_model=source_model, incognito=incognito
+        )
+        if not helper_model:
+            return history  # 无同源可用模型 → 原样（绝不跨供应商外发）
+        req = ChatCompletionRequest(model=helper_model, messages=[{"role": "user", "content": prompt}])  # type: ignore[arg-type]
+        with bind_provider_call_scope(role="history.compress"), same_origin_only_fallback():
             res, _served, _route = await asyncio.wait_for(
                 chat_with_fallback(router, req), timeout=_SUMMARY_TIMEOUT
             )

@@ -1,107 +1,171 @@
-# 纳川（Nachuan）
+# Nachuan (纳川)
 
-纳川是本地优先、BYOK 的多模型 AI 工作系统。它把模型连接、工具、Skill、知识、
-多模型协作和可恢复任务放在一个可审计运行时中，而不是只提供模型下拉框。
+> **Zero-Telemetry, Verifiable Multi-Agent Control Plane**
+> **可自证零遥测的多 Agent 编码与本地 AI 控制面** — Built for developers who want multi-worktree parallel coding, visual diff review, cross-platform native secret storage, and **tool-verifiable privacy** instead of opaque promises.
 
-> 当前公开状态：**source alpha**。源码可研究、构建和贡献；官方签名二进制、
-> 企业多租户、真实渠道长稳和插件市场仍分别受发布门约束。
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Zero Telemetry](https://img.shields.io/badge/telemetry-8%2F8%20checks%20verified-brightgreen.svg)](scripts/verify_zero_telemetry.py)
+[![Coding Control Plane](https://img.shields.io/badge/control--plane-Worktree%20%2B%20Diff%20%2B%20Plan%2FBuild-6f42c1.svg)](gateway/workspace_control.py)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-informational.svg)](.github/workflows/ci.yml)
 
-## 设计原则
+English | [简体中文完整运维与边界说明 (README.zh-CN.md)](README.zh-CN.md)
 
-> 能力皆插件，权限归内核，事实进事件，副作用可撤销。
+> **Release status**: `0.2.0` **source alpha** (Apache-2.0). Source, CLI + Local Web control plane, zero-telemetry verifier, and multi-worktree Coding Studio are open for inspection, testing, and contribution; signed consumer desktop installers and hosted enterprise multi-tenant deployments remain gated by independent release doors (see [`PACKAGING.md`](PACKAGING.md) and [`docs/CODE_SIGNING_POLICY.md`](docs/CODE_SIGNING_POLICY.md)).
 
-模型、工具、工作流、RAG 组件、渠道和 UI 将逐步迁入稳定的能力缝隙；身份、租户、
-凭证、财务/幂等账本、企业 RAG 最终授权、审计真相和安装更新信任不能被插件绕过。
+### Core Highlights · 核心卖点速览
 
-当前 PK-001～PK-008 已提供严格 Manifest、Service/Event/Tool/UI/Effect/Capability
-内核，以及 EchoProvider、受审 Skill、pipeline 事件、UI slot 等内置纵切。已验第三方
-Python bundle 可通过签名/SBOM 合同、单次有界 IPC、持久 quarantine 和 Windows
-AppContainer + Job Object 隔离代理运行，不导入主进程。该能力默认无第三方 bundle，
-也不等于插件市场、动态第三方 UI 或跨平台隔离已完成。
-企业 RAG 已将权限同质分片、embedding、候选检索、授权后重排和 DLP 收敛为插件服务缝隙；
-身份、tenant 边界、正文前授权、撤权 fence 和审计仍不可插件化。真实 embedding/向量/加密正文/
-ReBAC/ABAC/DLP 未配齐前，企业查询 API 继续故障关闭。
-公开 Python `nachuan_sdk` 现可确定性生成签名三文件隔离包，并把固定提交的 DeepSeek Harness
-组合清单或 OpenClaw manifest/Skill 变成内容寻址投影。它不会直接执行上游插件代码或 Skill，
-也不会自动下载、信任、启用或升级第三方插件；插件市场仍未上线。
+- **60-Second Quickstart · 60 秒极速启动**：一条命令 `nachuan start` 启动 `127.77.77.77` 专属回环引擎与本地 Web 控制面。
+- **One-Command Zero-Telemetry Proof · 一键自证零遥测**：随时运行 `python scripts/verify_zero_telemetry.py --json`，8 项硬断言端到端实证 0 遥测 SDK、0 第三方 CLI 凭据读取、0 隐式非回环外联。
+- **Hook-Safe Multi-Worktree Coding Control Plane · 多 Git Worktree 并行编码控制面**：隔离任务分支 + 自动 `.git/info/exclude` 零污染 + 可视化逐行 Diff + 单文件 Revert / 本地 Commit + Plan（只读探索）/ Build（审批绑定单次消费）双模执行闸。
+- **Live Outbound Firewall & Air-Gapped Mode · 实时网络出站审计与空气间隙纯离线模式**：可视化查看每次出站请求，一键硬拦截所有非回环连接，本地 Ollama / `llama.cpp` 全速离线运行。
+- **3-DB Lean SQLite Core & Cross-Platform Keyring · 3 核心 SQLite 库与跨平台密钥环**：精简为 `core.db` / `memory.db` / `ops.db` 三库架构，原生适配 Windows DPAPI / macOS Keychain / Linux Secret Service / `0600` AES-256-GCM 密文密钥文件。
 
-## 当前能力
+---
 
-- OpenAI-compatible、Codex 订阅、Kimi Code 订阅等模型连接适配；
-- 快速聊天、多模型协作、工具与 Skill；
-- 本地知识库、长期记忆、案例复用；
-- Web UI 与 Electron 桌面候选；
-- 微信/飞书等渠道的持久幂等与恢复源码路径；
-- 安装、许可证、SBOM、更新与最终包安全门。
+## Why Nachuan? (Don't Trust Promises — Verify Every Packet)
 
-能力存在于源码不等于对应真实账号、供应商、安装态或生产环境已经验收。请查看
-相关设计文档和测试，而不要依据一个进程、页面或历史截图判断就绪状态。
+Most coding shells ask you to *trust* their privacy claims, or give local agents unrestricted shell access with zero approval trail. Nachuan takes a strict engineering stance:
 
-## 快速开始（Windows 开源版）
+1. **Tool-Verifiable Zero Telemetry** — Run one command anytime to verify static zero-SDK compliance, zero third-party CLI credential harvesting (never reads `~/.claude.json` or `~/.codex/auth.json`), and live air-gapped blocking:
+   ```bash
+   python scripts/verify_zero_telemetry.py --json
+   ```
+2. **Real-Time Outbound Audit Firewall & One-Click Air-Gapped Mode** — Every outbound HTTP request inside the gateway and Electron shell passes through a unified `OutboundGuard` ring buffer visible live in the UI (`GET /v1/privacy/outbound-audit`). Flip **Air-Gapped Mode** on to hard-block every non-loopback connection before socket connect while keeping local Ollama / `llama.cpp` models running at full speed.
+3. **Hook-Safe Multi-Worktree Coding Studio + Plan/Build Sandbox** — Spawn isolated `git worktree` sessions in parallel for Codex, Claude Code, OpenCode, Kimi Code, Local Ollama, or any BYOK cloud model. Every git call forces `-c core.hooksPath=/dev/null -c core.fsmonitor=false -c protocol.file.allow=never` to prevent malicious repo hook RCE. Review structured per-file Unified Diffs, revert single files, commit selectively, and route sensitive Build commands to Desktop / Mobile Web PWA / Discord / Slack / Telegram / Feishu / WeChat approvals.
+4. **Cross-Platform Native Secret Store** — Zero plaintext secret fallback: Windows DPAPI, macOS Keychain (`/usr/bin/security`), Linux Secret Service (`secret-tool`), and `0600` AES-256-GCM encrypted keyfiles on headless servers.
+5. **Lean 3-Database Core + Hybrid Local/Cloud Routing** — Slimmed down to 3 SQLite core files (`core.db`, `memory.db`, `ops.db`) with feature flags keeping heavy optional modules off by default; mix free local models with flagship cloud APIs to slash token spend.
 
-推荐入口会下载官方安装脚本到临时目录，再执行本地文件；不会把网络响应直接管道给 PowerShell：
+---
 
-```powershell
-$installer = Join-Path $env:TEMP 'nachuan-install.ps1'; Invoke-WebRequest https://raw.githubusercontent.com/wg5759/nachuan/main/install.ps1 -OutFile $installer; & $installer -Action Install
+## How Nachuan Compares
+
+| Capability | **Nachuan** | T3 Code | OpenCode | OpenClaw |
+|---|:---:|:---:|:---:|:---:|
+| **Tool-Verifiable Zero Telemetry (`verify_zero_telemetry.py`)** | **Yes (CI-gated)** | No | Partial | Partial |
+| **Live Outbound Audit UI + One-Click Air-Gapped Mode** | **Yes** | No | No | No |
+| **Hook-Safe Parallel Git Worktrees + Per-File Diff / Revert** | **Yes** | Partial (raw git) | No | No |
+| **Plan (Read-Only) / Build Approval Execution Sandbox** | **Yes** | Partial | Yes (no remote ledger) | No |
+| **Remote Mobile Approvals (Web PWA / Discord / Slack / Telegram / Feishu / WeChat)** | **Yes** | Web only | No | IM only |
+| **Cross-Platform Secret Keyring (Win / macOS / Linux)** | **Yes** | Partial | Env/file | Env/file |
+| **Local Offline Models + BYOK Cloud Hybrid Routing** | **Yes** | Subscription-focused | Yes | Yes |
+
+---
+
+## 60-Second Quickstart
+
+### Option A — CLI + Local Web Control Plane (macOS / Linux / Windows)
+
+```bash
+# 1. Build web renderer bundle
+npm --prefix desktop run build:web
+
+# 2. Install as a local Python package / CLI
+pip install -e .
+
+# 3. Launch local engine (binds strictly to 127.77.77.77) & open Web UI
+nachuan start
 ```
 
-安装器不要求管理员权限；它把官方仓库引用先解析为不可变 commit，再逐项核对
-`OPEN_SOURCE_SNAPSHOT.json`，并下载固定版本、固定大小和固定 SHA-256 的 `uv` 与 Python 3.12.9。
+### Option B — Windows Verified Source Installer (No Admin Required, SHA-256 Verified)
+
+Downloads the official installer locally first (never pipes network text into `iex`), resolves the repo ref to an immutable 40-char commit, and verifies every file against `OPEN_SOURCE_SNAPSHOT.json`:
 
 ```powershell
-nachuan start       # 启动本地 Web
-nachuan update      # 安装新 commit，旧版本保留为回退证据
-nachuan doctor      # 离线检查源码闭包、运行时哈希与三版本同步契约
-nachuan uninstall   # 默认保留用户数据
+$installer = Join-Path $env:TEMP 'nachuan-install.ps1'
+Invoke-WebRequest https://raw.githubusercontent.com/wg5759/nachuan/main/install.ps1 -OutFile $installer
+& $installer -Action Install
 ```
 
-默认仅监听专属回环 `127.77.77.77`。启动器自动用短期单次 fragment 换取 host-only HttpOnly Cookie；
-长期运行凭证不显示在终端、不进入 URL 或页面 JavaScript。以后刷新、重开浏览器和新标签页均无需重复输入；
-浏览器数据被清空或凭据轮换时，从纳川启动入口重新打开即可。任何凭证仍不得提交到仓库、日志或问题单。
-当前仍是 source alpha，适合技术用户自托管试用，不等同于已签名普通客户桌面版。
+Other handy CLI commands:
+```bash
+nachuan status                           # Inspect engine & connected models
+nachuan models                           # List active local & BYOK routes
+nachuan chat "Summarize git diff"        # Fast terminal turn
+nachuan doctor                           # Verify source closure & runtime hashes
+python scripts/verify_zero_telemetry.py  # Independently verify 0 telemetry calls
+```
 
-从源码参与开发仍要求 Node.js 24.14.0 和 npm 11.12.1；见 `CONTRIBUTING.md`。
+### Option C — Air-Gapped Offline Mode from Boot
 
-## 三版本同步
+```bash
+NACHUAN_OFFLINE_MODE=1 nachuan start
+```
 
-开源版、普通用户桌面版和企业商用版共享 `0.2.0` 核心，但使用三个独立发布通道。安全和功能修复不再维护三份
-分叉源码；桌面版与企业版仍分别要求签名、更新、部署和真实业务验收。合同见
-`config/distribution-channels.v1.json` 与 `docs/adr/0015-shared-core-multi-edition-distribution.md`。
+All non-loopback traffic (including web search, cloud providers, webhooks, and cloud sync) is hard-blocked before connecting while local Ollama / `llama-server` models remain fully operational.
 
-Windows 免费开源签名不是自动权益。纳川将优先申请 SignPath Foundation，并评估 Microsoft Store MSIX 重签；
-批准前不发布未签名官方安装器。详见 `docs/CODE_SIGNING_POLICY.md`。
+---
 
-## 测试
+## Core Architecture
 
-```powershell
-.\.venv\Scripts\python.exe -X utf8 -m pytest -q
+```text
+Desktop (Electron) / Local Web PWA / Mobile IM (Discord, Slack, Telegram, Feishu, WeChat)
+                                    │
+                                    ▼
+             Nachuan Turn Engine & Gateway (FastAPI, 127.x loopback)
+   ┌──────────────────┬────────────────────────┬───────────────────────────┐
+   │ Privacy Firewall │ Multi-Worktree Studio  │ Multi-Model Orchestrator  │
+   │ • OutboundGuard  │ • Hook-safe worktrees  │ • Local + BYOK Routing    │
+   │ • Air-Gapped Gate│ • Per-file Diff/Revert │ • Cross-Vendor Review     │
+   │ • SecretStore    │ • Plan/Build Sandbox   │ • Same-Origin Memory/RAG  │
+   │   (DPAPI/Keychain│ • Remote Approvals     │ • Feature-Flagged Extras  │
+   │    /libsecret)   │                        │                           │
+   └──────────────────┴────────────────────────┴───────────────────────────┘
+                                    │
+                     3-DB Lean SQLite Core (core / memory / ops)
+```
+
+---
+
+## Key API Surfaces
+
+- **Privacy & Outbound Firewall (P2)**:
+  - `GET /v1/privacy/outbound-audit` (`limit`, `since_id`, `blocked_only`) & `DELETE /v1/privacy/outbound-audit`
+  - `GET /v1/privacy/offline-mode` & `POST /v1/privacy/offline-mode`
+- **Workspace Coding Control Plane (P3 — Worktrees, Diff, Revert, Commit & Plan/Build Approval Gate)**:
+  - `GET / POST /v1/workspace/worktrees` & `POST /v1/workspace/worktrees/remove` (`DELETE /v1/workspace/worktrees`)
+  - `GET /v1/workspace/diff` (`worktree_path`, `staged`)
+  - `POST /v1/workspace/revert-file` & `POST /v1/workspace/commit` (local commit only, never `git push`)
+  - `POST /v1/workspace/exec-plan` (`plan` read-only allowlist | `build` one-time approval-bound execution)
+- **Multi-Worktree Coding Studio & Approvals (P3)**:
+  - `GET / POST /v1/coding/sessions`, `DELETE /v1/coding/sessions/{id}`
+  - `GET /v1/coding/sessions/{id}/diff`, `POST /v1/coding/sessions/{id}/mode` (`plan` | `build`)
+  - `POST /v1/coding/sessions/{id}/revert`, `POST /v1/coding/sessions/{id}/commit`, `POST /v1/coding/sessions/{id}/exec`
+  - `GET /v1/coding/approvals` & `POST /v1/coding/approvals/{id}/resolve`
+- **Global IM Remote Approval Bridge (P4)**:
+  - `bridge/global_approval_webhook.py` — SSRF-allowlisted Discord & Slack HTTPS approval cards + Slack HMAC-SHA256 replay-protected verification.
+
+---
+
+## Verification & Tests
+
+```bash
+# Zero-telemetry & air-gapped proof
+python scripts/verify_zero_telemetry.py --json
+
+# Core P0-P4 backend verification suites
+pytest -q tests/test_p0_privacy_isolation.py tests/test_p1_architecture_slim.py \
+  tests/test_p2_privacy_crossplatform.py tests/test_p3_coding_studio.py \
+  tests/test_p4_global_approval.py
+
+# Shared-core distribution contract
+python scripts/verify_distribution_contract.py
+
+# Desktop TypeScript check, web build, and Vitest suite
 npm --prefix desktop run typecheck
-uv run python scripts/verify_distribution_contract.py
+npm --prefix desktop run build:web
+npm --prefix desktop test
 ```
 
-发布、渠道、插件、付费媒体、企业 RAG 和自动更新还有额外的真实环境门禁。
+---
 
-## 企业 RAG
+## Security Boundaries, Governance & Documentation
 
-现有 `KnowledgeBase` 是个人/单所有者模式，不是企业多租户权限边界。企业目标架构
-要求不可伪造的 RequestContext、租户硬隔离、权限同质分片、ReBAC/ABAC、模型前
-终检、撤权 epoch、策略感知缓存、输出 DLP 和引用复核。详见
-`docs/ENTERPRISE_RAG_AUTHORIZATION_ARCHITECTURE.md`。
+- **Full Chinese Operations & Architecture Notes**: [`README.zh-CN.md`](README.zh-CN.md)
+- **Architecture Decision Records**: [`docs/adr/`](docs/adr/)
+- **Open-Source Strategy & Boundaries**: [`docs/OPEN_SOURCE_STRATEGY_OPENCLAW_COMPARISON.md`](docs/OPEN_SOURCE_STRATEGY_OPENCLAW_COMPARISON.md)
+- **Packaging & Release Gates**: [`PACKAGING.md`](PACKAGING.md) · [`docs/CODE_SIGNING_POLICY.md`](docs/CODE_SIGNING_POLICY.md)
+- **Security Policy, Governance & Trademarks**: [`SECURITY.md`](SECURITY.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`GOVERNANCE.md`](GOVERNANCE.md) · [`TRADEMARKS.md`](TRADEMARKS.md)
 
-## Plugin SDK
+## License
 
-SDK API、构建示例、DeepSeek Harness/OpenClaw 兼容范围和明确禁区见
-`docs/NACHUAN_PLUGIN_SDK.md`。第三方代码只有转换为精确签名的纳川 bundle 并通过隔离代理后
-才可执行；bridge 返回值不能注册宿主工具、服务、Hook、路由、渠道、provider 或 UI。
-
-## 安全与贡献
-
-- 安全报告：`SECURITY.md`
-- 贡献指南与 DCO：`CONTRIBUTING.md`
-- 治理：`GOVERNANCE.md`
-- 商标：`TRADEMARKS.md`
-- 第三方来源：构建期 license/SBOM evidence 与源码旁 notices
-
-## 许可证
-
-Apache License 2.0。参见 `LICENSE` 和 `NOTICE`。
+Apache License 2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).

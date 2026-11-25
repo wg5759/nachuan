@@ -1,7 +1,8 @@
 import React from 'react'
 
-import i18n from '../i18n'
+import i18n, { savePreferredLanguage, useTranslation } from '../i18n'
 import { useAppStore } from '../store'
+import PrivacyOutboundAuditPanel from './PrivacyOutboundAuditPanel'
 import type {
   ChannelRecoveryChannel,
   ChannelRecoveryResult,
@@ -246,21 +247,28 @@ export function SettingsPaneView({
           <span aria-hidden="true">→</span>
         </button>
       </section>
+      <PrivacyOutboundAuditPanel />
       <ChannelRecoveryPanel language={language} />
     </main>
   )
 }
 
 export default function SettingsPane(): React.ReactNode {
+  const { i18n: activeI18n } = useTranslation()
   const soundEnabled = useAppStore((state) => state.soundEnabled)
   const setSoundEnabled = useAppStore((state) => state.setSoundEnabled)
   const setView = useAppStore((state) => state.setView)
-  const language: SettingsLanguage = i18n.language.toLowerCase().startsWith('zh') ? 'zh' : 'en'
+  const language: SettingsLanguage = (activeI18n.language || i18n.language)
+    .toLowerCase()
+    .startsWith('zh')
+    ? 'zh'
+    : 'en'
   return (
     <SettingsPaneView
       language={language}
       soundEnabled={soundEnabled}
       onLanguageChange={(next) => {
+        savePreferredLanguage(next)
         void i18n.changeLanguage(next)
         window.api.setLang(next)
       }}

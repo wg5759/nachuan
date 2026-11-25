@@ -301,6 +301,10 @@ kb_v2_audit_decisions
 8. **PK-007：企业 RAG 插件组合（最小纵切已完成）。** `enterprise.rag.splitter/embedder/candidates/reranker/dlp/runtime` 六个 v1 service seam 已进入 `PluginKernel`。分片插件只能处理单个权限同质 block 并完整重组原文；embedding 输入先复验 plan/payload/hash，向量结果继承 tenant/document/policy/epoch/classification；candidate 插件只见 tenant/query 并只返回 ID/元数据；content reader、AuthzFacade、fence、route/audit key 仍由可信内核持有。重排只见授权正文，DLP 默认 deny-all；新 fence 在生成前和输出释放前都重验。真实组件与生产 API 仍不启用。
 9. **RAG-ACL-008：真实验收。** 多租户对抗、撤权并发、故障演练、长稳和独立安全评审。
 
+   2026-08-28 已完成 **RAG-ACL-008A 本地 API 验收基座**：可信协调器把 004～007 串入独立企业查询 API，并覆盖跨租户候选、生成中撤权、伪造引用、依赖故障、伪协调器和无授权上下文回执。它不安装到生产 Gateway，不能替代真实身份、ReBAC/ABAC、FORCE RLS、加密对象/向量、真实 DLP、长稳或独立安全评审，因此 RAG-ACL-008 仍未完成。
+
+   同日完成 **RAG-ACL-008B 本地持久审计基座**：企业查询四类终态进入独立SQLite数据域，记录无正文/回答/主体ID，以匿名主体范围和HMAC链验真；成功结果必须在FULL同步提交后返回，审计不可用时故障关闭。生产密钥托管、WORM/可信时间、备份恢复与跨进程验收仍未完成，因此008B也不能替代真实008。
+
 第一阶段不要改现有个人知识库的行为；企业功能走独立 API 与数据域，完成迁移验收后再决定是否统一。
 
 ## 14. 权威依据

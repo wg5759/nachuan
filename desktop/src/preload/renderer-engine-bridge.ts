@@ -2,9 +2,11 @@ import { isRendererEngineRequestId } from '../renderer-engine-contract'
 
 const FLOW_CHUNK_BYTES = 64 * 1024
 
+export type PreloadRendererEngineMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
+
 export interface PreloadRendererEngineRequest {
   readonly requestId: string
-  readonly method: 'GET' | 'POST'
+  readonly method: PreloadRendererEngineMethod
   readonly target: string
   readonly bodyKind: 'none' | 'json'
   readonly body?: string
@@ -94,7 +96,7 @@ function captureInput(input: PreloadRendererEngineRequest): PreloadRendererEngin
   }
   return Object.freeze({
     requestId: value.requestId,
-    method: value.method as 'GET' | 'POST',
+    method: value.method as PreloadRendererEngineMethod,
     target: value.target as string,
     bodyKind: value.bodyKind,
     ...(hasBody ? { body: value.body as string } : {}),

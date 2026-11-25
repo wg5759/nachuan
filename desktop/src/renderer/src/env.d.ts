@@ -5,7 +5,7 @@ import type { PluginUiSnapshot } from '../../plugin-ui-contract'
 
 export interface RendererEngineRequest {
   requestId: string
-  method: 'GET' | 'POST'
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
   target: string
   bodyKind: 'none' | 'json'
   body?: string

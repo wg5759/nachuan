@@ -512,6 +512,19 @@ def _fetch_into(
     redirects = 0
 
     while True:
+        from gateway.outbound_guard import (
+            OfflineModeBlockedError,
+            check_outbound_allowed,
+            get_outbound_guard,
+        )
+
+        _outbound_guard = get_outbound_guard()
+        check_outbound_allowed(
+            current,
+            caller="gateway.public_media:_fetch_into",
+            method=method,
+        )
+        _hop_started = time.perf_counter()
         addresses = _resolve_public(
             hostname,
             port,
@@ -564,6 +577,14 @@ def _fetch_into(
 
         try:
             status = int(response.status)
+            _outbound_guard.record(
+                method=method,
+                url=current,
+                caller="gateway.public_media:_fetch_into",
+                blocked=False,
+                status_code=status,
+                latency_ms=(time.perf_counter() - _hop_started) * 1000.0,
+            )
             if status in _REDIRECT_STATUSES:
                 if method != "GET":
                     raise PublicFetchSecurityError(

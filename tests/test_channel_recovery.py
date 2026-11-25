@@ -108,6 +108,109 @@ def test_weixin_channel_recovery_inspect_double_confirm_and_idempotent_close(
         assert retry.json() == {**first.json(), "applied": False}
 
 
+def test_weixin_stale_pending_inbound_close_is_scoped_and_idempotent(
+    monkeypatch, tmp_path
+) -> None:
+    bridge = importlib.import_module("scripts.run_weixin_ilink_bridge")
+    monkeypatch.setattr(bridge, "_OUTBOX_DB", tmp_path / "weixin_state.db")
+    monkeypatch.setattr(channel_recovery, "_weixin_bridge", lambda: bridge)
+    with bridge._outbox_connect() as conn:
+        for index in range(4):
+            conn.execute(
+                "INSERT INTO inbound_message(message_key,from_user_id,payload,"
+                "received_at,next_attempt_at,status,chat_seq) VALUES(?,?,?,?,?,'pending',?)",
+                (
+                    f"stale-pending-{index}",
+                    "wx-stale-principal",
+                    '{"text":"must be removed"}',
+                    1 + index,
+                    1 + index,
+                    index + 1,
+                ),
+            )
+        conn.execute(
+            "INSERT INTO inbound_message(message_key,from_user_id,payload,"
+            "received_at,next_attempt_at,status,chat_seq) "
+            "VALUES('other-pending','wx-other','{}',1,1,'pending',5)"
+        )
+
+    with TestClient(_app()) as client:
+        inspected = client.post(
+            "/admin/channel-recovery/weixin/inspect",
+            json={"target_kind": "pending-inbound", "target_key": "stale-pending-0"},
+        )
+        assert inspected.status_code == 200
+        snapshot = inspected.json()
+        assert snapshot["affected_counts"] == {
+            "inbound": 4,
+            "delivery": 0,
+            "video": 0,
+        }
+        assert "stale-pending-0" not in inspected.text
+        decision = {
+            "target_kind": "pending-inbound",
+            "target_key": "stale-pending-0",
+            "expected_before_digest": snapshot["expected_before_digest"],
+            "decision_id": snapshot["decision_id"],
+            "decided_at_ms": snapshot["decided_at_ms"],
+            "reason": "owner permanently closed stale pending messages without replay",
+            "user_confirmed": True,
+            "confirm_final": True,
+        }
+        first = client.post(
+            "/admin/channel-recovery/weixin/close-without-replay", json=decision
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["affected_counts"] == {
+            "inbound": 4,
+            "delivery": 0,
+            "video": 0,
+        }
+        assert first.json()["applied"] is True
+        retry = client.post(
+            "/admin/channel-recovery/weixin/close-without-replay", json=decision
+        )
+        assert retry.status_code == 200
+        assert retry.json() == {**first.json(), "applied": False}
+
+    with bridge._outbox_connect() as conn:
+        closed = conn.execute(
+            "SELECT status,payload,last_error,from_user_id FROM inbound_message "
+            "WHERE message_key LIKE 'stale-pending-%' ORDER BY message_key"
+        ).fetchall()
+        untouched = conn.execute(
+            "SELECT status,from_user_id FROM inbound_message "
+            "WHERE message_key='other-pending'"
+        ).fetchone()
+    assert len(closed) == 4
+    assert all(row[0] == "dead" for row in closed)
+    assert all(row[1] == bridge._RECOVERY_TOMBSTONE for row in closed)
+    assert all(row[2] == "closed_without_replay" for row in closed)
+    assert all(row[3] != "wx-stale-principal" for row in closed)
+    assert untouched == ("pending", "wx-other")
+
+
+def test_weixin_pending_inbound_close_rejects_recent_work(monkeypatch, tmp_path) -> None:
+    bridge = importlib.import_module("scripts.run_weixin_ilink_bridge")
+    monkeypatch.setattr(bridge, "_OUTBOX_DB", tmp_path / "weixin_state.db")
+    monkeypatch.setattr(channel_recovery, "_weixin_bridge", lambda: bridge)
+    with bridge._outbox_connect() as conn:
+        conn.execute(
+            "INSERT INTO inbound_message(message_key,from_user_id,payload,"
+            "received_at,next_attempt_at,status,chat_seq) "
+            "VALUES('recent-pending','wx-recent','{}',?,?, 'pending',1)",
+            (channel_recovery.time.time(), channel_recovery.time.time()),
+        )
+
+    with TestClient(_app()) as client:
+        response = client.post(
+            "/admin/channel-recovery/weixin/inspect",
+            json={"target_kind": "pending-inbound", "target_key": "recent-pending"},
+        )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "channel_recovery_conflict"
+
+
 def test_channel_recovery_rejects_duplicate_json_fields(monkeypatch) -> None:
     bridge = importlib.import_module("scripts.run_weixin_ilink_bridge")
     monkeypatch.setattr(channel_recovery, "_weixin_bridge", lambda: bridge)

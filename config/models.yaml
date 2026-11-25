@@ -8,6 +8,10 @@ providers:
     type: volcano
     base_url_env: VOLCANO_BASE_URL
     api_key_env: VOLCANO_API_KEY
+  agnes:
+    type: openai_compat
+    base_url: https://apihub.agnes-ai.com/v1
+    api_key_env: AGNES_API_KEY
   # ── Phase 2 占位（适配器实现后取消注释启用）──
   # codex:
   #   type: codex
@@ -35,6 +39,23 @@ models:
     upstream_model: minimax-m3        # 占位：以火山「模型广场」实际 ModelId 为准
     tier: cheap
     description: MiniMax-M3（编码与智能体顶尖，工具调用）
+
+  # ── Agnes AI（apihub.agnes-ai.com，openai 兼容）──
+  agnes-flash:
+    provider: agnes
+    upstream_model: agnes-3.0-flash
+    tier: cheap
+    description: Agnes 3.0 Flash（视觉+工具，桥接默认）
+  agnes-image:
+    provider: agnes
+    upstream_model: agnes-image-2.5-flash
+    tier: cheap
+    description: Agnes Image 2.5 Flash（生图）
+  agnes-video:
+    provider: agnes
+    upstream_model: agnes-video-2.5-flash
+    tier: cheap
+    description: Agnes Video 2.5 Flash（生视频）
 
   # ── Phase 2 占位 ──
   # codex:

@@ -1112,11 +1112,12 @@ class ProviderCallLedger:
     def _classify_database_objects(self, connection: sqlite3.Connection) -> str:
         """Map application identity plus exact sqlite_master state to a verdict."""
 
-        application_id = int(
-            connection.execute("PRAGMA application_id").fetchone()[0]
-        )
-        user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-        objects = {
+        from storage.unified_db import is_unified_db_path
+
+        unified = is_unified_db_path(self.path)
+        expected = _expected_schema_authority()
+        owned_tables = {tbl for _kind, _name, tbl in expected}
+        all_objects = {
             (str(row[0]), str(row[1]), str(row[2])): (
                 None if row[3] is None else str(row[3])
             )
@@ -1124,7 +1125,32 @@ class ProviderCallLedger:
                 "SELECT type, name, tbl_name, sql FROM sqlite_master"
             )
         }
-        expected = _expected_schema_authority()
+        if unified:
+            objects = {
+                identity: sql
+                for identity, sql in all_objects.items()
+                if identity[2] in owned_tables
+            }
+            if not objects or objects == expected:
+                return "accept"
+            if set(objects) < set(expected) and all(
+                sql == expected[identity] for identity, sql in objects.items()
+            ):
+                meta_identity = ("table", "provider_ledger_meta", "provider_ledger_meta")
+                migration_complete = meta_identity in objects and connection.execute(
+                    "SELECT value FROM provider_ledger_meta WHERE key = ?",
+                    ("error_message_fingerprint_v1",),
+                ).fetchone() == ("complete",)
+                if migration_complete:
+                    return "schema_drift"
+                return "accept"
+            return "schema_drift"
+
+        application_id = int(
+            connection.execute("PRAGMA application_id").fetchone()[0]
+        )
+        user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        objects = all_objects
         ledger_identities = {(kind, name) for kind, name, _tbl in expected}
         if not any(
             (kind, name) in ledger_identities for kind, name, _tbl in objects
@@ -2925,11 +2951,14 @@ def configured_provider_call_ledger() -> ProviderCallLedgerProtocol:
         raise ProviderCallLedgerUnavailable(
             "commercial budget required mode needs provider-call ledger required mode"
         )
-    path = str(
-        os.getenv("NACHUAN_PROVIDER_CALL_LEDGER_PATH")
-        or os.getenv("USAGE_DB_PATH")
-        or "./data/usage.db"
-    )
+    explicit_ledger_path = str(os.getenv("NACHUAN_PROVIDER_CALL_LEDGER_PATH") or "").strip()
+    if explicit_ledger_path:
+        path = explicit_ledger_path
+    else:
+        from storage.unified_db import resolve_db_path
+
+        usage_path = Path(str(os.getenv("USAGE_DB_PATH") or "./data/usage.db"))
+        path = str(resolve_db_path("provider-calls", data_dir=usage_path.parent))
     signature = (mode, path, commercial_mode)
     with _CONFIG_LOCK:
         if signature == _CONFIG_SIGNATURE and not bool(

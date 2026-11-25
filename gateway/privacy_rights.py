@@ -346,7 +346,10 @@ class PrivacyRightsLedger:
         max_requests: int = _MAX_REQUESTS,
         max_main_db_bytes: int = _DEFAULT_MAX_MAIN_DB_BYTES,
     ) -> None:
+        from storage.unified_db import is_unified_db_path
+
         self.path = Path(os.path.abspath(os.fspath(path)))
+        self._unified = is_unified_db_path(self.path)
         self.busy_timeout_ms = max(100, min(int(busy_timeout_ms), 30_000))
         self.max_receipts_per_step = max(
             2, min(int(max_receipts_per_step), _MAX_RECEIPTS_PER_STEP)
@@ -360,47 +363,51 @@ class PrivacyRightsLedger:
             self._assert_database_path()
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._assert_database_path()
-            # Classify through a genuinely read-only handle.  immutable=1 is
-            # safe only when no SQLite sidecar exists because it deliberately
-            # ignores committed WAL frames.  A complete WAL+SHM pair is read
-            # through mode=ro so rejecting a foreign logical schema never
-            # opens a writer that could checkpoint or delete its evidence.
-            (
-                preflight_kind,
-                preflight_identity,
-                preflight_family,
-            ) = self._stabilized_database_preflight()
-            if self._database_family_presence() != preflight_family:
+            preflight_kind: str | None = None
+            preflight_identity: os.stat_result | None = None
+            if not self._unified:
+                # Classify through a genuinely read-only handle.  immutable=1 is
+                # safe only when no SQLite sidecar exists because it deliberately
+                # ignores committed WAL frames.  A complete WAL+SHM pair is read
+                # through mode=ro so rejecting a foreign logical schema never
+                # opens a writer that could checkpoint or delete its evidence.
                 (
                     preflight_kind,
                     preflight_identity,
                     preflight_family,
                 ) = self._stabilized_database_preflight()
+                if self._database_family_presence() != preflight_family:
+                    (
+                        preflight_kind,
+                        preflight_identity,
+                        preflight_family,
+                    ) = self._stabilized_database_preflight()
             with self._connection(apply_storage_profile=False) as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 try:
                     database_kind = self._classify_database(connection)
-                    opened_identity = os.lstat(self.path)
-                    if preflight_identity is not None and not os.path.samestat(
-                        preflight_identity, opened_identity
-                    ):
-                        raise sqlite3.DatabaseError(
-                            "privacy rights database identity changed before locked open"
+                    if not self._unified:
+                        opened_identity = os.lstat(self.path)
+                        if preflight_identity is not None and not os.path.samestat(
+                            preflight_identity, opened_identity
+                        ):
+                            raise sqlite3.DatabaseError(
+                                "privacy rights database identity changed before locked open"
+                            )
+                        converged_by_peer = (
+                            preflight_kind in {"empty", "legacy_empty"}
+                            and database_kind == "established"
                         )
-                    converged_by_peer = (
-                        preflight_kind in {"empty", "legacy_empty"}
-                        and database_kind == "established"
-                    )
-                    if database_kind != preflight_kind and not converged_by_peer:
-                        raise sqlite3.DatabaseError(
-                            "privacy rights database changed during initialization"
-                        )
+                        if database_kind != preflight_kind and not converged_by_peer:
+                            raise sqlite3.DatabaseError(
+                                "privacy rights database changed during initialization"
+                            )
                     if database_kind == "empty":
                         connection.execute(_REQUESTS_DDL)
                         connection.execute(_STEPS_DDL)
                         connection.execute(_RECEIPTS_DDL)
                         self._validate_schema(connection)
-                    if database_kind in {"empty", "legacy_empty"}:
+                    if not self._unified and database_kind in {"empty", "legacy_empty"}:
                         connection.execute(f"PRAGMA application_id={_APPLICATION_ID}")
                         connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
                     connection.commit()
@@ -412,7 +419,11 @@ class PrivacyRightsLedger:
                 # the database.  A crash here leaves a valid NCPR/v1 database
                 # in its old mode; the next open safely retries this step.
                 self._ensure_wal_mode(connection)
-                self._apply_storage_profile(connection)
+                if not self._unified:
+                    self._apply_storage_profile(connection)
+                else:
+                    connection.execute("PRAGMA synchronous=FULL")
+                    connection.execute("PRAGMA foreign_keys=ON")
                 if self._classify_database(connection) != "established":
                     raise sqlite3.DatabaseError(
                         "privacy rights database authority changed during setup"
@@ -628,6 +639,31 @@ class PrivacyRightsLedger:
         )
 
     def _classify_database(self, connection: sqlite3.Connection) -> str:
+        raw_rows = connection.execute(
+            """
+            SELECT type, name, tbl_name, sql FROM sqlite_master
+            ORDER BY type, name
+            """
+        ).fetchall()
+        expected = _expected_schema_sql()
+        owned_tables = frozenset(_EXPECTED_COLUMNS.keys())
+        if self._unified:
+            objects = {
+                (str(row[0]), str(row[1])): (
+                    str(row[2]),
+                    _schema_entry_sql(row[3]),
+                )
+                for row in raw_rows
+                if str(row[2]) in owned_tables
+            }
+            if not objects:
+                return "empty"
+            if objects == expected:
+                self._validate_schema(connection)
+                return "established"
+            raise sqlite3.DatabaseError(
+                "unified privacy rights database subset schema is invalid"
+            )
         application_id = int(
             connection.execute("PRAGMA application_id").fetchone()[0]
         )
@@ -637,14 +673,8 @@ class PrivacyRightsLedger:
                 str(row[2]),
                 _schema_entry_sql(row[3]),
             )
-            for row in connection.execute(
-                """
-                SELECT type, name, tbl_name, sql FROM sqlite_master
-                ORDER BY type, name
-                """
-            ).fetchall()
+            for row in raw_rows
         }
-        expected = _expected_schema_sql()
         if application_id == 0 and user_version == 0:
             if not objects:
                 return "empty"
@@ -684,7 +714,11 @@ class PrivacyRightsLedger:
                         raise sqlite3.DatabaseError(
                             "privacy rights runtime authority changed"
                         )
-                    self._apply_storage_profile(connection)
+                    if not self._unified:
+                        self._apply_storage_profile(connection)
+                    else:
+                        connection.execute("PRAGMA synchronous=FULL")
+                        connection.execute("PRAGMA foreign_keys=ON")
                     yield connection
                     connection.commit()
                 except PrivacyRightsUnavailable:
@@ -713,17 +747,20 @@ class PrivacyRightsLedger:
         foreign = connection.execute("PRAGMA foreign_key_check").fetchall()
         if foreign:
             raise sqlite3.DatabaseError("privacy rights foreign-key check failed")
+        owned_tables = frozenset(_EXPECTED_COLUMNS.keys())
+        actual_rows = connection.execute(
+            """
+            SELECT type, name, tbl_name, sql FROM sqlite_master
+            ORDER BY type, name
+            """
+        ).fetchall()
         actual_schema = {
             (str(row[0]), str(row[1])): (
                 str(row[2]),
                 _schema_entry_sql(row[3]),
             )
-            for row in connection.execute(
-                """
-                SELECT type, name, tbl_name, sql FROM sqlite_master
-                ORDER BY type, name
-                """
-            ).fetchall()
+            for row in actual_rows
+            if not self._unified or str(row[2]) in owned_tables
         }
         if actual_schema != _expected_schema_sql():
             raise sqlite3.DatabaseError("unexpected privacy rights schema objects")

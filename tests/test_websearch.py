@@ -54,7 +54,7 @@ async def test_augment_on_inserts_system(monkeypatch):
 
     monkeypatch.setattr(websearch, "search", fake_search)
     req = ChatCompletionRequest(
-        model="local", messages=[ChatMessage(role="user", content="问题")], web_search=True
+        model="deepseek-chat", messages=[ChatMessage(role="user", content="问题")], web_search=True
     )
     n = await websearch.maybe_augment_request(req)
     assert n == 1
@@ -69,7 +69,7 @@ async def test_augment_on_no_results_no_change(monkeypatch):
 
     monkeypatch.setattr(websearch, "search", empty_search)
     req = ChatCompletionRequest(
-        model="local", messages=[ChatMessage(role="user", content="问题")], web_search=True
+        model="deepseek-chat", messages=[ChatMessage(role="user", content="问题")], web_search=True
     )
     n = await websearch.maybe_augment_request(req)
     assert n == 0 and len(req.messages) == 1  # 搜不到就不插，安全降级
@@ -137,7 +137,7 @@ async def test_web_evidence_prompt_injection_is_marked_untrusted(monkeypatch):
     monkeypatch.setattr(websearch, "search", fake_search)
     monkeypatch.setattr(websearch, "_enrich_with_pages", fake_enrich)
     req = ChatCompletionRequest(
-        model="local",
+        model="deepseek-chat",
         messages=[ChatMessage(role="user", content="查资料")],
         web_search=True,
     )
@@ -152,3 +152,33 @@ async def test_web_evidence_prompt_injection_is_marked_untrusted(monkeypatch):
     assert injected not in user
     assert "&lt;/untrusted_web_evidence&gt;" in user
     assert user.count("</untrusted_web_evidence>") == 1
+
+
+async def test_augment_blocked_for_local_models_and_incognito(monkeypatch):
+    called = {"n": 0}
+
+    async def boom_search(q, n=5, **kw):  # noqa: ANN001, ARG001
+        called["n"] += 1
+        return [{"title": "X", "url": "https://example.com", "snippet": "S"}]
+
+    monkeypatch.setattr(websearch, "search", boom_search)
+    for model_id in ("local", "ollama/qwen2.5", "llama3:8b", "llamacpp::gemma", "echo"):
+        req = ChatCompletionRequest(
+            model=model_id,
+            messages=[ChatMessage(role="user", content="查机密文档")],
+            web_search=True,
+        )
+        assert await websearch.maybe_augment_request(req) == 0
+        assert len(req.messages) == 1
+
+    for flag in ({"incognito": True}, {"privacy_mode": True}):
+        req = ChatCompletionRequest(
+            model="deepseek-chat",
+            messages=[ChatMessage(role="user", content="隐私问题")],
+            web_search=True,
+            **flag,
+        )
+        assert await websearch.maybe_augment_request(req) == 0
+        assert len(req.messages) == 1
+
+    assert called["n"] == 0

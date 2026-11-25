@@ -26,6 +26,13 @@ hiddenimports += [
     'cli.isolated_plugin_worker_entrypoint',
     'scripts.sqlite_backup',
     'scripts.run_weixin_ilink_bridge',
+    'scripts.run_feishu_bridge',
+    'gateway.installed_channel_supervisor_entrypoint',
+    'gateway.windows_nachuan_core_service_host',
+    'gateway.installed_channel_service_runtime',
+    'gateway.installed_channel_drain',
+    'gateway.installed_channel_child_drain_runtime',
+    'gateway.windows_installed_drain_pipe',
 ]
 # lean/full 商业候选当前均为 text-first：只收文字网关、渠道桥接与多模型协作的直接运行库。
 # 本地语音/LLMLingua 仍可从源码用显式 extra 评估，但在许可证和二进制闭包完成前不得冻结进发行引擎。

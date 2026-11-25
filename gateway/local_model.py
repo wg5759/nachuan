@@ -742,6 +742,13 @@ def _loopback_port_occupied() -> bool:
 
 def _models_endpoint_ready(expected_alias: str) -> bool:
     """Require this launch's nonce alias so an older loopback service cannot fake ready."""
+    from gateway.outbound_guard import check_outbound_allowed
+
+    check_outbound_allowed(
+        f"http://127.0.0.1:{LOCAL_PORT}/v1/models",
+        caller="gateway.local_model:_models_endpoint_ready",
+        method="GET",
+    )
     connection: Optional[HTTPConnection] = None
     try:
         connection = HTTPConnection("127.0.0.1", LOCAL_PORT, timeout=0.5)
@@ -905,30 +912,31 @@ def download_model(model_id: Optional[str] = None, dest_dir: Optional[str] = Non
             return None
         url = f"https://modelscope.cn/models/{e['repo']}/resolve/{revision}/{e['file']}"
         import httpx
+        from gateway.outbound_guard import OfflineModeBlockedError, create_sync_client
 
         max_bytes = (int(e.get("size_mb") or 0) + 128) * 1024 * 1024
         total = 0
-        with httpx.stream(
-            "GET",
-            url,
+        with create_sync_client(
+            caller="gateway.local_model:download_model",
             follow_redirects=True,
             timeout=httpx.Timeout(connect=20, read=120, write=20, pool=20),
-        ) as r:
-            r.raise_for_status()
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | int(getattr(os, "O_BINARY", 0))
-            flags |= int(getattr(os, "O_NOFOLLOW", 0))
-            fd = os.open(tmp, flags, 0o600)
-            with os.fdopen(fd, "wb") as fp:
-                for chunk in r.iter_bytes(1 << 20):
-                    total += len(chunk)
-                    if total > max_bytes:
-                        raise ValueError("model exceeds reviewed size bound")
-                    fp.write(chunk)
-                # close() flushes Python's buffer, but it does not make the
-                # completed download durable.  Publish only bytes that have
-                # reached the filesystem cache/device boundary.
-                fp.flush()
-                os.fsync(fp.fileno())
+        ) as client:
+            with client.stream("GET", url) as r:
+                r.raise_for_status()
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | int(getattr(os, "O_BINARY", 0))
+                flags |= int(getattr(os, "O_NOFOLLOW", 0))
+                fd = os.open(tmp, flags, 0o600)
+                with os.fdopen(fd, "wb") as fp:
+                    for chunk in r.iter_bytes(1 << 20):
+                        total += len(chunk)
+                        if total > max_bytes:
+                            raise ValueError("model exceeds reviewed size bound")
+                        fp.write(chunk)
+                    # close() flushes Python's buffer, but it does not make the
+                    # completed download durable.  Publish only bytes that have
+                    # reached the filesystem cache/device boundary.
+                    fp.flush()
+                    os.fsync(fp.fileno())
         if not _matches_digest(tmp, expected_sha256):
             raise ValueError("model SHA-256 mismatch")
         if _stable_prefix_read(
@@ -945,6 +953,12 @@ def download_model(model_id: Optional[str] = None, dest_dir: Optional[str] = Non
                 pass
             return None
         return dest
+    except OfflineModeBlockedError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
     except Exception:  # noqa: BLE001
         try:
             os.remove(tmp)

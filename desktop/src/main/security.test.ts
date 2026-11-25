@@ -3,11 +3,14 @@ import { describe, expect, it } from 'vitest'
 import {
   automaticUpdatePolicy,
   debugPolicy,
+  isAllowedPreviewWebviewUrl,
   isHttpUrl,
   ipcSenderAllowed,
   isLoopbackRendererUrl,
   isTrustedRendererNavigation,
   permissionAllowed,
+  PREVIEW_WEBVIEW_PARTITION,
+  sanitizePreviewWebviewAttachment,
   windowSecurityPreferences
 } from './security'
 
@@ -113,6 +116,56 @@ describe('Electron production security policy', () => {
     ).toBe(true)
     expect(
       isTrustedRendererNavigation('http://127.0.0.1:5173.evil.test/', 'http://127.0.0.1:5173/')
+    ).toBe(false)
+  })
+
+  it('isolates the right-pane preview webview to an ephemeral non-persistent partition and allows about:blank', () => {
+    expect(PREVIEW_WEBVIEW_PARTITION).toBe('nachuan-preview-ephemeral')
+    expect(PREVIEW_WEBVIEW_PARTITION.startsWith('persist:')).toBe(false)
+
+    expect(isAllowedPreviewWebviewUrl('about:blank')).toBe(true)
+    expect(isAllowedPreviewWebviewUrl('https://example.com')).toBe(true)
+    expect(isAllowedPreviewWebviewUrl('http://example.com')).toBe(true)
+    expect(isAllowedPreviewWebviewUrl('javascript:alert(1)')).toBe(false)
+    expect(isAllowedPreviewWebviewUrl('file:///C:/Windows/win.ini')).toBe(false)
+    expect(isAllowedPreviewWebviewUrl('data:text/html,hi')).toBe(false)
+
+    const webPreferences: {
+      preload?: string
+      partition?: string
+      contextIsolation?: boolean
+      nodeIntegration?: boolean
+      sandbox?: boolean
+      webSecurity?: boolean
+      devTools?: boolean
+    } = {
+      preload: 'C:\\evil\\preload.js',
+      partition: 'persist:stolen',
+      contextIsolation: false,
+      nodeIntegration: true,
+      sandbox: false,
+      webSecurity: false
+    }
+    const params: { src?: string; partition?: string } = {
+      src: 'about:blank',
+      partition: 'persist:stolen'
+    }
+    expect(sanitizePreviewWebviewAttachment(webPreferences, params, { devTools: false })).toBe(true)
+    expect(webPreferences.preload).toBeUndefined()
+    expect(webPreferences.partition).toBe('nachuan-preview-ephemeral')
+    expect(params.partition).toBe('nachuan-preview-ephemeral')
+    expect(webPreferences.contextIsolation).toBe(true)
+    expect(webPreferences.nodeIntegration).toBe(false)
+    expect(webPreferences.sandbox).toBe(true)
+    expect(webPreferences.webSecurity).toBe(true)
+    expect(webPreferences.devTools).toBe(false)
+
+    expect(
+      sanitizePreviewWebviewAttachment(
+        {},
+        { src: 'javascript:alert(1)' },
+        { devTools: false }
+      )
     ).toBe(false)
   })
 })

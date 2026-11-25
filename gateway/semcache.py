@@ -119,7 +119,10 @@ def _init() -> Any:
             _state["dim"] = dim
 
             os.makedirs(DB_DIR, exist_ok=True)
-            sql_url = "sqlite:///" + os.path.join(DB_DIR, "cache.db").replace("\\", "/")
+            from storage.unified_db import resolve_db_path
+
+            cache_db = resolve_db_path("cache", data_dir=DB_DIR)
+            sql_url = "sqlite:///" + str(cache_db).replace("\\", "/")
             faiss_path = os.path.join(DB_DIR, "faiss.index")
             data_manager = get_data_manager(
                 CacheBase("sqlite", sql_url=sql_url),

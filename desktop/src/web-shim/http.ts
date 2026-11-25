@@ -13,8 +13,10 @@
 
 import type { CredentialStore } from './credentials'
 
+export type WebHttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
+
 export interface WebHttpRequest {
-  readonly method: 'GET' | 'POST' | 'DELETE'
+  readonly method: WebHttpMethod
   readonly target: string
   readonly body?: string | ArrayBuffer
   readonly contentType?: string
@@ -24,7 +26,7 @@ export interface WebHttpRequest {
 }
 
 export interface WebHttpJsonRequest {
-  readonly method: 'GET' | 'POST' | 'DELETE'
+  readonly method: WebHttpMethod
   readonly target: string
   readonly json?: unknown
   readonly includeApprovalKey?: boolean

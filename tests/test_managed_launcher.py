@@ -246,6 +246,21 @@ def test_managed_bridge_environment_forces_production_loopback_and_private_state
     assert not {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"} & set(child)
 
 
+def test_managed_engine_preserves_only_the_explicit_connection_vault() -> None:
+    vault = str((SCRIPT.parents[1] / "test-vault" / "connections.json").resolve())
+    child = build_child_environment(
+        "engine",
+        {
+            "NACHUAN_CONNECTIONS_PATH": vault,
+            "NACHUAN_CONNECTIONS_PATH_ATTACKER": r"C:\Public\connections.json",
+        },
+        engine_port=49152,
+    )
+
+    assert child["NACHUAN_CONNECTIONS_PATH"] == vault
+    assert "NACHUAN_CONNECTIONS_PATH_ATTACKER" not in child
+
+
 def test_isolated_bridge_settings_never_load_project_dotenv(monkeypatch, tmp_path: Path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("VOLCANO_API_KEY", raising=False)

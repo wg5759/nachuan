@@ -255,6 +255,35 @@ def _verify_frozen_store_profile_binding() -> None:
         ) from None
 
 
+def bind_frozen_store_profile_from_installed_layout() -> RuntimeProfile:
+    """Self-bind an independently launched frozen role to installed policy."""
+
+    if not bool(getattr(sys, "frozen", False)) or os.name != "nt":
+        raise RuntimeError("installed store runtime profile binding is unavailable")
+    try:
+        packaged_path = _expected_packaged_profile_path().resolve(strict=True)
+        info = packaged_path.stat()
+        if (
+            not packaged_path.is_file()
+            or packaged_path.is_symlink()
+            or int(getattr(info, "st_file_attributes", 0)) & 0x400
+            or not 1 <= info.st_size <= 64 * 1024
+        ):
+            raise OSError("installed store profile is invalid")
+        packaged_bytes = packaged_path.read_bytes()
+        internal_bytes = STORE_RUNTIME_PROFILE_MANIFEST_PATH.read_bytes()
+        if not hmac.compare_digest(packaged_bytes, internal_bytes):
+            raise ValueError("installed store profile differs from embedded policy")
+        digest = hashlib.sha256(packaged_bytes).hexdigest()
+    except (OSError, RuntimeError, ValueError):
+        raise RuntimeError(
+            "installed store runtime profile binding is missing or invalid"
+        ) from None
+    os.environ[_STORE_PROFILE_MANIFEST_ENV] = str(packaged_path)
+    os.environ[_STORE_PROFILE_SHA256_ENV] = digest
+    return enforce_frozen_store_profile()
+
+
 def enforce_frozen_store_profile() -> RuntimeProfile:
     """Pin the inherited environment for child modules and future subprocesses."""
 
@@ -276,6 +305,7 @@ __all__ = [
     "STORE_RUNTIME_PROFILE",
     "STORE_RUNTIME_PROFILE_MANIFEST_NAME",
     "STORE_RUNTIME_PROFILE_MANIFEST_PATH",
+    "bind_frozen_store_profile_from_installed_layout",
     "current_runtime_profile",
     "enforce_frozen_store_profile",
     "resolve_runtime_profile",

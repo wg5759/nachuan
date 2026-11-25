@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '../i18n'
 import {
   type Approval,
   addMcp,
@@ -23,6 +23,7 @@ import { useAppStore } from '../store'
 import { canUseEngineRuntime } from '../engine-status'
 import { approvalExecutionTask, routeApprovalExecutionResult } from '../approval-result-routing'
 import { publishKnowledgeDocumentsChanged } from '../knowledge-refresh'
+import { APPROVAL_CENTER_REFRESH_EVENT } from './CodingControlPane'
 
 // P5/P6 审核分级：
 //   · 重大动作(action) → 全屏阻断弹窗，必须当场「同意/换方案/取消」（真·重大事项才拦）。
@@ -57,10 +58,16 @@ export default function ApprovalCenter(): JSX.Element | null {
       }
       if (!stop) timer = window.setTimeout(poll, 6000)
     }
+    const onRefreshRequested = (): void => {
+      window.clearTimeout(timer)
+      void poll()
+    }
+    window.addEventListener(APPROVAL_CENTER_REFRESH_EVENT, onRefreshRequested)
     void poll()
     return () => {
       stop = true
       window.clearTimeout(timer)
+      window.removeEventListener(APPROVAL_CENTER_REFRESH_EVENT, onRefreshRequested)
     }
   }, [status])
 

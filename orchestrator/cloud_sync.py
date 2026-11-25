@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit, urlunsplit
 
+from gateway.outbound_guard import OfflineModeBlockedError, create_sync_client
 from gateway.secure_store import read_protected_json, write_protected_json
 from gateway.url_safety import is_public_http_url
 
@@ -399,9 +400,7 @@ def set_enabled(on: bool) -> None:
 # ── Supabase HTTP（auth + PostgREST）─────────────────────────────────────────
 
 def _client():  # -> httpx.Client
-    import httpx
-
-    return httpx.Client(timeout=30.0)
+    return create_sync_client(caller="orchestrator.cloud_sync", timeout=30.0)
 
 
 def _cfg_fingerprint(cfg: dict[str, Any]) -> str:
@@ -475,6 +474,8 @@ def login(email: str, password: str) -> dict[str, Any]:
         if committed is None:
             return {"ok": False, "error": "Supabase 目标已变更，本次登录结果已丢弃"}
         return {"ok": True, "user_id": user_id, "email": email}
+    except OfflineModeBlockedError:
+        raise
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
@@ -512,6 +513,8 @@ def signup(email: str, password: str) -> dict[str, Any]:
                 return {"ok": False, "error": "Supabase 目标已变更，本次注册会话已丢弃"}
             return {"ok": True, "logged_in": True, "email": email}
         return {"ok": True, "logged_in": False, "need_confirm": True, "email": email}
+    except OfflineModeBlockedError:
+        raise
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
@@ -567,8 +570,21 @@ def _rest(cfg: dict[str, Any], method: str, path: str, **kw) -> Any:
 
 # ── 表配置：本地直连 SQLite，内容指纹去重 ────────────────────────────────────
 
+def _resolve_sync_db_path(db: str) -> Path:
+    from storage.unified_db import resolve_db_path
+
+    legacy_candidate = _DATA / db
+    resolved = resolve_db_path(db, data_dir=_DATA)
+    if resolved != legacy_candidate and not resolved.exists() and legacy_candidate.is_file():
+        return legacy_candidate
+    return resolved
+
+
 def _conn(db: str) -> sqlite3.Connection:
-    return sqlite3.connect(str(_DATA / db), check_same_thread=False)
+    target = _resolve_sync_db_path(db)
+    con = sqlite3.connect(str(target), check_same_thread=False, timeout=5.0)
+    con.execute("PRAGMA busy_timeout=5000")
+    return con
 
 
 def _now() -> float:
@@ -818,7 +834,7 @@ def _rebuild_kb_fts() -> None:
     try:
         from orchestrator.knowledge import KnowledgeBase  # 延迟导入，避免模块级重依赖
 
-        kb = KnowledgeBase(str(_DATA / "knowledge.db"))
+        kb = KnowledgeBase(str(_resolve_sync_db_path("knowledge.db")))
         try:
             kb.rebuild_fts()
         finally:

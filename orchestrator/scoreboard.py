@@ -28,7 +28,9 @@ _DATA = Path(os.getenv("DATA_DIR") or (_REPO / "data"))
 
 def _db_path() -> str:
     """记分牌库路径（可被测试 monkeypatch 指到 tmp_path，避免污染真实 data/）。"""
-    return str(_DATA / "scoreboard.db")
+    from storage.unified_db import resolve_db_path
+
+    return str(resolve_db_path("scoreboard", data_dir=_DATA))
 
 
 class Scoreboard:
@@ -37,7 +39,12 @@ class Scoreboard:
     def __init__(self, db_path: str):
         p = Path(db_path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(p), check_same_thread=False)
+        self._conn = sqlite3.connect(str(p), check_same_thread=False, timeout=5.0)
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        from storage.unified_db import ensure_unified_wal, is_unified_db_path
+
+        if is_unified_db_path(p):
+            ensure_unified_wal(self._conn, busy_timeout_ms=5000)
         self._lock = threading.Lock()
         self._init()
 

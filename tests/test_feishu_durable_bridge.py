@@ -65,6 +65,253 @@ def _load_state_runner_without_sdk(monkeypatch):
     return _load_runner()
 
 
+
+
+@pytest.mark.parametrize("stop_during_claim", [False, True, "malformed"])
+def test_installed_drain_keeps_claimed_inbound_counted_until_durable_finish(
+    monkeypatch, tmp_path: Path, stop_during_claim
+) -> None:
+    from gateway.installed_channel_drain import (
+        InstalledChildDrainFence, InstalledDrainBinding,
+        InstalledDrainCommand, InstalledDrainOperation,
+    )
+    from gateway.installed_channel_supervisor_status import InstalledChannelProcessReceipt
+
+    runner = _load_state_runner_without_sdk(monkeypatch)
+    monkeypatch.setattr(runner, "_STATE_DB", tmp_path / "feishu_bridge.db")
+    binding = InstalledDrainBinding("a" * 64, 7, 11, "b" * 64)
+    fence = InstalledChildDrainFence(
+        binding=binding, role="feishu",
+        process=InstalledChannelProcessReceipt(4103, 133_000_000_000_000_003, "3" * 64),
+    )
+    runner._INSTALLED_CLAIMS.bind(fence)
+    now = 1_700_000_000.0
+    for index in (1, 2):
+        assert runner._store_inbound({
+            "message_id": f"drain-{index}", "chat_id": f"chat-{index}",
+            "message_type": "text", "content": '{"text":"hello"}', "open_id": "test-user",
+        }, now=now)
+    operation = InstalledDrainOperation(binding, "c" * 64, 3, 1_900_000_000_000_000_000)
+    if stop_during_claim == "malformed":
+        with sqlite3.connect(tmp_path / "feishu_bridge.db") as conn:
+            conn.execute("UPDATE feishu_inbox SET payload='invalid' WHERE id=1")
+        with pytest.raises(json.JSONDecodeError):
+            runner._claim_inbound(now=now)
+        receipt = fence.apply_command(InstalledDrainCommand(operation, "close_claims"))
+        assert receipt.active_claims == 0
+        with sqlite3.connect(tmp_path / "feishu_bridge.db") as conn:
+            assert conn.execute("SELECT status FROM feishu_inbox WHERE id=1").fetchone()[0] == "pending"
+        return
+    if stop_during_claim:
+        def closing_clock():
+            fence.apply_command(InstalledDrainCommand(operation, "close_claims"))
+            return now
+        assert runner._claim_inbound(now=closing_clock) is None
+        assert fence.snapshot(operation=operation).phase == "drained"
+        restarted = _load_state_runner_without_sdk(monkeypatch)
+        monkeypatch.setattr(restarted, "_STATE_DB", tmp_path / "feishu_bridge.db")
+        assert restarted._claim_inbound(now=now) is not None
+        return
+    claimed = runner._claim_inbound(now=now)
+    assert claimed is not None
+    receipt = fence.apply_command(InstalledDrainCommand(operation, "close_claims"))
+    assert receipt.active_claims == 1
+    assert receipt.phase == "claims_closed"
+    assert runner._claim_inbound(now=now) is None
+    assert runner._finish_inbound(claimed, ok=True, now=now) is True
+    assert fence.snapshot(operation=operation).phase == "drained"
+
+
+
+
+
+@pytest.mark.parametrize("finish_kind", ["done", "retry", "recovery_required", "response_lost", "close_before_commit"])
+def test_installed_drain_outbox_keeps_claim_until_durable_outcome(
+    monkeypatch, tmp_path: Path, finish_kind
+):
+    from gateway.installed_channel_drain import (
+        InstalledChildDrainFence, InstalledDrainBinding,
+        InstalledDrainCommand, InstalledDrainOperation,
+    )
+    from gateway.installed_channel_supervisor_status import InstalledChannelProcessReceipt
+
+    runner = _load_state_runner_without_sdk(monkeypatch)
+    monkeypatch.setattr(runner, "_STATE_DB", tmp_path / "feishu_bridge.db")
+    binding = InstalledDrainBinding("a" * 64, 7, 11, "b" * 64)
+    fence = InstalledChildDrainFence(
+        binding=binding, role="feishu",
+        process=InstalledChannelProcessReceipt(4103, 133_000_000_000_000_003, "3" * 64),
+    )
+    runner._INSTALLED_CLAIMS.bind(fence)
+    for index in (1, 2):
+        runner._enqueue_outbox(
+            f"drain-chat-{index}", "text", '{"text":"test"}',
+            delivery_key=f"drain-outbox-{index}",
+        )
+    now = time.time()
+    operation = InstalledDrainOperation(binding, "c" * 64, 3, 1_900_000_000_000_000_000)
+    if finish_kind == "close_before_commit":
+        original_connect = runner._state_connect
+        closed = []
+        def traced_connect(**kwargs):
+            conn = original_connect(**kwargs)
+            def before_claim_update(statement):
+                sql = " ".join(statement.upper().split())
+                if sql.startswith("UPDATE FEISHU_OUTBOX SET STATUS='PROCESSING'") and not closed:
+                    closed.append(True)
+                    fence.apply_command(InstalledDrainCommand(operation, "close_claims"))
+            conn.set_trace_callback(before_claim_update)
+            return conn
+        with monkeypatch.context() as fault:
+            fault.setattr(runner, "_state_connect", traced_connect)
+            assert runner._claim_outbox(now=now) is None
+        assert closed and fence.snapshot(operation=operation).phase == "drained"
+        restarted = _load_state_runner_without_sdk(monkeypatch)
+        monkeypatch.setattr(restarted, "_STATE_DB", tmp_path / "feishu_bridge.db")
+        assert restarted._claim_outbox(now=now) is not None
+        return
+    claim = runner._claim_outbox(now=now)
+    assert claim is not None
+    operation = InstalledDrainOperation(binding, "c" * 64, 3, 1_900_000_000_000_000_000)
+    receipt = fence.apply_command(InstalledDrainCommand(operation, "close_claims"))
+    assert receipt.active_claims == 1
+    assert runner._claim_outbox(now=now) is None
+    if finish_kind == "response_lost":
+        original_transaction = runner._state_write_transaction
+        @contextmanager
+        def lose_commit_response(**kwargs):
+            with original_transaction(**kwargs) as conn:
+                yield conn
+            raise sqlite3.OperationalError("fixture post-commit response loss")
+        with monkeypatch.context() as fault:
+            fault.setattr(runner, "_state_write_transaction", lose_commit_response)
+            with pytest.raises(sqlite3.OperationalError, match="post-commit"):
+                runner._finish_outbox(claim, ok=True, now=now)
+        assert fence.snapshot(operation=operation).active_claims == 1
+        wrong = {**claim, "claim_token": "wrong-token"}
+        assert runner._finish_was_committed("outbox", wrong, ok=True) is False
+        assert fence.snapshot(operation=operation).active_claims == 1
+        assert runner._finish_was_committed("outbox", claim, ok=True) is True
+    else:
+        assert runner._finish_outbox(
+            claim, ok=finish_kind == "done", recovery_required=finish_kind == "recovery_required",
+            error_code="fixture", now=now,
+        ) is True
+    assert fence.snapshot(operation=operation).phase == "drained"
+    assert runner._claim_outbox(now=now + 60) is None
+
+
+
+
+
+@pytest.mark.parametrize("close_before_admit", [False, True])
+def test_installed_video_dispatch_is_counted_and_stop_preserves_pending(
+    monkeypatch, tmp_path, close_before_admit
+):
+    from gateway.installed_channel_drain import (
+        InstalledChildDrainFence, InstalledDrainBinding,
+        InstalledDrainCommand, InstalledDrainOperation,
+    )
+    from gateway.installed_channel_supervisor_status import InstalledChannelProcessReceipt
+
+    runner = _load_state_runner_without_sdk(monkeypatch)
+    monkeypatch.setattr(runner, "_PENDING", tmp_path / "pending.json")
+    binding = InstalledDrainBinding("a" * 64, 7, 11, "b" * 64)
+    fence = InstalledChildDrainFence(
+        binding=binding, role="feishu",
+        process=InstalledChannelProcessReceipt(4103, 133_000_000_000_000_003, "3" * 64),
+    )
+    runner._INSTALLED_CLAIMS.bind(fence)
+    runner._pending_add("video-a", "chat-a")
+    runner._pending_add("video-b", "chat-b")
+    assert runner._feed_pending_videos() == 2
+    observed = []
+    operation = InstalledDrainOperation(binding, "c" * 64, 3, 1_900_000_000_000_000_000)
+    def complete_one(task, _chat):
+        operation = InstalledDrainOperation(binding, "c" * 64, 3, 1_900_000_000_000_000_000)
+        observed.append(fence.apply_command(InstalledDrainCommand(operation, "close_claims")))
+        runner._pending_remove(task)
+    monkeypatch.setattr(runner, "_video_worker", complete_one)
+    if close_before_admit:
+        real_get = runner._VIDEO_QUEUE.get
+        def close_after_dequeue(*args, **kwargs):
+            item = real_get(*args, **kwargs)
+            fence.apply_command(InstalledDrainCommand(operation, "close_claims"))
+            return item
+        monkeypatch.setattr(runner._VIDEO_QUEUE, "get", close_after_dequeue)
+        assert runner._run_one_video_queue_item(timeout=0) is False
+        assert observed == []
+    else:
+        assert runner._run_one_video_queue_item(timeout=0) is True
+        assert len(observed) == 1 and observed[0].active_claims == 1
+    assert fence.snapshot(operation=operation).phase == "drained"
+    assert runner._run_one_video_queue_item(timeout=0) is False
+    assert runner._feed_pending_videos() == 0
+    assert set(runner._pending_load()) == ({"video-a", "video-b"} if close_before_admit else {"video-b"})
+
+
+
+
+
+@pytest.mark.parametrize("stop_kind", ["installed", "source", "after_read", "after_upload"])
+def test_video_poll_stop_keeps_durable_task_without_new_side_effects(
+    monkeypatch, tmp_path, stop_kind
+):
+    from gateway.installed_channel_drain import (
+        InstalledChildDrainFence, InstalledDrainBinding,
+        InstalledDrainCommand, InstalledDrainOperation,
+    )
+    from gateway.installed_channel_supervisor_status import InstalledChannelProcessReceipt
+
+    runner = _load_state_runner_without_sdk(monkeypatch)
+    monkeypatch.setattr(runner, "_PENDING", tmp_path / "pending.json")
+    runner._pending_add("video-stop", "chat-stop")
+    stop = threading.Event()
+    if stop_kind == "installed":
+        binding = InstalledDrainBinding("a" * 64, 7, 11, "b" * 64)
+        fence = InstalledChildDrainFence(
+            binding=binding, role="feishu",
+            process=InstalledChannelProcessReceipt(4103, 133_000_000_000_000_003, "3" * 64),
+        )
+        runner._INSTALLED_CLAIMS.bind(fence)
+        operation = InstalledDrainOperation(binding, "c" * 64, 3, 1_900_000_000_000_000_000)
+        fence.apply_command(InstalledDrainCommand(operation, "close_claims"))
+    elif stop_kind == "source":
+        stop.set()
+    reads = []
+    forbidden_calls = []
+    uploads = []
+    def read_once(_path):
+        reads.append(_path)
+        if stop_kind == "after_read":
+            stop.set()
+        return {"status": "succeeded", "url": "https://example.invalid/video.mp4"}
+    def forbidden(*_args, **_kwargs):
+        forbidden_calls.append(True)
+        raise AssertionError("stopping a video must not download, upload, send or remove it")
+    monkeypatch.setattr(runner, "_get", read_once)
+    monkeypatch.setattr(runner, "_download_url", forbidden)
+    monkeypatch.setattr(runner, "_upload_file", forbidden)
+    monkeypatch.setattr(runner, "_reply", forbidden)
+    monkeypatch.setattr(runner, "_send_video", forbidden)
+    if stop_kind == "after_upload":
+        monkeypatch.setattr(runner, "_download_url", lambda *_args: b"fixture-video")
+        def finish_upload(*_args):
+            uploads.append(True)
+            stop.set()
+            return "fixture-file-key"
+        monkeypatch.setattr(runner, "_upload_file", finish_upload)
+    monkeypatch.setattr(runner, "_VIDEO_POLL_SECONDS", 0.0, raising=False)
+    runner._video_worker("video-stop", "chat-stop", stop_event=stop)
+    assert len(reads) == (1 if stop_kind in {"after_read", "after_upload"} else 0)
+    assert forbidden_calls == []
+    pending = runner._pending_load()["video-stop"]
+    assert pending["state"] == ("upload_confirmed" if stop_kind == "after_upload" else "polling")
+    if stop_kind == "after_upload":
+        assert uploads == [True] and pending["file_key"] == "fixture-file-key"
+
+
+
 def _create_canonical_feishu_v2_database(
     path: Path,
     *,
@@ -3000,7 +3247,7 @@ def test_feishu_maintenance_refreshes_access_and_authenticated_engine_probe(
 def test_feishu_video_pending_over_capacity_uses_fixed_workers_and_refills(
     monkeypatch, tmp_path: Path
 ) -> None:
-    runner = _load_runner()
+    runner = _load_state_runner_without_sdk(monkeypatch)
     monkeypatch.setattr(runner, "_PENDING", tmp_path / "feishu_pending_videos.json")
     monkeypatch.setattr(runner, "_VIDEO_QUEUE", queue.Queue(maxsize=64), raising=False)
     monkeypatch.setattr(runner, "_VIDEO_QUEUED", set(), raising=False)
@@ -3054,7 +3301,7 @@ def test_feishu_pending_video_upload_unknown_is_durable_and_never_replayed(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    runner = _load_runner()
+    runner = _load_state_runner_without_sdk(monkeypatch)
     monkeypatch.setattr(runner, "_PENDING", tmp_path / "feishu_pending_videos.json")
     runner._pending_add("task-upload-unknown", "chat-upload-unknown")
     monkeypatch.setattr(runner.time, "sleep", lambda _seconds: None)
@@ -3063,11 +3310,6 @@ def test_feishu_pending_video_upload_unknown_is_durable_and_never_replayed(
         runner,
         "_get",
         lambda _path: {"status": "succeeded", "url": "https://media.example/video.mp4"},
-    )
-    monkeypatch.setattr(
-        sys.modules["orchestrator.media"],
-        "_find_media_url",
-        lambda _value: "https://media.example/video.mp4",
     )
     downloads: list[str] = []
     uploads: list[bytes] = []
@@ -3116,7 +3358,7 @@ def test_feishu_pending_video_reuses_confirmed_upload_after_restart(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    runner = _load_runner()
+    runner = _load_state_runner_without_sdk(monkeypatch)
     monkeypatch.setattr(runner, "_PENDING", tmp_path / "feishu_pending_videos.json")
     clock = [0.0]
     monkeypatch.setattr(runner.time, "time", lambda: clock[0])

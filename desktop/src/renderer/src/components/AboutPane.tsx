@@ -1,5 +1,5 @@
 import React from 'react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '../i18n'
 
 // 关于页：产品/公司/版权 + 中国商用合规展示（ICP 备案号 / 公安联网备案号）。
 // 备案号必须在 app 内可见可查；这里集中展示，号可被选中复制。

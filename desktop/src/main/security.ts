@@ -53,6 +53,8 @@ export function ipcSenderAllowed(senderId: number, expectedSenderId: number | nu
   return Number.isInteger(senderId) && senderId > 0 && senderId === expectedSenderId
 }
 
+export const PREVIEW_WEBVIEW_PARTITION = 'nachuan-preview-ephemeral'
+
 export function isHttpUrl(raw: string): boolean {
   try {
     const url = new URL(raw)
@@ -60,6 +62,40 @@ export function isHttpUrl(raw: string): boolean {
   } catch {
     return false
   }
+}
+
+export function isAllowedPreviewWebviewUrl(raw: string): boolean {
+  const candidate = String(raw ?? '').trim()
+  if (candidate === 'about:blank') return true
+  return isHttpUrl(candidate)
+}
+
+export function sanitizePreviewWebviewAttachment(
+  webPreferences: {
+    preload?: string
+    partition?: string
+    contextIsolation?: boolean
+    nodeIntegration?: boolean
+    sandbox?: boolean
+    webSecurity?: boolean
+    devTools?: boolean
+  },
+  params: { src?: string; partition?: string },
+  options: { devTools?: boolean } = {}
+): boolean {
+  if (!isAllowedPreviewWebviewUrl(params.src ?? '')) {
+    return false
+  }
+  delete webPreferences.preload
+  // 强制把右栏 <webview> 锁在独立非持久化分区，禁止共用主渲染进程 defaultSession 或 persist: 分区。
+  webPreferences.partition = PREVIEW_WEBVIEW_PARTITION
+  params.partition = PREVIEW_WEBVIEW_PARTITION
+  webPreferences.contextIsolation = true
+  webPreferences.nodeIntegration = false
+  webPreferences.sandbox = true
+  webPreferences.webSecurity = true
+  webPreferences.devTools = options.devTools === true
+  return true
 }
 
 export function isLoopbackRendererUrl(raw: string): boolean {

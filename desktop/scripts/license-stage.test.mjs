@@ -23,7 +23,7 @@ afterEach(() => {
 })
 
 describe('two-stage packaged license evidence', () => {
-  it('accepts the two exact npm MIT notice reconstructions only after version-pinned engineering review', () => {
+  it('accepts the exact reviewed npm MIT notice reconstruction only after version-pinned engineering review', () => {
     const inventory = buildNpmPayloadLicenseInventory({ projectRoot })
     const blockers = inventory.components
       .filter(({ manualLegalReviewRequired }) => manualLegalReviewRequired)
@@ -32,8 +32,8 @@ describe('two-stage packaged license evidence', () => {
       .filter(({ licenseSource }) => licenseSource === 'metadata-reconstructed-reviewed')
       .map(({ name, version }) => `${name}@${version}`)
 
-    expect(inventory.components).toHaveLength(28)
-    expect(reviewed).toEqual(['html-parse-stringify@3.0.1', 'lazy-val@1.0.5'])
+    expect(inventory.components).toHaveLength(25)
+    expect(reviewed).toEqual(['lazy-val@1.0.5'])
     expect(blockers).toEqual([])
     expect(() => assertNoManualLegalReviewBlockers(inventory)).not.toThrow()
     expect(() =>

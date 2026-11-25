@@ -76,6 +76,42 @@ def test_relative_runtime_database_is_anchored_to_the_project_root() -> None:
     assert Path(settings.usage_db_path) == (PROJECT_ROOT / "data" / "usage.db").resolve()
 
 
+def test_connection_vault_override_requires_an_absolute_connections_file(
+    tmp_path: Path,
+) -> None:
+    vault = (tmp_path / "vault" / "connections.json").resolve()
+    settings = Settings(
+        usage_db_path=str(tmp_path / "runtime" / "usage.db"),
+        connections_path=str(vault),
+        _env_file=None,
+    )
+
+    assert settings.connection_store_path == vault
+    with pytest.raises(ValueError):
+        Settings(connections_path="relative/connections.json", _env_file=None)
+    with pytest.raises(ValueError):
+        Settings(connections_path=str(tmp_path / "vault" / "other.json"), _env_file=None)
+
+
+def test_default_connection_vault_stays_with_the_runtime_database(tmp_path: Path) -> None:
+    settings = Settings(
+        usage_db_path=str(tmp_path / "runtime" / "usage.db"), _env_file=None
+    )
+
+    assert settings.connection_store_path == (tmp_path / "runtime" / "connections.json")
+
+
+def test_supervisor_connection_vault_environment_selects_the_store(
+    monkeypatch, tmp_path: Path
+) -> None:
+    vault = (tmp_path / "vault" / "connections.json").resolve()
+    monkeypatch.setenv("NACHUAN_CONNECTIONS_PATH", str(vault))
+
+    settings = Settings(_env_file=None)
+
+    assert settings.connection_store_path == vault
+
+
 def test_gateway_does_not_trust_ambient_roaming_config_files() -> None:
     desktop_engine_keys.cache_clear()
     assert desktop_engine_keys() == frozenset()

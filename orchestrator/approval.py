@@ -152,8 +152,12 @@ def is_protected_path(path: str) -> str:
     low = rp.replace("\\", "/").lower()
     base = low.rsplit("/", 1)[-1]
     try:
+        norm_rp = os.path.normcase(rp)
         runtime_data = os.path.normcase(_RUNTIME_DATA_DIR)
-        if os.path.commonpath([os.path.normcase(rp), runtime_data]) == runtime_data:
+        if (
+            os.path.splitdrive(norm_rp)[0] == os.path.splitdrive(runtime_data)[0]
+            and os.path.commonpath([norm_rp, runtime_data]) == runtime_data
+        ):
             return "纳川运行态数据/凭据文件"
     except (OSError, ValueError):
         return "路径无法安全归类(保守拦截)"
@@ -228,7 +232,12 @@ class ApprovalStore:
         self._action_ttl_sec = action_ttl_sec
         p = Path(db_path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(p), check_same_thread=False)
+        self._conn = sqlite3.connect(str(p), check_same_thread=False, timeout=5.0)
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        from storage.unified_db import ensure_unified_wal, is_unified_db_path
+
+        if is_unified_db_path(p):
+            ensure_unified_wal(self._conn, busy_timeout_ms=5000)
         self._lock = threading.Lock()
         self._init()
 

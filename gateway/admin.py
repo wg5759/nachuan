@@ -35,6 +35,7 @@ from gateway.failover import (
     DEFAULT_TOTAL_TIMEOUT_SEC,
     chat_once_with_deadline,
 )
+from gateway.outbound_guard import OfflineModeBlockedError, create_async_client
 from gateway.pricing import cost_for
 from gateway.provider_call_ledger import (
     ProviderCallLedgerUnavailable,
@@ -969,7 +970,8 @@ async def _discover_connection_models(
             catalog_url = f"{base_url.rstrip('/')}/models"
         else:
             raise ValueError("connection type has no model discovery adapter")
-        async with httpx.AsyncClient(
+        async with create_async_client(
+            caller="gateway.admin:_discover_connection_models",
             timeout=5.0,
             follow_redirects=False,
             trust_env=not _is_loopback_model_base(base_url),
@@ -980,6 +982,8 @@ async def _discover_connection_models(
                 ),
                 timeout=_MODEL_CATALOG_TOTAL_TIMEOUT_SEC,
             )
+    except OfflineModeBlockedError:
+        raise
     except (asyncio.TimeoutError, httpx.HTTPError, OSError, ValueError) as exc:
         raise _ConnectionDiscoveryUnavailable(
             _connection_failure_reason("", exc)
@@ -1007,8 +1011,11 @@ async def detect_local(request: Request) -> dict:
 
     own_port = str(get_settings().gateway_port)
     probes = [p for p in LOCAL_PROBES if f":{own_port}" not in p["base_url"]]
-    async with httpx.AsyncClient(
-        timeout=2.0, follow_redirects=False, trust_env=False
+    async with create_async_client(
+        caller="gateway.admin:detect_local",
+        timeout=2.0,
+        follow_redirects=False,
+        trust_env=False,
     ) as client:
         results = await asyncio.gather(*[_probe(client, p) for p in probes])
     return {"local": list(results)}
@@ -1025,8 +1032,11 @@ async def list_local_models(request: Request, base_url: str) -> dict:
         raise HTTPException(status_code=422, detail="模型服务地址不符合安全策略") from exc
     url = normalized + "/models"
     try:
-        async with httpx.AsyncClient(
-            timeout=5.0, follow_redirects=False, trust_env=False
+        async with create_async_client(
+            caller="gateway.admin:list_local_models",
+            timeout=5.0,
+            follow_redirects=False,
+            trust_env=False,
         ) as client:
             ids = await asyncio.wait_for(
                 _bounded_model_catalog(client, url),

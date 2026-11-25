@@ -1,9 +1,24 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '../i18n'
 import { useAppStore, type ChatDisplayMsg } from '../store'
 import { agentRun, visionImage, lapianVideo } from '../api'
 
-const HOME = 'https://www.bing.com'
+export const BROWSER_DEFAULT_HOME = 'about:blank'
+export const BROWSER_PREVIEW_PARTITION = 'nachuan-preview-ephemeral'
+
+export function configurePreviewWebview(wv: {
+  setAttribute: (name: string, value: string) => void
+  style: { width: string; height: string }
+}): void {
+  // 独立非持久化隔离分区（不带 persist: 前缀），与主渲染进程 defaultSession 完全隔离
+  wv.setAttribute('partition', BROWSER_PREVIEW_PARTITION)
+  // 默认加载空白页，避免启动软件即自动外连第三方搜索引擎
+  wv.setAttribute('src', BROWSER_DEFAULT_HOME)
+  wv.style.width = '100%'
+  wv.style.height = '100%'
+}
+
+const HOME = BROWSER_DEFAULT_HOME
 
 /** 右栏内嵌手动浏览器 + 独立 Agent 对话。
  *  网页控制在隔离会话、动作能力和审批闭环完成前保持故障关闭；输入框仍可聊天和发图/视频。 */
@@ -33,9 +48,7 @@ export default function BrowserPane(): React.ReactNode {
     if (!container) return
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const wv: any = document.createElement('webview')
-    wv.setAttribute('src', HOME)
-    wv.style.width = '100%'
-    wv.style.height = '100%'
+    configurePreviewWebview(wv)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const onNav = (e: any): void => {
       if (e?.url) {
@@ -62,7 +75,7 @@ export default function BrowserPane(): React.ReactNode {
   const navigate = (raw: string): void => {
     let target = raw.trim()
     if (!target) return
-    if (!/^https?:\/\//.test(target)) target = 'https://' + target
+    if (target !== 'about:blank' && !/^https?:\/\//.test(target)) target = 'https://' + target
     setAddr(target)
     setTabs((ts) => ts.map((tb) => (tb.id === activeTabId ? { ...tb, url: target } : tb)))
     wvRef.current?.loadURL?.(target)
@@ -70,6 +83,7 @@ export default function BrowserPane(): React.ReactNode {
 
   // 轻量标签（B 方案）：共用一个 webview，切标签即换网址；仅供机主手动浏览。
   const tabTitle = (url: string): string => {
+    if (url === 'about:blank') return t('browser.blankTab', { defaultValue: '空白页' })
     try {
       return new URL(url).hostname.replace(/^www\./, '')
     } catch {

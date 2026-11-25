@@ -842,7 +842,9 @@ def _kb() -> Any:
         from gateway.config import get_settings
         from orchestrator.knowledge import KnowledgeBase
 
-        db = _Path(get_settings().usage_db_path).parent / "knowledge.db"
+        from storage.unified_db import resolve_db_path
+        _s = get_settings()
+        db = resolve_db_path("knowledge", data_dir=_Path(_s.usage_db_path).parent, db_mode=_s.db_mode)
         _KB_SINGLETON = KnowledgeBase(str(db))
     return _KB_SINGLETON
 

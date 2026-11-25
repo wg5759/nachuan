@@ -1,6 +1,18 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+import {
+  createConversation as apiCreateConversation,
+  deleteConversation as apiDeleteConversation,
+  getOfflineMode as apiGetOfflineMode,
+  importConversations as apiImportConversations,
+  listConversationsResult as apiListConversationsResult,
+  patchConversation as apiPatchConversation,
+  saveConversationMessages as apiSaveConversationMessages,
+  setOfflineMode as apiSetOfflineMode,
+  type EngineFeatures,
+  type PatchConversationPayload
+} from './api'
 import type { PaidMediaDeliveryProof } from './paid-media-journal'
 
 export type EngineStatus = 'starting' | 'online' | 'degraded' | 'offline'
@@ -39,6 +51,8 @@ export interface TokenUsage {
 
 export type ViewKey =
   | 'chat'
+  | 'coding'
+  | 'coding-studio'
   | 'connections'
   | 'orchestrate'
   | 'usage'
@@ -54,8 +68,8 @@ export type ViewKey =
 // 右栏浏览器缩放档：normal=三栏 / wide=收起左栏给浏览器腾地 / max=收左+中栏，浏览器铺满
 export type BrowserZoom = 'normal' | 'wide' | 'max'
 
-// 一条聊天显示消息。媒体尽量持久化（见下方 partialize）：图片存可持久 URL；
-// 视频 blob 是会话级临时 URL、重启即失效 → 另存原始源 videoSrc，重启后再代下播放。
+// 一条聊天显示消息。全文消息现统一落盘至服务端 SQLite（/v1/conversations），
+// 不再写入 localStorage；blob: 为会话级临时 URL，视频仍保留原始源 videoSrc 供重启后恢复。
 export interface ChatDisplayMsg {
   role: 'user' | 'assistant'
   content: string
@@ -88,7 +102,6 @@ export interface ChatDisplayMsg {
   }
 }
 
-// 一个对话（会话）：各自一套消息与记忆，可新建/切换/删除/重命名，持久化到 localStorage
 export type ConversationKind = 'chat' | 'code' | 'browser'
 
 export interface Conversation {
@@ -102,8 +115,9 @@ export interface Conversation {
   workdir?: string
   /** 归档：从主列表隐藏，不删数据。 */
   archived?: boolean
-  /** 输入框草稿（未发送的文字/文档/图片）——随对话持久化，重启回来还在原处（机主要求）。
-   *  图片存 dataUrl（受总量上限，超出的仅会话内保留）；恢复时据此重建 File。 */
+  /** 无痕会话标记：为 true 时绝不落盘到服务端 `/v1/conversations`。 */
+  incognito?: boolean
+  /** 输入框草稿（未发送的文字/文档/图片）——仅保留在内存会话中，不进 localStorage。 */
   draft?: {
     text?: string
     docs?: { name: string; content: string }[]
@@ -111,14 +125,36 @@ export interface Conversation {
   }
 }
 
+/**
+ * 极轻量付费媒体恢复锚点（仅保存操作身份、vault 内容寻址 URI 与任务 ID，
+ * 绝不含聊天正文、用户提示词或 base64 图片；无待核销付费媒体时为空数组）。
+ */
+export interface PaidMediaAnchorRecord {
+  conversationId: string
+  messageTs: number
+  operationId: string
+  kind: 'image' | 'video'
+  model: string
+  blocked?: boolean
+  phase?: 'awaiting_result' | 'awaiting_ack'
+  deliveryProof?: PaidMediaDeliveryProof
+  images?: string[]
+  videoTask?: { task_id: string; model: string; prompt?: string }
+}
+
+const STORAGE_KEY = 'agg-conversations'
+const DURABLE_MEDIA_PATTERN = /^(https?:|file:|sandbox:|studio:|nachuan-paid-media:)/
+const VAULT_IMAGE_PATTERN = /^nachuan-paid-media:\/\/sha256\/[0-9a-f]{64}$/
+
 const newId = (): string => Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
-const blankConv = (kind: ConversationKind = 'chat'): Conversation => ({
+const blankConv = (kind: ConversationKind = 'chat', incognito = false): Conversation => ({
   id: newId(),
   title: '新对话',
   kind,
   messages: [],
   createdAt: Date.now(),
-  updatedAt: Date.now()
+  updatedAt: Date.now(),
+  ...(incognito ? { incognito: true } : {})
 })
 const deriveTitle = (msgs: ChatDisplayMsg[]): string => {
   const first = msgs.find((m) => m.role === 'user' && m.content.trim())
@@ -153,16 +189,192 @@ export const preferredChatModel = (models: ModelInfo[], current: string | null):
   )
 }
 
+function sanitizeMessageForServer(m: ChatDisplayMsg): ChatDisplayMsg {
+  const keptImages = m.images?.filter(
+    (u) => DURABLE_MEDIA_PATTERN.test(u) || u.startsWith('data:image/')
+  )
+  return {
+    role: m.role,
+    content: m.content,
+    ...(m.ts !== undefined ? { ts: m.ts } : {}),
+    ...(m.startedAt !== undefined ? { startedAt: m.startedAt } : {}),
+    ...(m.completedAt !== undefined ? { completedAt: m.completedAt } : {}),
+    ...(m.workLog?.length ? { workLog: m.workLog } : {}),
+    ...(m.meta !== undefined ? { meta: m.meta } : {}),
+    ...(m.model !== undefined ? { model: m.model } : {}),
+    ...(m.usage !== undefined ? { usage: m.usage } : {}),
+    ...(m.reasoning !== undefined ? { reasoning: m.reasoning } : {}),
+    ...(m.translated !== undefined ? { translated: m.translated } : {}),
+    ...(m.docs?.length ? { docs: m.docs } : {}),
+    ...(keptImages?.length ? { images: keptImages } : {}),
+    ...(m.video && DURABLE_MEDIA_PATTERN.test(m.video) ? { video: m.video } : {}),
+    ...(m.videoSrc !== undefined ? { videoSrc: m.videoSrc } : {}),
+    ...(m.videoTask !== undefined ? { videoTask: m.videoTask } : {}),
+    ...(m.paidMediaOperation !== undefined ? { paidMediaOperation: m.paidMediaOperation } : {})
+  }
+}
+
+function extractPaidMediaAnchors(conversations: Conversation[]): PaidMediaAnchorRecord[] {
+  const anchors: PaidMediaAnchorRecord[] = []
+  for (const conv of conversations) {
+    for (const msg of conv.messages) {
+      if (msg.role !== 'assistant' || !msg.paidMediaOperation || typeof msg.ts !== 'number') {
+        continue
+      }
+      const vaultImages = (msg.images ?? []).filter((url) => VAULT_IMAGE_PATTERN.test(url))
+      anchors.push({
+        conversationId: conv.id,
+        messageTs: msg.ts,
+        operationId: msg.paidMediaOperation.operationId,
+        kind: msg.paidMediaOperation.kind,
+        model: msg.paidMediaOperation.model,
+        ...(msg.paidMediaOperation.blocked !== undefined
+          ? { blocked: msg.paidMediaOperation.blocked }
+          : {}),
+        ...(msg.paidMediaOperation.phase !== undefined
+          ? { phase: msg.paidMediaOperation.phase }
+          : {}),
+        ...(msg.paidMediaOperation.deliveryProof !== undefined
+          ? { deliveryProof: msg.paidMediaOperation.deliveryProof }
+          : {}),
+        ...(vaultImages.length ? { images: vaultImages } : {}),
+        ...(msg.videoTask ? { videoTask: msg.videoTask } : {})
+      })
+    }
+  }
+  return anchors
+}
+
+// ── 服务端会话异步防抖同步器（无痕会话绝不落盘）──────────────────────────────
+const _createdOnServer = new Set<string>()
+const _msgSyncTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const _patchSyncTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const _pendingPatchByConv = new Map<string, PatchConversationPayload>()
+let _pendingLegacyConversations: Conversation[] | null = null
+
+function cancelServerSyncFor(convId: string): void {
+  const mt = _msgSyncTimers.get(convId)
+  if (mt) {
+    clearTimeout(mt)
+    _msgSyncTimers.delete(convId)
+  }
+  const pt = _patchSyncTimers.get(convId)
+  if (pt) {
+    clearTimeout(pt)
+    _patchSyncTimers.delete(convId)
+  }
+  _pendingPatchByConv.delete(convId)
+}
+
+async function pushConversationMessagesNow(convId: string): Promise<void> {
+  const conv = useAppStore.getState().conversations.find((c) => c.id === convId)
+  if (!conv || conv.incognito) return
+  const messages = conv.messages.map(sanitizeMessageForServer)
+  if (!_createdOnServer.has(convId)) {
+    const created = await apiCreateConversation({
+      id: conv.id,
+      title: conv.title,
+      kind: conv.kind,
+      workdir: conv.workdir ?? '',
+      archived: Boolean(conv.archived),
+      messages
+    })
+    if (created) {
+      _createdOnServer.add(convId)
+      return
+    }
+  }
+  const saved = await apiSaveConversationMessages(convId, messages)
+  if (!saved.ok) {
+    const recreated = await apiCreateConversation({
+      id: conv.id,
+      title: conv.title,
+      kind: conv.kind,
+      workdir: conv.workdir ?? '',
+      archived: Boolean(conv.archived),
+      messages
+    })
+    if (recreated) _createdOnServer.add(convId)
+  }
+}
+
+function scheduleServerMessagesSync(convId: string, delayMs = 600): void {
+  const conv = useAppStore.getState().conversations.find((c) => c.id === convId)
+  if (!conv || conv.incognito) return
+  const existing = _msgSyncTimers.get(convId)
+  if (existing) clearTimeout(existing)
+  if (delayMs <= 0) {
+    _msgSyncTimers.delete(convId)
+    void pushConversationMessagesNow(convId)
+    return
+  }
+  const timer = setTimeout(() => {
+    _msgSyncTimers.delete(convId)
+    void pushConversationMessagesNow(convId)
+  }, delayMs)
+  _msgSyncTimers.set(convId, timer)
+}
+
+function scheduleServerPatchSync(
+  convId: string,
+  patch: PatchConversationPayload,
+  delayMs = 400
+): void {
+  const conv = useAppStore.getState().conversations.find((c) => c.id === convId)
+  if (!conv || conv.incognito) return
+  const merged = { ...(_pendingPatchByConv.get(convId) ?? {}), ...patch }
+  _pendingPatchByConv.set(convId, merged)
+  const existing = _patchSyncTimers.get(convId)
+  if (existing) clearTimeout(existing)
+  const run = (): void => {
+    _patchSyncTimers.delete(convId)
+    const nextPatch = _pendingPatchByConv.get(convId)
+    _pendingPatchByConv.delete(convId)
+    if (!nextPatch) return
+    const latest = useAppStore.getState().conversations.find((c) => c.id === convId)
+    if (!latest || latest.incognito) return
+    void apiPatchConversation(convId, nextPatch)
+  }
+  if (delayMs <= 0) {
+    run()
+    return
+  }
+  _patchSyncTimers.set(convId, setTimeout(run, delayMs))
+}
+
+function flushServerSyncQueues(): void {
+  for (const [convId, timer] of [..._msgSyncTimers.entries()]) {
+    clearTimeout(timer)
+    _msgSyncTimers.delete(convId)
+    void pushConversationMessagesNow(convId)
+  }
+  for (const [convId, timer] of [..._patchSyncTimers.entries()]) {
+    clearTimeout(timer)
+    _patchSyncTimers.delete(convId)
+    const patch = _pendingPatchByConv.get(convId)
+    _pendingPatchByConv.delete(convId)
+    const latest = useAppStore.getState().conversations.find((c) => c.id === convId)
+    if (patch && latest && !latest.incognito) {
+      void apiPatchConversation(convId, patch)
+    }
+  }
+}
+
 type MsgUpdater = ChatDisplayMsg[] | ((prev: ChatDisplayMsg[]) => ChatDisplayMsg[])
 
 interface AppState {
   status: EngineStatus
+  engineFeatures: EngineFeatures
   models: ModelInfo[]
   currentModel: string | null
   /** Persisted preference held inert until a fresh `/v1/models` allowlist arrives. */
   restoredModelPreference: string | null
+  /** 重启后恢复的轻量付费媒体操作锚点（绝不含聊天正文）。 */
+  restoredPaidMediaAnchors: PaidMediaAnchorRecord[]
+  conversationsHydrated: boolean
   view: ViewKey
   setStatus: (s: EngineStatus) => void
+  setEngineFeatures: (features: EngineFeatures) => void
   setModels: (m: ModelInfo[]) => void
   setCurrentModel: (id: string | null) => void
   setView: (v: ViewKey) => void
@@ -180,6 +392,11 @@ interface AppState {
   /** 任务/对话生成完成时的提示音开关（默认开，可在设置菜单关）。 */
   soundEnabled: boolean
   setSoundEnabled: (v: boolean) => void
+  /** P2 纯离线（空气间隙）模式运行态，以服务端 /v1/privacy/offline-mode 为单一真相源（不落盘 localStorage）。 */
+  offlineMode: boolean
+  setOfflineModeState: (enabled: boolean) => void
+  refreshOfflineMode: () => Promise<boolean>
+  toggleOfflineMode: (enabled: boolean) => Promise<{ ok: boolean; enabled: boolean }>
   // 右栏浏览器默认关闭；可手动开/关，agent 用到浏览器工具时自动开
   browserOpen: boolean
   openBrowser: () => void
@@ -187,21 +404,65 @@ interface AppState {
   toggleBrowser: () => void
   // 浏览器里干完的活，给中间当前对话留一条摘要（中间 agent 据此"知道"发生了什么）
   appendBrowserNote: (text: string) => void
-  // 多对话（会话列表）
+  // 多对话（会话列表——服务端 /v1/conversations 单一真相源 + 内存响应式副本）
   conversations: Conversation[]
   currentConvId: string | null
+  hydrateConversationsFromServer: () => Promise<void>
   ensureConversation: () => void
-  newConversation: (kind?: ConversationKind) => string
+  newConversation: (kind?: ConversationKind, opts?: { incognito?: boolean }) => string
   switchConversation: (id: string) => void
   renameConversation: (id: string, title: string) => void
   deleteConversation: (id: string) => void
   archiveConversation: (id: string, archived?: boolean) => void
   setConvWorkdir: (id: string, workdir: string) => void
+  setConvIncognito: (id: string, incognito: boolean) => void
   setConvDraft: (id: string, draft: Conversation['draft']) => void
   setCurrentMessages: (updater: MsgUpdater) => void
   /** 往**指定对话**写消息（异步回写用：任务跑着时用户切了对话，结果必须写回发起时的对话，
    *  绝不能跟着 currentConvId 走串——codex 审出的跨对话写串洞）。 */
   setConvMessages: (convId: string, updater: MsgUpdater) => void
+}
+
+function readLegacyConversationsFromStorage(): Conversation[] {
+  if (typeof localStorage === 'undefined') return []
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as { state?: { conversations?: unknown } }
+    const list = parsed?.state?.conversations
+    if (!Array.isArray(list) || list.length === 0) return []
+    return list.filter(
+      (item): item is Conversation =>
+        Boolean(item) &&
+        typeof item === 'object' &&
+        !Array.isArray(item) &&
+        typeof (item as Conversation).id === 'string' &&
+        Array.isArray((item as Conversation).messages)
+    )
+  } catch {
+    return []
+  }
+}
+
+function writeSlimLocalPreferences(state: AppState): boolean {
+  if (typeof localStorage === 'undefined') return true
+  const paidMediaAnchors = extractPaidMediaAnchors(state.conversations)
+  const payload = {
+    state: {
+      currentModel: state.currentModel ?? state.restoredModelPreference,
+      currentConvId: state.currentConvId,
+      soundEnabled: state.soundEnabled,
+      ...(paidMediaAnchors.length ? { paidMediaAnchors } : {})
+    },
+    version: 0
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
+    return true
+  } catch (e) {
+    console.warn('[persist] 轻量偏好写入失败', e)
+    return false
+  }
 }
 
 function mergePersistedAppState(persisted: unknown, current: AppState): AppState {
@@ -213,6 +474,28 @@ function mergePersistedAppState(persisted: unknown, current: AppState): AppState
     record.currentModel.length <= 256
       ? record.currentModel
       : null
+
+  // 兼容旧版本 localStorage 中残存的历史 conversations：先暂存进内存待迁移至服务端，
+  // 绝不再写回 localStorage。
+  const legacyConversations = Array.isArray(record.conversations)
+    ? (record.conversations as Conversation[]).filter(
+        (c) => Boolean(c) && typeof c.id === 'string' && Array.isArray(c.messages)
+      )
+    : []
+  if (legacyConversations.length > 0) {
+    _pendingLegacyConversations = legacyConversations
+  }
+
+  const restoredPaidMediaAnchors = Array.isArray(record.paidMediaAnchors)
+    ? (record.paidMediaAnchors as PaidMediaAnchorRecord[]).filter(
+        (a) =>
+          Boolean(a) &&
+          typeof a.conversationId === 'string' &&
+          typeof a.operationId === 'string' &&
+          typeof a.messageTs === 'number'
+      )
+    : []
+
   return {
     ...current,
     currentConvId:
@@ -221,20 +504,16 @@ function mergePersistedAppState(persisted: unknown, current: AppState): AppState
         : current.currentConvId,
     soundEnabled:
       typeof record.soundEnabled === 'boolean' ? record.soundEnabled : current.soundEnabled,
-    conversations: Array.isArray(record.conversations)
-      ? (record.conversations as Conversation[])
-      : current.conversations,
+    conversations:
+      legacyConversations.length > 0 ? legacyConversations : current.conversations,
+    restoredPaidMediaAnchors,
     models: [],
     currentModel: null,
     restoredModelPreference: candidate
   }
 }
 
-// 防抖持久化（真·热路径零重活版）：流式每个 token 都 setMessages → zustand persist 每次 set 都会
-// partialize + **JSON.stringify(含几MB base64 媒体)** + 写盘。之前只把「写盘」防抖了，stringify 仍每
-// delta 全量跑 → 回车/流式照卡(机主实测:修几次还卡的真凶)。改用自定义 PersistStorage：
-// setItem 只存**对象引用**(O(1))，~700ms 后 flush 才 stringify+写盘；退出前 beforeunload 兜底 flush。
-// 顺带吞 QuotaExceededError（配额满别静默炸掉整个持久化——复审 Fable/Kimi 提）。
+// 轻量 UI 偏好防抖持久化：不再包含任何 conversations 聊天全文，单次写入 < 2KB。
 type _SV = { state: unknown; version?: number }
 let _flushPersistStorage = (): boolean => true
 const _persistStorage = ((): {
@@ -245,24 +524,15 @@ const _persistStorage = ((): {
   let timer: ReturnType<typeof setTimeout> | null = null
   let pending: [string, _SV] | null = null
   const flush = (): boolean => {
-    timer = null
+    if (timer) {
+      clearTimeout(timer)
+      timer = null
+    }
     if (!pending) return true
     const current = pending
     const [n, v] = current
     try {
-      // 防误清历史（机主实测：热更新灌入中间态代码 → 空 state 覆盖真数据 → 聊天记录全没）：
-      // 要写入的对话数比现存少一半以上时，先把现存整份备份到 .bak（保留最近一次"缩水前"档，可手工找回）。
-      try {
-        const nextConvs = (v?.state as { conversations?: unknown[] } | undefined)?.conversations?.length ?? 0
-        const cur = localStorage.getItem(n)
-        if (cur) {
-          const curConvs = (JSON.parse(cur)?.state?.conversations?.length as number) ?? 0
-          if (curConvs > 0 && nextConvs < curConvs / 2) localStorage.setItem(n + '.bak', cur)
-        }
-      } catch {
-        /* 备份失败不阻塞正常落盘 */
-      }
-      localStorage.setItem(n, JSON.stringify(v)) // stringify 挪到这：700ms 最多一次，不再每 delta 卡主线程
+      localStorage.setItem(n, JSON.stringify(v))
       if (pending === current) pending = null
       return true
     } catch (e) {
@@ -272,18 +542,19 @@ const _persistStorage = ((): {
   }
   _flushPersistStorage = flush
   if (typeof window !== 'undefined') {
-    // 退出双兜底：beforeunload 落一次；pagehide(更晚) 再落一次——保证组件在 beforeunload 里
-    // 最后写入的草稿（ChatPane 未发送输入）也能赶上落盘。flush 幂等，跑两次无害。
-    window.addEventListener('beforeunload', flush)
-    window.addEventListener('pagehide', flush)
+    const onUnload = (): void => {
+      flush()
+      flushServerSyncQueues()
+    }
+    window.addEventListener('beforeunload', onUnload)
+    window.addEventListener('pagehide', onUnload)
   }
   return {
     getItem: (n) => {
       const s = localStorage.getItem(n)
       try {
-        return s ? (JSON.parse(s) as _SV) : null // 旧数据就是 createJSONStorage 的 {state,version}，原样兼容
+        return s ? (JSON.parse(s) as _SV) : null
       } catch {
-        // 读坏（半截写入等）：把坏档留到 .bak 再放弃——否则接下来空态落盘，坏档也被埋（想救都没底稿）
         try {
           if (s) localStorage.setItem(n + '.bak', s)
         } catch {
@@ -293,7 +564,7 @@ const _persistStorage = ((): {
       }
     },
     setItem: (n, v) => {
-      pending = [n, v] // 只挂引用，零序列化
+      pending = [n, v]
       if (!timer) timer = setTimeout(flush, 700)
     },
     removeItem: (n) => {
@@ -303,8 +574,9 @@ const _persistStorage = ((): {
   }
 })()
 
-/** 付费操作进入可恢复终态后立即固化消息里的 operationId，不等普通 700ms 防抖。 */
+/** 付费操作进入可恢复终态后立即固化轻量锚点并推送服务端同步，不等普通防抖。 */
 export function flushAppStorePersistence(): boolean {
+  flushServerSyncQueues()
   return _flushPersistStorage()
 }
 
@@ -337,74 +609,88 @@ function samePaidMediaDeliveryProof(
   )
 }
 
+function matchesPaidMediaExpectation(
+  candidate: {
+    images?: unknown
+    videoTask?: unknown
+  },
+  expected: PaidMediaPersistedResultExpectation
+): boolean {
+  if (expected.images !== undefined) {
+    return (
+      expected.images.length >= 1 &&
+      expected.images.length <= 4 &&
+      expected.images.every((item) => VAULT_IMAGE_PATTERN.test(item)) &&
+      Array.isArray(candidate.images) &&
+      candidate.images.length === expected.images.length &&
+      candidate.images.every(
+        (item, index) =>
+          typeof item === 'string' &&
+          VAULT_IMAGE_PATTERN.test(item) &&
+          item === expected.images[index]
+      )
+    )
+  }
+  const task = candidate.videoTask
+  if (!task || typeof task !== 'object' || Array.isArray(task)) return false
+  const persisted = task as Record<string, unknown>
+  return (
+    persisted.task_id === expected.videoTask.task_id &&
+    persisted.model === expected.videoTask.model &&
+    persisted.prompt === expected.videoTask.prompt
+  )
+}
+
 /**
- * A successful localStorage write is not proof that partialize retained a paid
- * result. Read the exact serialized snapshot back before main may mark the
- * operation delivered; oversized data URLs are intentionally rejected here.
+ * 校验付费媒体交付结果是否已在内存真相源与轻量本地锚点中精确固化，并立刻派发服务端落盘。
+ * 非 vault 引用（例如 oversized data URL / 普通外链）会被强制拒绝，绝不误签 ACK。
  */
 export function flushAndVerifyPaidMediaResult(
   expected: PaidMediaPersistedResultExpectation
 ): boolean {
+  if (expected.deliveryProof.operationId !== expected.operationId) return false
+  const state = useAppStore.getState()
+  const conversation = state.conversations.find(
+    (candidate) => candidate.id === expected.conversationId
+  )
+  if (!conversation || !Array.isArray(conversation.messages)) return false
+
+  const memMatches = conversation.messages.filter((message) => {
+    const operation = message.paidMediaOperation
+    return (
+      message.role === 'assistant' &&
+      message.ts === expected.messageTs &&
+      operation !== undefined &&
+      operation.operationId === expected.operationId &&
+      operation.phase === 'awaiting_ack' &&
+      samePaidMediaDeliveryProof(operation.deliveryProof, expected.deliveryProof)
+    )
+  })
+  if (memMatches.length !== 1) return false
+  if (!matchesPaidMediaExpectation(memMatches[0], expected)) return false
+
+  // 立即推送该会话消息到服务端 SQLite，并强制刷新轻量本地恢复锚点
+  scheduleServerMessagesSync(expected.conversationId, 0)
   if (!_flushPersistStorage()) return false
-  let raw: string | null = null
+
   try {
-    raw = localStorage.getItem('agg-conversations')
+    const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw || raw.length > 64 * 1024 * 1024) return false
     const envelope = JSON.parse(raw) as {
-      state?: { conversations?: unknown }
+      state?: { paidMediaAnchors?: unknown }
     }
-    if (!Array.isArray(envelope.state?.conversations)) return false
-    const conversations = envelope.state.conversations as Array<Record<string, unknown>>
-    const conversation = conversations.find(
-      (candidate) => candidate.id === expected.conversationId
+    if (!Array.isArray(envelope.state?.paidMediaAnchors)) return false
+    const anchors = envelope.state.paidMediaAnchors as Array<Record<string, unknown>>
+    const persistedMatches = anchors.filter(
+      (anchor) =>
+        anchor.conversationId === expected.conversationId &&
+        anchor.messageTs === expected.messageTs &&
+        anchor.operationId === expected.operationId &&
+        anchor.phase === 'awaiting_ack' &&
+        samePaidMediaDeliveryProof(anchor.deliveryProof, expected.deliveryProof)
     )
-    if (!conversation || !Array.isArray(conversation.messages)) return false
-    const matches = (conversation.messages as unknown[]).filter((value) => {
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-      const message = value as Record<string, unknown>
-      const operation = message.paidMediaOperation
-      return (
-        message.role === 'assistant' &&
-        message.ts === expected.messageTs &&
-        operation !== null &&
-        typeof operation === 'object' &&
-        !Array.isArray(operation) &&
-        (operation as Record<string, unknown>).operationId === expected.operationId &&
-        expected.deliveryProof.operationId === expected.operationId &&
-        (operation as Record<string, unknown>).phase === 'awaiting_ack' &&
-        samePaidMediaDeliveryProof(
-          (operation as Record<string, unknown>).deliveryProof,
-          expected.deliveryProof
-        )
-      )
-    })
-    if (matches.length !== 1) return false
-    const message = matches[0] as Record<string, unknown>
-    if (expected.images !== undefined) {
-      return (
-        expected.images.length >= 1 &&
-        expected.images.length <= 4 &&
-        expected.images.every((item) =>
-          /^nachuan-paid-media:\/\/sha256\/[0-9a-f]{64}$/.test(item)
-        ) &&
-        Array.isArray(message.images) &&
-        message.images.length === expected.images.length &&
-        message.images.every(
-          (item, index) =>
-            typeof item === 'string' &&
-            /^nachuan-paid-media:\/\/sha256\/[0-9a-f]{64}$/.test(item) &&
-            item === expected.images[index]
-        )
-      )
-    }
-    const task = message.videoTask
-    if (!task || typeof task !== 'object' || Array.isArray(task)) return false
-    const persisted = task as Record<string, unknown>
-    return (
-      persisted.task_id === expected.videoTask.task_id &&
-      persisted.model === expected.videoTask.model &&
-      persisted.prompt === expected.videoTask.prompt
-    )
+    if (persistedMatches.length !== 1) return false
+    return matchesPaidMediaExpectation(persistedMatches[0], expected)
   } catch {
     return false
   }
@@ -412,13 +698,17 @@ export function flushAndVerifyPaidMediaResult(
 
 export const useAppStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       status: 'starting',
+      engineFeatures: {},
       models: [],
       currentModel: null,
       restoredModelPreference: null,
+      restoredPaidMediaAnchors: [],
+      conversationsHydrated: false,
       view: 'chat',
       setStatus: (s) => set({ status: s }),
+      setEngineFeatures: (features) => set({ engineFeatures: features }),
       setModels: (m) =>
         set((st) => ({
           models: m,
@@ -442,6 +732,24 @@ export const useAppStore = create<AppState>()(
       setLastAgentReply: (s) => set({ lastAgentReply: s }),
       soundEnabled: true,
       setSoundEnabled: (v) => set({ soundEnabled: v }),
+      offlineMode: false,
+      setOfflineModeState: (enabled) => set({ offlineMode: Boolean(enabled) }),
+      refreshOfflineMode: async () => {
+        const res = await apiGetOfflineMode()
+        if (res.ok !== false) {
+          set({ offlineMode: res.enabled })
+          return res.enabled
+        }
+        return get().offlineMode
+      },
+      toggleOfflineMode: async (enabled) => {
+        const res = await apiSetOfflineMode(enabled)
+        if (res.ok !== false) {
+          set({ offlineMode: res.enabled })
+          return { ok: true, enabled: res.enabled }
+        }
+        return { ok: false, enabled: get().offlineMode }
+      },
       setBrowserZoom: (z) => set({ browserZoom: z }),
       cycleBrowserZoom: () =>
         set((st) => ({
@@ -452,7 +760,8 @@ export const useAppStore = create<AppState>()(
       openBrowser: () => set({ browserOpen: true }),
       closeBrowser: () => set({ browserOpen: false }),
       toggleBrowser: () => set((s) => ({ browserOpen: !s.browserOpen })),
-      appendBrowserNote: (text) =>
+      appendBrowserNote: (text) => {
+        const targetConvId = get().currentConvId
         set((s) => ({
           conversations: s.conversations.map((c) =>
             c.id === s.currentConvId
@@ -466,35 +775,120 @@ export const useAppStore = create<AppState>()(
                 }
               : c
           )
-        })),
+        }))
+        if (targetConvId) scheduleServerMessagesSync(targetConvId)
+      },
       conversations: [],
       currentConvId: null,
-      ensureConversation: () =>
+      hydrateConversationsFromServer: async () => {
+        // 1. 检测旧 localStorage['agg-conversations'] 或启动时捕获的待迁移会话全文
+        const storageLegacy = readLegacyConversationsFromStorage()
+        const legacy = storageLegacy.length > 0 ? storageLegacy : (_pendingLegacyConversations ?? [])
+        const migrateable = legacy.filter((conv) => !conv.incognito)
+        if (migrateable.length > 0) {
+          const imported = await apiImportConversations(
+            migrateable.map((conv) => ({
+              ...conv,
+              messages: conv.messages.map(sanitizeMessageForServer)
+            }))
+          )
+          if (imported.ok) {
+            _pendingLegacyConversations = null
+            // 迁移成功后立即重写 localStorage 剔除旧全文
+            writeSlimLocalPreferences(get())
+          }
+        } else if (storageLegacy.length > 0) {
+          // 即使全部为无痕会话也立即剔除旧 localStorage 全文
+          _pendingLegacyConversations = null
+          writeSlimLocalPreferences(get())
+        }
+
+        // 2. 拉取服务端权威会话列表并同步进内存 store
+        const remote = await apiListConversationsResult()
+        if (!remote.ok) return
+
+        for (const conv of remote.conversations) _createdOnServer.add(conv.id)
+        set((s) => {
+          const incognitoConvs = s.conversations.filter((c) => c.incognito)
+          const merged = [...incognitoConvs, ...remote.conversations]
+          const hasCurrent =
+            Boolean(s.currentConvId) && merged.some((c) => c.id === s.currentConvId)
+          const nextCurrentId = hasCurrent
+            ? s.currentConvId
+            : (merged.find((c) => !c.archived)?.id ?? merged[0]?.id ?? null)
+          return {
+            conversations: merged,
+            currentConvId: nextCurrentId,
+            conversationsHydrated: true
+          }
+        })
+        writeSlimLocalPreferences(get())
+      },
+      ensureConversation: () => {
+        let created: Conversation | null = null
         set((s) => {
           if (s.currentConvId && s.conversations.some((c) => c.id === s.currentConvId)) return {}
           if (s.conversations.length) return { currentConvId: s.conversations[0].id }
           const c = blankConv()
+          created = c
           return { conversations: [c], currentConvId: c.id }
-        }),
-      newConversation: (kind) => {
-        const c = blankConv(kind)
-        set((s) => {
-          return { conversations: [c, ...s.conversations], currentConvId: c.id }
         })
+        if (created && !(created as Conversation).incognito) {
+          const conv = created as Conversation
+          void apiCreateConversation({
+            id: conv.id,
+            title: conv.title,
+            kind: conv.kind,
+            workdir: conv.workdir ?? '',
+            archived: Boolean(conv.archived),
+            messages: []
+          }).then((res) => {
+            if (res) _createdOnServer.add(conv.id)
+          })
+        }
+      },
+      newConversation: (kind, opts) => {
+        const incognito = opts?.incognito === true
+        const c = blankConv(kind, incognito)
+        set((s) => ({
+          conversations: [c, ...s.conversations],
+          currentConvId: c.id
+        }))
+        if (!incognito) {
+          void apiCreateConversation({
+            id: c.id,
+            title: c.title,
+            kind: c.kind,
+            workdir: c.workdir ?? '',
+            archived: Boolean(c.archived),
+            messages: []
+          }).then((res) => {
+            if (res) _createdOnServer.add(c.id)
+          })
+        }
         return c.id
       },
       switchConversation: (id) => set({ currentConvId: id }),
-      renameConversation: (id, title) =>
+      renameConversation: (id, title) => {
         set((s) => ({
           conversations: s.conversations.map((c) => (c.id === id ? { ...c, title } : c))
-        })),
-      deleteConversation: (id) =>
+        }))
+        scheduleServerPatchSync(id, { title })
+      },
+      deleteConversation: (id) => {
+        const existing = get().conversations.find((c) => c.id === id)
+        cancelServerSyncFor(id)
+        _createdOnServer.delete(id)
         set((s) => {
           const rest = s.conversations.filter((c) => c.id !== id)
           const cur = s.currentConvId === id ? (rest[0]?.id ?? null) : s.currentConvId
           return { conversations: rest, currentConvId: cur }
-        }),
-      archiveConversation: (id, archived = true) =>
+        })
+        if (existing && !existing.incognito) {
+          void apiDeleteConversation(id)
+        }
+      },
+      archiveConversation: (id, archived = true) => {
         set((s) => {
           const convs = s.conversations.map((c) => (c.id === id ? { ...c, archived } : c))
           // 归档当前对话 → 切到下一个未归档的（没有则清空，聊天区显欢迎屏）
@@ -503,92 +897,70 @@ export const useAppStore = create<AppState>()(
             cur = convs.find((c) => !c.archived)?.id ?? null
           }
           return { conversations: convs, currentConvId: cur }
-        }),
-      setConvWorkdir: (id, workdir) =>
+        })
+        scheduleServerPatchSync(id, { archived }, 0)
+      },
+      setConvWorkdir: (id, workdir) => {
+        const prev = get().conversations.find((c) => c.id === id)
+        if (prev?.workdir === workdir) return
         set((s) => ({
           conversations: s.conversations.map((c) => (c.id === id ? { ...c, workdir } : c))
-        })),
+        }))
+        scheduleServerPatchSync(id, { workdir })
+      },
+      setConvIncognito: (id, incognito) => {
+        if (incognito) cancelServerSyncFor(id)
+        set((s) => ({
+          conversations: s.conversations.map((c) => (c.id === id ? { ...c, incognito } : c))
+        }))
+      },
       setConvDraft: (id, draft) =>
         set((s) => ({
           conversations: s.conversations.map((c) => (c.id === id ? { ...c, draft } : c))
         })),
-      setCurrentMessages: (updater) =>
-        set((s) => ({
-          conversations: s.conversations.map((c) => {
-            if (c.id !== s.currentConvId) return c
-            const next = typeof updater === 'function' ? updater(c.messages) : updater
-            const title = c.title === '新对话' ? deriveTitle(next) : c.title
-            return { ...c, messages: next, title, updatedAt: Date.now() }
-          })
-        })),
-      setConvMessages: (convId, updater) =>
+      setCurrentMessages: (updater) => {
+        const convId = get().currentConvId
+        if (!convId) return
+        let derivedNewTitle: string | null = null
         set((s) => ({
           conversations: s.conversations.map((c) => {
             if (c.id !== convId) return c
             const next = typeof updater === 'function' ? updater(c.messages) : updater
             const title = c.title === '新对话' ? deriveTitle(next) : c.title
+            if (title !== c.title) derivedNewTitle = title
             return { ...c, messages: next, title, updatedAt: Date.now() }
           })
         }))
+        if (derivedNewTitle) scheduleServerPatchSync(convId, { title: derivedNewTitle })
+        scheduleServerMessagesSync(convId)
+      },
+      setConvMessages: (convId, updater) => {
+        let derivedNewTitle: string | null = null
+        set((s) => ({
+          conversations: s.conversations.map((c) => {
+            if (c.id !== convId) return c
+            const next = typeof updater === 'function' ? updater(c.messages) : updater
+            const title = c.title === '新对话' ? deriveTitle(next) : c.title
+            if (title !== c.title) derivedNewTitle = title
+            return { ...c, messages: next, title, updatedAt: Date.now() }
+          })
+        }))
+        if (derivedNewTitle) scheduleServerPatchSync(convId, { title: derivedNewTitle })
+        scheduleServerMessagesSync(convId)
+      }
     }),
     {
-      name: 'agg-conversations',
-      // 自定义 PersistStorage(非 createJSONStorage)：setItem 只挂对象引用、stringify 延到 flush——
-      // 否则每个流式 delta 都全量 stringify 几 MB base64 → 回车/流式卡（机主实测）。见上方 _persistStorage。
+      name: STORAGE_KEY,
       storage: _persistStorage as never,
-      // 持久化对话 + 尽量固定住媒体（机主实测：重启后图/视频消失、空消息还在转圈）。
-      // http/file/sandbox/studio 引用小而持久 → 直接留；data:base64 图大 → 反向累计设预算，
-      // 优先保最近对话、超预算不再持久化，防 localStorage 配额炸掉；blob: 会话级临时 URL 不留
-      // （视频改存原始源 videoSrc，重启后再代下播放）。
+      // P1-3A：彻底淘汰 localStorage 存 conversations 会话全文！
+      // 仅保留极轻量 UI 偏好（总大小 < 2KB）与待核销付费媒体操作锚点（无聊天正文/无 base64 图）。
       partialize: (s) => {
-        const DURABLE = /^(https?:|file:|sandbox:|studio:|nachuan-paid-media:)/
-        // data:base64 图大 → 按「实际存储字节」逐次占用预算(不去重：JSON 逐条各存一份，同图 N 条=N 份)，
-        // 优先保最近对话(数组头=最新)+最近消息(数组尾=最新)，超预算丢弃 → 防 localStorage 配额被击穿后
-        // zustand persist 静默失败、此后全不持久化。去留按「第几对话:第几条:URL」逐次记，与真实存储一致。
-        let dataBudget = 2_500_000
-        const keep = new Set<string>()
-        for (let ci = 0; ci < s.conversations.length; ci++) {
-          const msgs = s.conversations[ci].messages
-          for (let mi = msgs.length - 1; mi >= 0; mi--) {
-            for (const u of msgs[mi].images ?? []) {
-              if (u.startsWith('data:') && dataBudget - u.length > 0) {
-                dataBudget -= u.length
-                keep.add(`${ci}:${mi}:${u}`)
-              }
-            }
-          }
-        }
-        const keepImages = (imgs: string[] | undefined, ci: number, mi: number): string[] | undefined => {
-          if (!imgs?.length) return undefined
-          const kept = imgs.filter((u) => DURABLE.test(u) || keep.has(`${ci}:${mi}:${u}`))
-          return kept.length ? kept : undefined
-        }
+        const paidMediaAnchors = extractPaidMediaAnchors(s.conversations)
         return {
           currentModel: s.currentModel ?? s.restoredModelPreference,
           currentConvId: s.currentConvId,
           soundEnabled: s.soundEnabled,
-          conversations: s.conversations.map((c, ci) => ({
-            ...c,
-            messages: c.messages.map((m, mi) => ({
-              role: m.role,
-              content: m.content,
-              ts: m.ts,
-              startedAt: m.startedAt,
-              completedAt: m.completedAt,
-              workLog: m.workLog,
-              meta: m.meta,
-              model: m.model,
-              usage: m.usage,
-              reasoning: m.reasoning,
-              translated: m.translated,
-              docs: m.docs,
-              images: keepImages(m.images, ci, mi),
-              video: m.video && DURABLE.test(m.video) ? m.video : undefined,
-              videoSrc: m.videoSrc,
-              videoTask: m.videoTask, // 进行中任务号也落盘 → 重启自动续传
-              paidMediaOperation: m.paidMediaOperation
-            }))
-          }))
+          ...(paidMediaAnchors.length ? { paidMediaAnchors } : {})
         }
       },
       merge: mergePersistedAppState

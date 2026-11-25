@@ -1,4 +1,10 @@
-import type { ModelInfo, TokenUsage } from './store'
+import type {
+  ChatDisplayMsg,
+  Conversation,
+  ConversationKind,
+  ModelInfo,
+  TokenUsage
+} from './store'
 import type { CatalogModel } from './env'
 import {
   parsePluginUiSnapshot,
@@ -117,26 +123,62 @@ export async function getPluginUiSnapshot(): Promise<PluginUiSnapshot> {
   return parsePluginUiSnapshot(await window.api.getPluginUiSnapshot())
 }
 
+export interface EngineFeatures {
+  conversations?: boolean
+  voice?: boolean
+  stt?: boolean
+  lapian?: boolean
+  studio?: boolean
+  browser?: boolean
+  web_search?: boolean
+  mcp?: boolean
+  kb?: boolean
+  sync?: boolean
+  [key: string]: boolean | undefined
+}
+
 type EngineHealthDocument = {
   status?: unknown
   readiness?: unknown
   checks?: { financial_ledger?: { required?: unknown; ready?: unknown } }
+  features?: Record<string, unknown>
 }
 
 export type EngineProbeStatus = 'online' | 'degraded' | 'offline'
 
-export async function probeEngineStatus(): Promise<EngineProbeStatus> {
+export interface EngineHealthProbe {
+  status: EngineProbeStatus
+  features: EngineFeatures
+}
+
+function normalizeEngineFeatures(raw: unknown): EngineFeatures {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const normalized: EngineFeatures = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'boolean') normalized[key] = value
+  }
+  return normalized
+}
+
+export async function probeEngineHealth(): Promise<EngineHealthProbe> {
   try {
     const health = await apiGet<EngineHealthDocument>('/health')
-    if (health.status !== 'ok') return 'offline'
-    return health.readiness === 'ok' &&
+    const features = normalizeEngineFeatures(health.features)
+    if (health.status !== 'ok') return { status: 'offline', features: {} }
+    const status: EngineProbeStatus =
+      health.readiness === 'ok' &&
       health.checks?.financial_ledger?.required === true &&
       health.checks.financial_ledger.ready === true
-      ? 'online'
-      : 'degraded'
+        ? 'online'
+        : 'degraded'
+    return { status, features }
   } catch {
-    return 'offline'
+    return { status: 'offline', features: {} }
   }
+}
+
+export async function probeEngineStatus(): Promise<EngineProbeStatus> {
+  return (await probeEngineHealth()).status
 }
 
 export async function probeEngine(): Promise<boolean> {
@@ -157,6 +199,65 @@ export async function apiPost<T = unknown>(
         target: path,
         bodyKind: 'json',
         body: encoded,
+        responseKind: 'json'
+      },
+      signal
+    )
+  )
+}
+
+export async function apiPatch<T = unknown>(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal
+): Promise<T> {
+  const encoded = JSON.stringify(body)
+  if (typeof encoded !== 'string') throw new Error('Engine request body is not serializable')
+  return checkedJsonResponse<T>(
+    await invokeEngineRequest(
+      {
+        method: 'PATCH',
+        target: path,
+        bodyKind: 'json',
+        body: encoded,
+        responseKind: 'json'
+      },
+      signal
+    )
+  )
+}
+
+export async function apiPut<T = unknown>(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal
+): Promise<T> {
+  const encoded = JSON.stringify(body)
+  if (typeof encoded !== 'string') throw new Error('Engine request body is not serializable')
+  return checkedJsonResponse<T>(
+    await invokeEngineRequest(
+      {
+        method: 'PUT',
+        target: path,
+        bodyKind: 'json',
+        body: encoded,
+        responseKind: 'json'
+      },
+      signal
+    )
+  )
+}
+
+export async function apiDelete<T = unknown>(
+  path: string,
+  signal?: AbortSignal
+): Promise<T> {
+  return checkedJsonResponse<T>(
+    await invokeEngineRequest(
+      {
+        method: 'DELETE',
+        target: path,
+        bodyKind: 'none',
         responseKind: 'json'
       },
       signal
@@ -761,6 +862,8 @@ export function agentRun(
     approval_id?: number
     orchestrate?: boolean
     user_id?: string
+    incognito?: boolean
+    inject_memory?: boolean
     signal?: AbortSignal
   }
 ): Promise<AgentRunResult> {
@@ -854,6 +957,8 @@ export async function agentRunStream(
     mode?: string
     approval_id?: number
     user_id?: string
+    incognito?: boolean
+    inject_memory?: boolean
     onEvent?: (ev: AgentEvent) => void
     signal?: AbortSignal
   }
@@ -1105,21 +1210,31 @@ export interface RouteResult {
   _route?: { mode: string; model?: string; escalated?: boolean }
   usage?: TokenUsage
 }
+export interface ChatPrivacyOptions {
+  incognito?: boolean
+  injectMemory?: boolean
+}
+
 export function routeChat(
   mode: string,
   messages: ChatMsg[],
   signal?: AbortSignal,
   reasoningEffort?: string,
-  conversationId?: string
+  conversationId?: string,
+  opts?: { webSearch?: boolean; incognito?: boolean; injectMemory?: boolean }
 ): Promise<RouteResult> {
+  const incognito = opts?.incognito === true
+  const webSearch = !incognito && opts?.webSearch === true
   return apiPost<RouteResult>(
     '/v1/route',
     {
       mode,
       messages,
-      web_search: true,
+      web_search: webSearch,
       ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-      ...(conversationId ? { conversation_id: conversationId } : {})
+      ...(!incognito && conversationId ? { conversation_id: conversationId } : {}),
+      ...(incognito ? { incognito: true, inject_memory: false } : {}),
+      ...(!incognito && opts?.injectMemory === false ? { inject_memory: false } : {})
     },
     signal
   )
@@ -1161,6 +1276,8 @@ export interface AgentChatOptions {
   chatId?: string
   channel?: string
   model?: string
+  incognito?: boolean
+  injectMemory?: boolean
   signal?: AbortSignal
 }
 
@@ -1246,7 +1363,9 @@ export function agentChat(
       user_id: opts?.userId ?? 'owner',
       chat_id: opts?.chatId ?? 'desktop-main',
       channel: opts?.channel ?? 'desktop',
-      ...(opts?.model ? { model: opts.model } : {})
+      ...(opts?.model ? { model: opts.model } : {}),
+      ...(opts?.incognito ? { incognito: true, inject_memory: false } : {}),
+      ...(!opts?.incognito && opts?.injectMemory === false ? { inject_memory: false } : {})
     },
     opts?.signal
   ).then(validateAgentReply)
@@ -1382,22 +1501,27 @@ export async function awaitVideo(
   return null
 }
 
-/** 调网关流式接口，逐段产出内容/思考增量。 */
+/** 调网关流式接口，逐段产出内容/思考增量。默认关闭联网搜索（显式开启才透传 true）。 */
 export async function* chatStream(
   model: string,
   messages: ChatMsg[],
   signal?: AbortSignal,
-  webSearch = true,
+  webSearch = false,
   reasoningEffort?: string,
-  conversationId?: string
+  conversationId?: string,
+  privacy?: ChatPrivacyOptions
 ): AsyncGenerator<ChatDelta> {
+  const incognito = privacy?.incognito === true
+  const effectiveWebSearch = !incognito && webSearch === true
   const encoded = JSON.stringify({
       model,
       messages,
       stream: true,
-      web_search: webSearch,
+      web_search: effectiveWebSearch,
       ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-      ...(conversationId ? { conversation_id: conversationId } : {})
+      ...(!incognito && conversationId ? { conversation_id: conversationId } : {}),
+      ...(incognito ? { incognito: true, inject_memory: false } : {}),
+      ...(!incognito && privacy?.injectMemory === false ? { inject_memory: false } : {})
   })
   const decoder = new TextDecoder()
   let buf = ''
@@ -2208,4 +2332,718 @@ export function syncToggle(enabled: boolean): Promise<SyncStatus> {
 }
 export function syncRun(): Promise<SyncRunResult> {
   return window.api.runSync() as Promise<SyncRunResult>
+}
+
+// ── 会话持久化单一真相源（P1-3A：/v1/conversations，淘汰 localStorage 会话全文）──
+export interface CreateConversationPayload {
+  id?: string
+  title?: string
+  kind?: ConversationKind
+  workdir?: string
+  archived?: boolean
+  messages?: ChatDisplayMsg[]
+}
+
+export interface PatchConversationPayload {
+  title?: string
+  kind?: ConversationKind
+  workdir?: string
+  archived?: boolean
+}
+
+export interface ImportConversationsResult {
+  imported: number
+  skipped: number
+  ok?: boolean
+}
+
+function hasEngineBridge(): boolean {
+  return typeof window !== 'undefined' && typeof window.api?.engineRequest === 'function'
+}
+
+function normalizeServerConversation(raw: unknown): Conversation | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const row = raw as Record<string, unknown>
+  const id = typeof row.id === 'string' && row.id.trim() ? row.id : ''
+  if (!id) return null
+  const kindRaw = row.kind
+  const kind: ConversationKind =
+    kindRaw === 'code' || kindRaw === 'browser' ? kindRaw : 'chat'
+  const createdAt =
+    typeof row.createdAt === 'number' && Number.isFinite(row.createdAt)
+      ? row.createdAt
+      : typeof row.created_at === 'number' && Number.isFinite(row.created_at)
+        ? row.created_at
+        : Date.now()
+  const updatedAt =
+    typeof row.updatedAt === 'number' && Number.isFinite(row.updatedAt)
+      ? row.updatedAt
+      : typeof row.updated_at === 'number' && Number.isFinite(row.updated_at)
+        ? row.updated_at
+        : createdAt
+  const messages = Array.isArray(row.messages) ? (row.messages as ChatDisplayMsg[]) : []
+  return {
+    id,
+    title: typeof row.title === 'string' && row.title ? row.title : '新对话',
+    kind,
+    messages,
+    createdAt,
+    updatedAt,
+    ...(typeof row.workdir === 'string' && row.workdir ? { workdir: row.workdir } : {}),
+    ...(typeof row.archived === 'boolean' ? { archived: row.archived } : {})
+  }
+}
+
+export async function listConversationsResult(): Promise<{
+  ok: boolean
+  conversations: Conversation[]
+}> {
+  if (!hasEngineBridge()) return { ok: false, conversations: [] }
+  try {
+    const res = await apiGet<{ conversations?: unknown[] }>('/v1/conversations')
+    const rawList = Array.isArray(res?.conversations) ? res.conversations : []
+    const conversations = rawList
+      .map(normalizeServerConversation)
+      .filter((item): item is Conversation => item !== null)
+    return { ok: true, conversations }
+  } catch {
+    return { ok: false, conversations: [] }
+  }
+}
+
+export async function listConversations(): Promise<Conversation[]> {
+  return (await listConversationsResult()).conversations
+}
+
+export async function createConversation(
+  payload: CreateConversationPayload
+): Promise<Conversation | null> {
+  if (!hasEngineBridge()) return null
+  try {
+    const body: Record<string, unknown> = {}
+    if (payload.id !== undefined) body.id = payload.id
+    if (payload.title !== undefined) body.title = payload.title
+    if (payload.kind !== undefined) body.kind = payload.kind
+    if (payload.workdir !== undefined) body.workdir = payload.workdir
+    if (payload.archived !== undefined) body.archived = payload.archived
+    if (payload.messages !== undefined) body.messages = payload.messages
+    const res = await apiPost<unknown>('/v1/conversations', body)
+    return normalizeServerConversation(res)
+  } catch {
+    return null
+  }
+}
+
+export async function getConversation(id: string): Promise<Conversation | null> {
+  if (!hasEngineBridge() || !id) return null
+  try {
+    const res = await apiGet<unknown>(`/v1/conversations/${encodeURIComponent(id)}`)
+    return normalizeServerConversation(res)
+  } catch {
+    return null
+  }
+}
+
+export async function patchConversation(
+  id: string,
+  patch: PatchConversationPayload
+): Promise<Partial<Conversation> | null> {
+  if (!hasEngineBridge() || !id) return null
+  const body: Record<string, unknown> = {}
+  if (patch.title !== undefined) body.title = patch.title
+  if (patch.kind !== undefined) body.kind = patch.kind
+  if (patch.workdir !== undefined) body.workdir = patch.workdir
+  if (patch.archived !== undefined) body.archived = patch.archived
+  if (Object.keys(body).length === 0) return null
+  try {
+    return await apiPatch<Partial<Conversation>>(
+      `/v1/conversations/${encodeURIComponent(id)}`,
+      body
+    )
+  } catch {
+    return null
+  }
+}
+
+export async function saveConversationMessages(
+  id: string,
+  messages: ChatDisplayMsg[]
+): Promise<{ ok: boolean }> {
+  if (!hasEngineBridge() || !id) return { ok: false }
+  try {
+    await apiPut<unknown>(`/v1/conversations/${encodeURIComponent(id)}/messages`, {
+      messages
+    })
+    return { ok: true }
+  } catch {
+    return { ok: false }
+  }
+}
+
+export async function deleteConversation(id: string): Promise<{ ok: boolean }> {
+  if (!hasEngineBridge() || !id) return { ok: false }
+  try {
+    await apiDelete<unknown>(`/v1/conversations/${encodeURIComponent(id)}`)
+    return { ok: true }
+  } catch {
+    return { ok: false }
+  }
+}
+
+export async function importConversations(
+  conversations: Conversation[]
+): Promise<ImportConversationsResult> {
+  if (!hasEngineBridge()) return { imported: 0, skipped: 0, ok: false }
+  try {
+    const sanitized = conversations
+      .filter((conv) => !conv.incognito)
+      .map((conv) => ({
+        id: conv.id,
+        title: conv.title,
+        kind: conv.kind,
+        workdir: conv.workdir ?? '',
+        archived: Boolean(conv.archived),
+        createdAt: conv.createdAt,
+        updatedAt: conv.updatedAt,
+        messages: conv.messages
+      }))
+    const res = await apiPost<{ imported?: number; skipped?: number }>(
+      '/v1/conversations/import',
+      { conversations: sanitized }
+    )
+    return {
+      imported: typeof res?.imported === 'number' ? res.imported : 0,
+      skipped: typeof res?.skipped === 'number' ? res.skipped : 0,
+      ok: true
+    }
+  } catch {
+    return { imported: 0, skipped: 0, ok: false }
+  }
+}
+
+// ── P2 实时网络出站审计与纯离线（空气间隙）模式 ──────────────────────────────
+export interface OutboundAuditItem {
+  id: number
+  ts_ms: number
+  method: string
+  scheme: string
+  host: string
+  port: number | null
+  path: string
+  caller: string
+  is_loopback: boolean
+  blocked: boolean
+  block_reason: string
+  status_code: number | null
+  latency_ms: number | null
+  error: string
+}
+
+export interface OutboundAuditSnapshot {
+  offline_mode: boolean
+  total_allowed: number
+  total_blocked: number
+  non_loopback_count: number
+  items: OutboundAuditItem[]
+  unavailable?: boolean
+}
+
+export interface OfflineModeState {
+  enabled: boolean
+  source?: string
+  ok?: boolean
+}
+
+const EMPTY_OUTBOUND_AUDIT_SNAPSHOT: OutboundAuditSnapshot = {
+  offline_mode: false,
+  total_allowed: 0,
+  total_blocked: 0,
+  non_loopback_count: 0,
+  items: []
+}
+
+function normalizeOutboundAuditItem(raw: unknown): OutboundAuditItem | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const row = raw as Record<string, unknown>
+  const id = typeof row.id === 'number' && Number.isFinite(row.id) ? row.id : -1
+  if (id < 0) return null
+  return {
+    id,
+    ts_ms: typeof row.ts_ms === 'number' && Number.isFinite(row.ts_ms) ? row.ts_ms : 0,
+    method: typeof row.method === 'string' && row.method ? row.method : 'GET',
+    scheme: typeof row.scheme === 'string' ? row.scheme : '',
+    host: typeof row.host === 'string' ? row.host : '',
+    port: typeof row.port === 'number' && Number.isFinite(row.port) ? row.port : null,
+    path: typeof row.path === 'string' ? row.path : '',
+    caller: typeof row.caller === 'string' ? row.caller : '',
+    is_loopback: Boolean(row.is_loopback),
+    blocked: Boolean(row.blocked),
+    block_reason: typeof row.block_reason === 'string' ? row.block_reason : '',
+    status_code:
+      typeof row.status_code === 'number' && Number.isFinite(row.status_code)
+        ? row.status_code
+        : null,
+    latency_ms:
+      typeof row.latency_ms === 'number' && Number.isFinite(row.latency_ms)
+        ? row.latency_ms
+        : null,
+    error: typeof row.error === 'string' ? row.error : ''
+  }
+}
+
+export async function getOutboundAudit(opts?: {
+  limit?: number
+  since_id?: number
+  blocked_only?: boolean
+}): Promise<OutboundAuditSnapshot> {
+  if (!hasEngineBridge()) return { ...EMPTY_OUTBOUND_AUDIT_SNAPSHOT, items: [], unavailable: true }
+  const params = new URLSearchParams()
+  if (opts?.limit !== undefined && Number.isFinite(opts.limit)) {
+    const clamped = Math.max(1, Math.min(1000, Math.floor(opts.limit)))
+    params.set('limit', String(clamped))
+  }
+  if (opts?.since_id !== undefined && Number.isFinite(opts.since_id) && opts.since_id >= 0) {
+    params.set('since_id', String(Math.floor(opts.since_id)))
+  }
+  if (typeof opts?.blocked_only === 'boolean') {
+    params.set('blocked_only', opts.blocked_only ? 'true' : 'false')
+  }
+  const qs = params.toString()
+  const path = qs ? `/v1/privacy/outbound-audit?${qs}` : '/v1/privacy/outbound-audit'
+  try {
+    const res = await apiGet<Record<string, unknown>>(path)
+    const rawItems = Array.isArray(res?.items) ? res.items : []
+    const items = rawItems
+      .map(normalizeOutboundAuditItem)
+      .filter((item): item is OutboundAuditItem => item !== null)
+    return {
+      offline_mode: Boolean(res?.offline_mode),
+      total_allowed:
+        typeof res?.total_allowed === 'number' && Number.isFinite(res.total_allowed)
+          ? res.total_allowed
+          : 0,
+      total_blocked:
+        typeof res?.total_blocked === 'number' && Number.isFinite(res.total_blocked)
+          ? res.total_blocked
+          : 0,
+      non_loopback_count:
+        typeof res?.non_loopback_count === 'number' && Number.isFinite(res.non_loopback_count)
+          ? res.non_loopback_count
+          : 0,
+      items
+    }
+  } catch {
+    return { ...EMPTY_OUTBOUND_AUDIT_SNAPSHOT, items: [], unavailable: true }
+  }
+}
+
+export async function clearOutboundAudit(): Promise<{ ok: boolean; cleared: number }> {
+  if (!hasEngineBridge()) return { ok: false, cleared: 0 }
+  try {
+    const res = await apiDelete<{ ok?: unknown; cleared?: unknown }>('/v1/privacy/outbound-audit')
+    return {
+      ok: res?.ok !== false,
+      cleared: typeof res?.cleared === 'number' && Number.isFinite(res.cleared) ? res.cleared : 0
+    }
+  } catch {
+    return { ok: false, cleared: 0 }
+  }
+}
+
+export async function getOfflineMode(): Promise<OfflineModeState> {
+  if (!hasEngineBridge()) return { enabled: false, source: 'unavailable', ok: false }
+  try {
+    const res = await apiGet<{ enabled?: unknown; source?: unknown }>('/v1/privacy/offline-mode')
+    return {
+      enabled: Boolean(res?.enabled),
+      ...(typeof res?.source === 'string' ? { source: res.source } : {}),
+      ok: true
+    }
+  } catch {
+    return { enabled: false, source: 'unavailable', ok: false }
+  }
+}
+
+export async function setOfflineMode(enabled: boolean): Promise<OfflineModeState> {
+  if (!hasEngineBridge()) return { enabled: false, source: 'unavailable', ok: false }
+  try {
+    const res = await apiPost<{ enabled?: unknown; source?: unknown }>(
+      '/v1/privacy/offline-mode',
+      { enabled: Boolean(enabled) }
+    )
+    return {
+      enabled: Boolean(res?.enabled),
+      ...(typeof res?.source === 'string' ? { source: res.source } : {}),
+      ok: true
+    }
+  } catch {
+    return { enabled: false, source: 'unavailable', ok: false }
+  }
+}
+
+// ── P3 多 Git Worktree 编码控制面与跨端移动审批 ──────────────────────────────
+export type CodingSessionMode = 'plan' | 'build'
+
+export type CodingAgentEngine =
+  | 'codex'
+  | 'claude-code'
+  | 'opencode'
+  | 'kimi-code'
+  | 'local-ollama'
+  | 'byok-cloud'
+
+export type CodingApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired'
+
+export interface CodingSession {
+  session_id: string
+  title: string
+  repo_path: string
+  worktree_path: string
+  branch: string
+  base_ref: string
+  mode: CodingSessionMode
+  agent_engine: CodingAgentEngine | string
+  status: string
+  created_at: number
+  updated_at: number
+  worktree_exists?: boolean
+}
+
+export interface CreateCodingSessionPayload {
+  repo_path: string
+  title: string
+  base_ref?: string
+  mode?: CodingSessionMode
+  agent_engine?: CodingAgentEngine
+}
+
+export interface CodingDiffFile {
+  path: string
+  status: string
+  additions: number
+  deletions: number
+  diff: string
+}
+
+export interface CodingSessionDiff {
+  session_id: string
+  branch: string
+  mode: CodingSessionMode
+  agent_engine: string
+  file_count: number
+  total_additions: number
+  total_deletions: number
+  files: CodingDiffFile[]
+}
+
+export interface CodingRevertResult {
+  ok: boolean
+  session_id: string
+  path: string
+  action: string
+}
+
+export interface CodingCommitResult {
+  ok: boolean
+  session_id: string
+  branch: string
+  commit_sha: string
+  committed_files: string[]
+}
+
+export interface CodingDestroyResult {
+  ok: boolean
+  session_id: string
+  destroyed: boolean
+}
+
+export interface CodingExecResultDetail {
+  exit_code: number
+  stdout: string
+  stderr: string
+  duration_ms: number
+}
+
+export interface CodingApproval {
+  approval_id: string
+  session_id: string
+  command: string
+  reason: string
+  status: CodingApprovalStatus
+  created_at: number
+  expires_at: number
+  resolved_at?: number | null
+  resolver_note?: string
+  exec_result?: CodingExecResultDetail | null
+}
+
+export type CodingExecResponse =
+  | {
+      status: 'executed'
+      session_id?: string
+      mode?: CodingSessionMode
+      policy?: string
+      result: CodingExecResultDetail
+    }
+  | {
+      status: 'pending_approval'
+      session_id?: string
+      mode?: CodingSessionMode
+      approval: CodingApproval
+    }
+
+const CODING_SAFE_ID_RE = /^[A-Za-z0-9._-]{1,64}$/
+
+function assertSafeCodingId(id: string, label: string): string {
+  const clean = id.trim()
+  if (!CODING_SAFE_ID_RE.test(clean) || clean === '.' || clean === '..') {
+    throw new Error(`Invalid coding ${label}`)
+  }
+  return clean
+}
+
+export async function listCodingSessions(): Promise<CodingSession[]> {
+  const res = await apiGet<{ sessions?: CodingSession[] }>('/v1/coding/sessions')
+  return Array.isArray(res?.sessions) ? res.sessions : []
+}
+
+export async function createCodingSession(
+  payload: CreateCodingSessionPayload
+): Promise<CodingSession> {
+  const body: Record<string, unknown> = {
+    repo_path: payload.repo_path.trim(),
+    title: payload.title.trim()
+  }
+  if (payload.base_ref !== undefined && payload.base_ref.trim()) {
+    body.base_ref = payload.base_ref.trim()
+  }
+  if (payload.mode !== undefined) {
+    body.mode = payload.mode
+  }
+  if (payload.agent_engine !== undefined) {
+    body.agent_engine = payload.agent_engine
+  }
+  return apiPost<CodingSession>('/v1/coding/sessions', body)
+}
+
+export async function getCodingSessionDiff(sessionId: string): Promise<CodingSessionDiff> {
+  const safeId = assertSafeCodingId(sessionId, 'session_id')
+  return apiGet<CodingSessionDiff>(`/v1/coding/sessions/${safeId}/diff`)
+}
+
+export async function setCodingSessionMode(
+  sessionId: string,
+  mode: CodingSessionMode
+): Promise<CodingSession> {
+  const safeId = assertSafeCodingId(sessionId, 'session_id')
+  return apiPost<CodingSession>(`/v1/coding/sessions/${safeId}/mode`, { mode })
+}
+
+export async function revertCodingFile(
+  sessionId: string,
+  path: string
+): Promise<CodingRevertResult> {
+  const safeId = assertSafeCodingId(sessionId, 'session_id')
+  return apiPost<CodingRevertResult>(`/v1/coding/sessions/${safeId}/revert`, {
+    path: path.trim()
+  })
+}
+
+export async function commitCodingSession(
+  sessionId: string,
+  payload: { message: string; files?: string[] }
+): Promise<CodingCommitResult> {
+  const safeId = assertSafeCodingId(sessionId, 'session_id')
+  const body: Record<string, unknown> = {
+    message: payload.message.trim()
+  }
+  if (Array.isArray(payload.files) && payload.files.length > 0) {
+    body.files = payload.files
+  }
+  return apiPost<CodingCommitResult>(`/v1/coding/sessions/${safeId}/commit`, body)
+}
+
+export async function destroyCodingSession(
+  sessionId: string,
+  deleteBranch = true
+): Promise<CodingDestroyResult> {
+  const safeId = assertSafeCodingId(sessionId, 'session_id')
+  const flag = deleteBranch ? 'true' : 'false'
+  return apiDelete<CodingDestroyResult>(
+    `/v1/coding/sessions/${safeId}?delete_branch=${flag}`
+  )
+}
+
+export async function execCodingCommand(
+  sessionId: string,
+  payload: { command: string; timeout?: number }
+): Promise<CodingExecResponse> {
+  const safeId = assertSafeCodingId(sessionId, 'session_id')
+  const body: Record<string, unknown> = {
+    command: payload.command.trim()
+  }
+  if (typeof payload.timeout === 'number' && Number.isFinite(payload.timeout)) {
+    body.timeout = payload.timeout
+  }
+  return apiPost<CodingExecResponse>(`/v1/coding/sessions/${safeId}/exec`, body)
+}
+
+export async function listCodingApprovals(
+  status?: CodingApprovalStatus
+): Promise<CodingApproval[]> {
+  const path = status
+    ? `/v1/coding/approvals?status=${encodeURIComponent(status)}`
+    : '/v1/coding/approvals'
+  const res = await apiGet<{ approvals?: CodingApproval[] }>(path)
+  return Array.isArray(res?.approvals) ? res.approvals : []
+}
+
+export async function resolveCodingApproval(
+  approvalId: string,
+  payload: { decision: 'approve' | 'reject'; note?: string }
+): Promise<CodingApproval> {
+  const safeId = assertSafeCodingId(approvalId, 'approval_id')
+  const body: Record<string, unknown> = {
+    decision: payload.decision
+  }
+  if (payload.note !== undefined && payload.note.trim()) {
+    body.note = payload.note.trim()
+  }
+  return apiPost<CodingApproval>(`/v1/coding/approvals/${safeId}/resolve`, body)
+}
+
+// ── P3 编码控制面（Worktree 并行工作台 + 可视化 Diff + Plan/Build 审批执行）──
+export interface WorkspaceWorktree {
+  path: string
+  branch: string
+  head: string
+  is_main: boolean
+  is_managed: boolean
+  dirty_files: number
+  locked: boolean
+}
+
+export interface WorkspaceWorktreeList {
+  repo_root: string
+  is_git_repo: boolean
+  current_branch: string
+  worktrees: WorkspaceWorktree[]
+}
+
+export interface WorkspaceDiffFile {
+  path: string
+  status: string
+  additions: number
+  deletions: number
+  diff: string
+  truncated: boolean
+}
+
+export interface WorkspaceDiffSnapshot {
+  worktree_path: string
+  branch: string
+  summary: {
+    total_files: number
+    additions: number
+    deletions: number
+  }
+  files: WorkspaceDiffFile[]
+}
+
+export interface WorkspaceExecResult {
+  status: 'executed' | 'approval_required' | 'blocked'
+  mode: 'plan' | 'build'
+  command: string
+  exit_code?: number
+  stdout?: string
+  stderr?: string
+  approval_id?: string
+  risk_level?: string
+  reason?: string
+}
+
+export async function listWorktrees(repoPath: string): Promise<WorkspaceWorktreeList> {
+  const trimmed = repoPath.trim()
+  const path = trimmed
+    ? `/v1/workspace/worktrees?repo_path=${encodeURIComponent(trimmed)}`
+    : '/v1/workspace/worktrees'
+  return apiGet<WorkspaceWorktreeList>(path)
+}
+
+export async function createWorktree(
+  repoPath: string,
+  taskName: string,
+  baseRef?: string
+): Promise<{ ok: boolean; worktree: WorkspaceWorktree }> {
+  const body: Record<string, unknown> = {
+    repo_path: repoPath,
+    task_name: taskName
+  }
+  const ref = baseRef?.trim()
+  if (ref) body.base_ref = ref
+  return apiPost<{ ok: boolean; worktree: WorkspaceWorktree }>('/v1/workspace/worktrees', body)
+}
+
+export async function removeWorktree(
+  repoPath: string,
+  worktreePath: string,
+  opts?: { force?: boolean; delete_branch?: boolean }
+): Promise<{ ok: boolean; removed: string }> {
+  const body: Record<string, unknown> = {
+    repo_path: repoPath,
+    worktree_path: worktreePath
+  }
+  if (typeof opts?.force === 'boolean') body.force = opts.force
+  if (typeof opts?.delete_branch === 'boolean') body.delete_branch = opts.delete_branch
+  return apiPost<{ ok: boolean; removed: string }>('/v1/workspace/worktrees/remove', body)
+}
+
+export async function getWorkspaceDiff(
+  worktreePath: string,
+  staged = false
+): Promise<WorkspaceDiffSnapshot> {
+  const qs = `worktree_path=${encodeURIComponent(worktreePath)}&staged=${staged ? 'true' : 'false'}`
+  return apiGet<WorkspaceDiffSnapshot>(`/v1/workspace/diff?${qs}`)
+}
+
+export async function revertWorkspaceFile(
+  worktreePath: string,
+  filePath: string
+): Promise<{ ok: boolean; file_path: string }> {
+  return apiPost<{ ok: boolean; file_path: string }>('/v1/workspace/revert-file', {
+    worktree_path: worktreePath,
+    file_path: filePath
+  })
+}
+
+export async function commitWorkspace(
+  worktreePath: string,
+  message: string,
+  files?: string[]
+): Promise<{ ok: boolean; commit_sha: string; branch: string; files_committed: number }> {
+  const body: Record<string, unknown> = {
+    worktree_path: worktreePath,
+    message
+  }
+  if (Array.isArray(files) && files.length > 0) body.files = files
+  return apiPost<{ ok: boolean; commit_sha: string; branch: string; files_committed: number }>(
+    '/v1/workspace/commit',
+    body
+  )
+}
+
+export async function runWorkspaceExecPlan(payload: {
+  worktree_path: string
+  mode: 'plan' | 'build'
+  command: string
+  approval_id?: string
+}): Promise<WorkspaceExecResult> {
+  const body: Record<string, unknown> = {
+    worktree_path: payload.worktree_path,
+    mode: payload.mode,
+    command: payload.command
+  }
+  const approvalId = payload.approval_id?.trim()
+  if (approvalId) body.approval_id = approvalId
+  return apiPost<WorkspaceExecResult>('/v1/workspace/exec-plan', body)
 }

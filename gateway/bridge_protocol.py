@@ -283,15 +283,25 @@ _BRIDGE_REPLAY_LEGACY_DDL = (
 )
 
 
+_BRIDGE_REPLAY_OWNED_TABLES = frozenset(
+    {"bridge_nonce_replay", "bridge_nonce_replay_meta"}
+)
+
+
 def _bridge_replay_schema_rows(
     connection: sqlite3.Connection,
+    *,
+    unified: bool = False,
 ) -> tuple[tuple[object, object, object, object], ...]:
-    return tuple(
-        connection.execute(
-            "SELECT type,name,tbl_name,sql FROM sqlite_master "
-            "ORDER BY type,name,tbl_name"
-        ).fetchall()
-    )
+    rows = connection.execute(
+        "SELECT type,name,tbl_name,sql FROM sqlite_master "
+        "ORDER BY type,name,tbl_name"
+    ).fetchall()
+    if unified:
+        return tuple(
+            row for row in rows if str(row[2]) in _BRIDGE_REPLAY_OWNED_TABLES
+        )
+    return tuple(rows)
 
 
 @lru_cache(maxsize=4)
@@ -329,7 +339,10 @@ class PersistentNonceReplayGuard:
         shm_max_bytes: int = 2 * 1024 * 1024,
         busy_timeout_ms: int = 500,
     ) -> None:
+        from storage.unified_db import is_unified_db_path
+
         self.path = Path(os.path.abspath(os.fspath(db_path)))
+        self._unified = is_unified_db_path(self.path)
         self.max_entries = int(max_entries)
         self.cleanup_batch = int(cleanup_batch)
         self.main_db_max_bytes = int(main_db_max_bytes)
@@ -362,48 +375,56 @@ class PersistentNonceReplayGuard:
                     "persistent replay parent directory is unavailable"
                 )
             self._assert_safe_path_components()
-            self._assert_preconnect_file_bounds()
-            (
-                preflight_generation,
-                preflight_identity,
-                preflight_family,
-            ) = self._stabilized_preflight_generation()
-            if self._database_family_presence() != preflight_family:
+            preflight_generation: str | None = None
+            preflight_identity: os.stat_result | None = None
+            if not self._unified:
+                self._assert_preconnect_file_bounds()
                 (
                     preflight_generation,
                     preflight_identity,
                     preflight_family,
                 ) = self._stabilized_preflight_generation()
+                if self._database_family_presence() != preflight_family:
+                    (
+                        preflight_generation,
+                        preflight_identity,
+                        preflight_family,
+                    ) = self._stabilized_preflight_generation()
             connection = self._open_connection(allow_create=True)
             try:
                 self._begin_immediate_with_retry(connection)
-                generation = self._classify_generation(connection)
-                opened_identity = os.lstat(self.path)
-                if preflight_identity is not None and not os.path.samestat(
-                    preflight_identity, opened_identity
-                ):
-                    raise sqlite3.DatabaseError(
-                        "persistent replay identity changed before locked open"
-                    )
-                peer_converged = (
-                    preflight_generation != "current" and generation == "current"
+                generation = self._classify_generation(
+                    connection, unified=self._unified
                 )
-                if generation != preflight_generation and not peer_converged:
-                    raise sqlite3.DatabaseError(
-                        "persistent replay database changed during initialization"
+                if not self._unified:
+                    opened_identity = os.lstat(self.path)
+                    if preflight_identity is not None and not os.path.samestat(
+                        preflight_identity, opened_identity
+                    ):
+                        raise sqlite3.DatabaseError(
+                            "persistent replay identity changed before locked open"
+                        )
+                    peer_converged = (
+                        preflight_generation != "current"
+                        and generation == "current"
                     )
+                    if generation != preflight_generation and not peer_converged:
+                        raise sqlite3.DatabaseError(
+                            "persistent replay database changed during initialization"
+                        )
                 if generation == "empty":
                     self._provision_current(connection)
                 elif generation == "legacy":
                     self._migrate_legacy(connection)
                 elif generation == "current_unversioned":
                     self._validate_connection(connection, require_identity=False)
-                    connection.execute(
-                        f"PRAGMA application_id={_BRIDGE_REPLAY_APPLICATION_ID}"
-                    )
-                    connection.execute(
-                        f"PRAGMA user_version={_BRIDGE_REPLAY_SCHEMA_VERSION}"
-                    )
+                    if not self._unified:
+                        connection.execute(
+                            f"PRAGMA application_id={_BRIDGE_REPLAY_APPLICATION_ID}"
+                        )
+                        connection.execute(
+                            f"PRAGMA user_version={_BRIDGE_REPLAY_SCHEMA_VERSION}"
+                        )
                 elif generation == "current":
                     self._validate_connection(connection)
                 else:
@@ -489,7 +510,7 @@ class PersistentNonceReplayGuard:
                     raise sqlite3.DatabaseError(
                         "persistent replay integrity check failed"
                     )
-                generation = self._classify_generation(connection)
+                generation = self._classify_generation(connection, unified=self._unified)
             finally:
                 connection.rollback()
         if self._database_family_presence() != presence:
@@ -535,11 +556,27 @@ class PersistentNonceReplayGuard:
         ) from last_change
 
     @staticmethod
-    def _classify_generation(connection: sqlite3.Connection) -> str:
+    def _classify_generation(
+        connection: sqlite3.Connection,
+        *,
+        unified: bool = False,
+    ) -> str:
+        rows = _bridge_replay_schema_rows(connection, unified=unified)
+        current = _materialized_bridge_replay_schema(_BRIDGE_REPLAY_SCHEMA_DDL)
+        if unified:
+            if not rows:
+                return "empty"
+            if rows == current:
+                return "current"
+            if rows == _materialized_bridge_replay_schema(
+                _BRIDGE_REPLAY_LEGACY_DDL
+            ):
+                return "legacy"
+            raise sqlite3.DatabaseError(
+                "unknown unified persistent replay database subset"
+            )
         application_id = int(connection.execute("PRAGMA application_id").fetchone()[0])
         user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-        rows = _bridge_replay_schema_rows(connection)
-        current = _materialized_bridge_replay_schema(_BRIDGE_REPLAY_SCHEMA_DDL)
         if (
             application_id == _BRIDGE_REPLAY_APPLICATION_ID
             and user_version == _BRIDGE_REPLAY_SCHEMA_VERSION
@@ -575,12 +612,13 @@ class PersistentNonceReplayGuard:
         for statement in _BRIDGE_REPLAY_SCHEMA_DDL:
             connection.execute(statement)
         self._insert_meta(connection, 0)
-        connection.execute(
-            f"PRAGMA application_id={_BRIDGE_REPLAY_APPLICATION_ID}"
-        )
-        connection.execute(
-            f"PRAGMA user_version={_BRIDGE_REPLAY_SCHEMA_VERSION}"
-        )
+        if not self._unified:
+            connection.execute(
+                f"PRAGMA application_id={_BRIDGE_REPLAY_APPLICATION_ID}"
+            )
+            connection.execute(
+                f"PRAGMA user_version={_BRIDGE_REPLAY_SCHEMA_VERSION}"
+            )
 
     def _migrate_legacy(self, connection: sqlite3.Connection) -> None:
         rows = connection.execute(
@@ -732,11 +770,12 @@ class PersistentNonceReplayGuard:
             raise BridgeReplayStoreUnavailable(
                 "persistent replay database identity changed"
             )
-        if current.st_size < 0 or current.st_size > self.main_db_max_bytes:
+        if not self._unified and (current.st_size < 0 or current.st_size > self.main_db_max_bytes):
             raise BridgeReplayStoreUnavailable(
                 "persistent replay database exceeds its byte limit"
             )
-        self._assert_sidecar_bounds()
+        if not self._unified:
+            self._assert_sidecar_bounds()
 
     def _assert_sidecar_bounds(self) -> None:
         wal = Path(f"{self.path}-wal")
@@ -815,7 +854,7 @@ class PersistentNonceReplayGuard:
         quick_check: bool = False,
         require_runtime_profile: bool = False,
     ) -> None:
-        if require_identity:
+        if require_identity and not self._unified:
             application_id = connection.execute("PRAGMA application_id").fetchone()
             user_version = connection.execute("PRAGMA user_version").fetchone()
             if (
@@ -827,7 +866,7 @@ class PersistentNonceReplayGuard:
                 raise sqlite3.DatabaseError(
                     "persistent replay database identity is invalid"
                 )
-        if _bridge_replay_schema_rows(connection) != (
+        if _bridge_replay_schema_rows(connection, unified=self._unified) != (
             _materialized_bridge_replay_schema(_BRIDGE_REPLAY_SCHEMA_DDL)
         ):
             raise sqlite3.DatabaseError("unexpected persistent replay schema")
@@ -934,7 +973,7 @@ class PersistentNonceReplayGuard:
             data_version != self._trusted_data_version
             or schema_version != self._trusted_schema_version
         ):
-            if self._classify_generation(connection) != "current":
+            if self._classify_generation(connection, unified=self._unified) != "current":
                 raise sqlite3.DatabaseError(
                     "persistent replay generation changed"
                 )

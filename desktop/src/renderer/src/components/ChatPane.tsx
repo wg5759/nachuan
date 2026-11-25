@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import React, { useEffect, useRef, useState } from 'react'
+import { useTranslation } from '../i18n'
 import {
   agentChat,
   agentExec,
@@ -15,7 +15,6 @@ import {
   PAID_VIDEO_FAILURE_STATUSES,
   PAID_VIDEO_SUCCESS_STATUSES,
   pollVideo,
-  transcribeAudio,
   translateText,
   lapianVideo,
   lapianUrl,
@@ -64,8 +63,8 @@ import {
 } from '../creative-composer-bridge'
 import { PaidMediaRecoveryCard } from './PaidMediaRecoveryCard'
 import { FirstRunModelPrompt } from './FirstRunModelPrompt'
-import { MAX_PENDING_IMAGES, isTextAttachmentFile, planPickedFiles } from '../utils/attachments'
-import type { RuntimeCapabilityManifest, RuntimeKind } from '../../../runtime-capabilities'
+import { MAX_PENDING_IMAGES, planPickedFiles } from '../utils/attachments'
+import { CLIENT_PORT_CAPABILITIES } from '../../../runtime-capabilities'
 import {
   isActionTask,
   isDailyVideoWorkflow,
@@ -82,835 +81,59 @@ import {
   extractUrl,
   ANY_URL
 } from '../utils/intent'
+import {
+  APP_CAPABILITY_SYSTEM,
+  DAILY_VIDEO_ROOT,
+  DOC_THRESHOLD,
+  EMPTY_MSGS,
+  agentEventLine,
+  copyTextToClipboard,
+  diffStat,
+  docsToContext,
+  downloadMedia,
+  formatElapsed,
+  formatTokenUsage,
+  hasTokenUsage,
+  imageFileToDataUrl,
+  isLocalModelInfo,
+  latestDisplayImages,
+  maxStepsForReasoning,
+  messagesToAgentHistory,
+  msgToModelText,
+  pastedDocName,
+  playCompletionChime,
+  resolveChatPrivacyFlags,
+  routeLabelZh,
+  splitFleetProgress,
+  type ExecPermissionMode,
+  type PendingDoc,
+  type PendingImage,
+  type QueuedMessage,
+  type ReasoningLevel,
+  type ResolvedChatPrivacyFlags
+} from './chat/chatUtils'
+import {
+  observePaidMediaNearViewport,
+  ResolvedPaidMediaImage,
+  ResolvedPaidMediaVideo
+} from './chat/PaidMediaView'
+import { DocCard } from './chat/DocCard'
+import {
+  ComposerAttachmentRow,
+  ComposerIcon,
+  ComposerMenu,
+  ComposerPrivacyControls,
+  ExecPermissionMenu
+} from './chat/ComposerControls'
+import { useVoiceRecorder } from './chat/useVoiceRecorder'
 
-// 显示消息类型现来自 store（按对话持久化）；这里给一个稳定的空数组常量，避免无谓重渲染
-const EMPTY_MSGS: DisplayMsg[] = []
-
-// 简易行级 diff 统计（多重集交集）：给内联动作卡显示 +增/-删
-function diffStat(before: string, after: string): { add: number; del: number } {
-  const b = before ? before.split('\n') : []
-  const a = after ? after.split('\n') : []
-  const bag = new Map<string, number>()
-  for (const l of b) bag.set(l, (bag.get(l) || 0) + 1)
-  let same = 0
-  for (const l of a) {
-    const c = bag.get(l) || 0
-    if (c > 0) {
-      bag.set(l, c - 1)
-      same++
-    }
-  }
-  return { add: a.length - same, del: b.length - same }
-}
-
-// 「大脑说了算」：主栏只有一个「大脑」选择，就两种用法——
-//   ① 选「纳川·智脑/Ultra」= 让所有模型智能路由、配合干活（编排：分诊/点将/动手/验证）；
-//   ② 选某个具体模型 = 单独用它。没有别的模式/选项，力求最简。
-// 「超级助手」(记忆/案例/反思) 已做成底层通用——任何对话默认带记忆，不再作为可选模式。
-// 意图识别正则全部抽到 ../utils/intent（可单测，见 utils/intent.test.ts，#22）；
-// 舰队路径彻底不用正则——该不该动手/生图/生视频/拉片全由舰队用工具自决，正则仅留给"单独用某个模型"的默认路径。
-
-// 超级体路由标签 → 中文（case_reuse=复用强模型解法、teacher=强模型解、cheap=免费模型）
-const routeLabelZh = (label: string): string =>
-  ({ case_reuse: '复用案例', teacher: '强模型解', cheap: '免费模型' })[label] ?? label
-
-// ── 文档附件（超长文 → 文档卡）──────────────────────────────────────────────
-// 粘贴/输入超过这么多字符，就当成「一份文档」而不是一句话：转成文档附件，不在输入框/气泡里铺一墙字。
-const DOC_THRESHOLD = 2000
-type PendingDoc = { name: string; content: string }
-// dataUrl：添加时后台算好（≤2MB 的图才算），草稿持久化用——重启后据此重建 File（机主要求：未发送的不丢）
-type PendingImage = { name: string; url: string; file: File; dataUrl?: string }
-// convId：排队消息属于入队时的对话——完成后只发回那个对话，绝不窜进新开的窗口
-type QueuedMessage = { text: string; docs?: PendingDoc[]; images?: PendingImage[]; convId?: string }
-const DAILY_VIDEO_ROOT = 'D:\\AI视频制作'
-// 目标工作目录已改为「每对话独立」存在 conversation.workdir 里（不再用全局 localStorage）。
-const APP_CAPABILITY_SYSTEM: ChatMsg = {
-  role: 'system',
-  content: [
-    '你运行在“纳川”桌面应用中，不是孤立网页模型。',
-    '普通聊天只负责回答；需要读写本地文件、运行命令、调用其它模型时，应使用“动手执行/执行代理”路线。',
-    '执行代理提供受工作区约束的 list_dir/read_file/write_file 与 list_models/ask_model 等工具；宿主命令在独立低权限执行器接入前保持关闭。',
-    '纳川有长期记忆、知识库检索和上下文压缩；压缩只处理旧工具输出/冗余上下文，不改变用户当前指令。',
-    '不要直接声称“无法访问本地文件/无法调用其它模型”；应说明当前路线能否通过纳川工具完成。'
-  ].join('\n')
-}
-// 文本类文件（点 ＋ 选文件时，这些后缀/类型按文档处理；图片/视频仍走看图/拉片）
-const isTextFile = isTextAttachmentFile
-// 给粘贴的长文起个名字：取首行前 16 字做标题，没有就叫「长文」
-const pastedDocName = (text: string): string => {
-  const head = text.trim().split('\n')[0]?.slice(0, 16).trim()
-  return `${head || '长文'}.md`
-}
-// 文档附件 → 喂给模型的上下文块（带文件名与分隔，模型能据实引用）
-function docsToContext(docs: { name: string; content: string }[]): string {
-  return docs.map((d) => `【附件文档：${d.name}】\n${d.content}`).join('\n\n')
-}
-// 一条消息真正喂给模型的文字 = 文档附件展开 + 正文（历史轮次也据此重新带上文档，问下一句不丢上下文）
-function msgToModelText(m: DisplayMsg): string {
-  if (m.docs?.length) {
-    const ctx = docsToContext(m.docs)
-    return m.content ? `${ctx}\n\n${m.content}` : ctx
-  }
-  return m.content
-}
-
-// 图片不持久化，但在当前桌面会话内要保留结构化 image_url：同轮上传图、上一轮 AI 生图
-// 才能被纳川 agent 的 staged_images 找到。只给“最近一组图”，避免旧图混进本轮 keyframes。
-function displayImageUrls(m: DisplayMsg): string[] {
-  const urls = (m.images ?? []).filter(
-    (url) => url.startsWith('data:image/') || url.startsWith('http://') || url.startsWith('https://')
-  )
-  const markdown = [...m.content.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)].map((x) => x[1])
-  return [...new Set([...urls, ...markdown].filter((url): url is string => Boolean(url)))]
-}
-
-function messagesToAgentHistory(messages: DisplayMsg[]): ChatMsg[] {
-  let latestImageIndex = -1
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (displayImageUrls(messages[i]).length) {
-      latestImageIndex = i
-      break
-    }
-  }
-  const hist = messages.map((m, i) => {
-    const text = msgToModelText(m)
-    const urls = i === latestImageIndex ? displayImageUrls(m) : []
-    const content: string | ChatContentPart[] = urls.length
-      ? [
-          ...(text ? [{ type: 'text' as const, text }] : []),
-          ...urls.map((url) => ({ type: 'image_url' as const, image_url: { url } }))
-        ]
-      : text
-    return { role: m.role, content } as ChatMsg
-  })
-  // 后台任务上下文衔接（机主定案）：插队/继续聊时，正在跑的生视频任务必须"在场"——
-  // 用户此刻发消息多半是对它的补充/修改/询问，模型不知道任务存在就会无头接话。
-  // 注入一条说明（含任务内容+进行中状态+能改什么不能改什么），让模型接得上。
-  const running = messages.filter((m) => m.videoTask && !m.video)
-  if (running.length) {
-    const lines = running.map(
-      (m, j) =>
-        `${j + 1}. ${m.videoTask!.task_id.startsWith('studio:') ? '长视频(分镜逐镜生成)' : '短视频'}：` +
-        `${m.videoTask!.prompt || '(内容见上文对话)'}`
-    )
-    hist.push({
-      role: 'assistant',
-      content:
-        `〔系统提示·后台任务进行中〕当前有 ${running.length} 个生视频任务正在引擎后台运行，成片会自动贴回对话：\n` +
-        lines.join('\n') +
-        '\n用户接下来的话可能是对这些任务的补充/修改/询问——请结合任务内容理解，别当成无关新话题。' +
-        '注意：已派发任务的画面参数中途改不了；用户若要改内容，如实说明并给两个选择：重新派一个新任务（含新要求），或等成片出来再调整。用户问进度就答"还在后台生成中，做好自动贴回"，绝不要重新调用生成工具。'
-    } as ChatMsg)
-  }
-  return hist
-}
-
-function latestDisplayImages(messages: DisplayMsg[]): string[] {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const urls = displayImageUrls(messages[i])
-    if (urls.length) return urls
-  }
-  return []
-}
-
-// 舰队号判定 isFleetModelId + 选单显示名 modelLabel 已抽到 ./ModelSelector（选择器移进顶栏后两处共用）。
-
-// 舰队流式正文形如：开头若干「进度行」（⚙ 路由 / ⚙ 点将#1 / 💭 … / 　· … / 🔍 审核 / ⬆ 升级），
-// 空行后接正文。把开头连续的进度行剥出来渲染成可折叠时间线，正文照常。
-// 进度行判定：以 ⚙/💭/🔍/⬆ 开头，或以空白+「·」开头的缩进子项。
-function isFleetProgressLine(line: string): boolean {
-  return /^(⚙|💭|🔍|⬆)/.test(line) || /^\s+·/.test(line)
-}
-
-// 从舰队消息里分离「开头连续进度行」与正文。碰到第一条非进度、非空的行即为正文起点；
-// 进度块与正文之间的空行吞掉。若一行进度都没有 → steps 为空、正文即原文（普通消息不受影响）。
-function splitFleetProgress(content: string): { steps: string[]; body: string } {
-  const lines = content.split('\n')
-  const steps: string[] = []
-  let i = 0
-  while (i < lines.length) {
-    const line = lines[i]
-    if (isFleetProgressLine(line)) {
-      steps.push(line)
-      i += 1
-    } else if (line.trim() === '' && steps.length > 0) {
-      // 进度块内部/收尾的空行：跳过，不计入正文也不计入步骤
-      i += 1
-    } else {
-      break
-    }
-  }
-  if (steps.length === 0) return { steps: [], body: content }
-  return { steps, body: lines.slice(i).join('\n') }
-}
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = () => reject(reader.error ?? new Error('read image failed'))
-    reader.onload = () => resolve(String(reader.result || ''))
-    reader.readAsDataURL(file)
-  })
-}
-
-// 大图压缩后再发：原图 base64 直发（16宫格图动辄数MB）是三重毒——payload 过代理易触发
-// TLS 记录损坏(DECRYPTION_FAILED_OR_BAD_RECORD_MAC，机主实测舰队直接炸)、视觉 token 爆炸、
-// localStorage 配额吃紧。≤300KB 原样；更大则等比缩到最长边 1600px、JPEG 0.85（透明填白底）。
-async function imageFileToDataUrl(file: File): Promise<string> {
-  const raw = await readFileAsDataUrl(file)
-  if (raw.length < 300_000) return raw
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const el = new Image()
-      el.onload = () => resolve(el)
-      el.onerror = () => reject(new Error('decode image failed'))
-      el.src = raw
-    })
-    const scale = Math.min(1, 1600 / Math.max(img.width, img.height, 1))
-    const w = Math.max(1, Math.round(img.width * scale))
-    const h = Math.max(1, Math.round(img.height * scale))
-    const canvas = document.createElement('canvas')
-    canvas.width = w
-    canvas.height = h
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return raw
-    ctx.fillStyle = '#fff' // JPEG 无透明通道：白底
-    ctx.fillRect(0, 0, w, h)
-    ctx.drawImage(img, 0, 0, w, h)
-    const out = canvas.toDataURL('image/jpeg', 0.85)
-    return out.length < raw.length ? out : raw // 压完反而更大(罕见)就用原图
-  } catch {
-    return raw // 解码/画布失败 → 原图兜底，绝不因压缩丢图
-  }
-}
-
-const usageValue = (usage: TokenUsage | undefined, key: keyof TokenUsage): number | undefined => {
-  const n = Number(usage?.[key])
-  return Number.isFinite(n) ? n : undefined
-}
-
-function hasTokenUsage(usage?: TokenUsage): boolean {
-  return ['prompt_tokens', 'completion_tokens', 'total_tokens', 'cached_tokens'].some(
-    (k) => usageValue(usage, k as keyof TokenUsage) !== undefined
-  )
-}
-
-function formatTokenUsage(
-  usage: TokenUsage | undefined,
-  t: (key: string, opts?: Record<string, unknown>) => string
-): string {
-  if (!hasTokenUsage(usage)) return ''
-  const total = usageValue(usage, 'total_tokens')
-  const prompt = usageValue(usage, 'prompt_tokens')
-  const completion = usageValue(usage, 'completion_tokens')
-  const cached = usageValue(usage, 'cached_tokens')
-  const parts: string[] = []
-  if (total !== undefined) parts.push(t('chat.tokenTotal', { n: total }))
-  const io: string[] = []
-  if (prompt !== undefined) io.push(t('chat.tokenIn', { n: prompt }))
-  if (completion !== undefined) io.push(t('chat.tokenOut', { n: completion }))
-  if (io.length) parts.push(io.join(' / '))
-  if (cached) parts.push(t('chat.tokenCached', { n: cached }))
-  return parts.join(' · ')
-}
-
-// 把图片/视频存到本地。走主进程保存（原生「另存为」对话框）：渲染层 fetch(https/blob)
-// 会被 CSP connect-src 拦死→旧实现静默吞掉、点了毫无反应（机主实测「保存根本无效」的根因）。
-// data:/blob: 在渲染层取字节传 bytes；https 传 url 让主进程 net.fetch 代下（无 CORS/CSP）。
-async function downloadMedia(originalSrc: string, filename: string): Promise<void> {
-  let src = originalSrc
-  let releaseReference: string | null = null
-  try {
-    if (isDurablePaidMediaAssetRef(src) && window.api?.resolvePaidMediaAsset) {
-      src = await window.api.resolvePaidMediaAsset(src)
-      releaseReference = originalSrc
-    }
-    try {
-      if (window.api?.saveMedia) {
-        let r: { ok: boolean; path?: string; error?: string }
-        if (/^https?:/i.test(src)) {
-          r = await window.api.saveMedia({ filename, url: src })
-        } else {
-          const bytes = await (await fetch(src)).arrayBuffer() // data:/blob: 本地取字节，CSP 已放行
-          r = await window.api.saveMedia({ filename, bytes })
-        }
-        if (!r.ok && r.error !== 'canceled') window.alert(`保存失败：${r.error || '未知错误'}`)
-        // A privileged main-process rejection is final.  Falling through to a
-        // renderer fetch would bypass its SSRF/redirect/size policy if CSP is
-        // relaxed in a future release.
-        return
-      }
-    } catch {
-      window.alert('保存失败：媒体读取或安全校验未通过')
-      return
-    }
-    if (/^https?:/i.test(src)) {
-      window.alert('保存失败：安全下载服务不可用')
-      return
-    }
-    try {
-      // 仅旧 preload 缺失时为本地 data/blob 保留锚点兜底；远程 URL 永不走此路径。
-      const blob = await (await fetch(src)).blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 2000)
-    } catch {
-      // 全失败也不打断对话
-    }
-  } finally {
-    if (releaseReference) window.api?.releasePaidMediaAsset?.(releaseReference)
-  }
-}
-
-export function observePaidMediaNearViewport(
-  target: Element,
-  onVisibilityChange: (nearViewport: boolean) => void,
-  Observer: typeof IntersectionObserver | undefined =
-    typeof globalThis.IntersectionObserver === 'function'
-      ? globalThis.IntersectionObserver
-      : undefined
-): () => void {
-  if (!Observer) return () => {}
-  const observer = new Observer(
-    (entries) => {
-      const entry = entries.find((candidate) => candidate.target === target)
-      if (entry) onVisibilityChange(entry.isIntersecting)
-    },
-    { rootMargin: '512px 0px' }
-  )
-  observer.observe(target)
-  return () => observer.disconnect()
-}
-
-function useResolvedMediaSource<T extends Element>(
-  src: string | undefined
-): [string | undefined, React.RefCallback<T>] {
-  const durable = Boolean(src && isDurablePaidMediaAssetRef(src))
-  const [resolved, setResolved] = useState<string | undefined>(durable ? undefined : src)
-  const [target, setTargetElement] = useState<T | null>(null)
-  const setTarget = useCallback((node: T | null) => setTargetElement(node), [])
-  useEffect(() => {
-    setResolved(durable ? undefined : src)
-    if (
-      !src ||
-      !durable ||
-      !target ||
-      !window.api?.resolvePaidMediaAsset
-    ) {
-      return
-    }
-    let disposed = false
-    let nearViewport = false
-    let owned = false
-    let requestGeneration = 0
-    const release = (): void => {
-      if (owned) {
-        window.api?.releasePaidMediaAsset?.(src)
-        owned = false
-      }
-    }
-    const stopObserving = observePaidMediaNearViewport(
-      target,
-      (isNearViewport) => {
-        if (isNearViewport === nearViewport) return
-        nearViewport = isNearViewport
-        requestGeneration += 1
-        const generation = requestGeneration
-        if (!nearViewport) {
-          setResolved(undefined)
-          release()
-          return
-        }
-        void window.api
-          ?.resolvePaidMediaAsset?.(src)
-          .then((url) => {
-            owned = true
-            if (disposed || !nearViewport || generation !== requestGeneration) {
-              release()
-              return
-            }
-            setResolved(url)
-          })
-          .catch(() => {
-            // Keep the durable reference in state for later retry/reload; never expose it as src.
-          })
-      }
-    )
-    return () => {
-      disposed = true
-      requestGeneration += 1
-      stopObserving()
-      release()
-    }
-  }, [durable, src, target])
-  return [resolved, setTarget]
-}
-
-function ResolvedPaidMediaImage(props: React.ImgHTMLAttributes<HTMLImageElement>): React.JSX.Element {
-  const [resolved, setTarget] = useResolvedMediaSource<HTMLImageElement>(
-    typeof props.src === 'string' ? props.src : undefined
-  )
-  return <img {...props} ref={setTarget} src={resolved} loading={props.loading ?? 'lazy'} />
-}
-
-function ResolvedPaidMediaVideo(props: React.VideoHTMLAttributes<HTMLVideoElement>): React.JSX.Element {
-  const [resolved, setTarget] = useResolvedMediaSource<HTMLVideoElement>(
-    typeof props.src === 'string' ? props.src : undefined
-  )
-  return <video {...props} ref={setTarget} src={resolved} preload={props.preload ?? 'metadata'} />
-}
-
-function formatElapsed(start?: number, end?: number): string {
-  if (!start) return ''
-  const ms = Math.max(0, (end ?? Date.now()) - start)
-  const sec = Math.round(ms / 1000)
-  if (sec < 60) return `${sec}s`
-  const min = Math.floor(sec / 60)
-  const rest = sec % 60
-  return `${min}m ${rest}s`
-}
-
-// 单行截断（时间线里 verdict/plan 可能很长，别撑爆 UI；整行 title 保留全文可悬停看）。
-const clip = (s: unknown, n = 160): string =>
-  String(s ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, n)
-
-// 把编排器的一个进度事件渲染成时间线里的一行（i18n）。返回 null 表示这类事件不单独成行。
-type TFn = (key: string, opts?: Record<string, unknown>) => string
-function agentEventLine(ev: AgentEvent, t: TFn): string | null {
-  switch (ev.type) {
-    case 'route': {
-      const diff = String((ev.difficulty as string) ?? '')
-      const model = String((ev.model as string) ?? '?')
-      return ev.complex
-        ? t('chat.agRouteComplex', { model, difficulty: diff })
-        : t('chat.agRouteSimple', { model })
-    }
-    case 'plan':
-      return t('chat.agPlan', { plan: clip(ev.plan, 200) })
-    case 'step':
-      return t('chat.agStep', { log: clip(ev.log, 180) })
-    case 'verify':
-      return (ev.verified ? t('chat.agVerifyPass') : t('chat.agVerifyFail')) +
-        (ev.verdict ? ` — ${clip(ev.verdict, 160)}` : '')
-    case 'escalate':
-      return t('chat.agEscalate', { from: String(ev.from ?? '?'), to: String(ev.to ?? '?') })
-    case 'replan':
-      return t('chat.agReplan', { model: String(ev.model ?? '?'), plan: clip(ev.plan, 200) })
-    case 'done':
-      return t(ev.verified === false ? 'chat.agDoneBest' : 'chat.agDone')
-    default:
-      return null
-  }
-}
-
-// 消息里的「文档卡」：紧凑显示文件名+字数，可展开预览全文、下载成 .md
-function DocCard({ doc }: { doc: { name: string; chars: number; content: string } }): React.ReactNode {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-  const download = (): void => {
-    const blob = new Blob([doc.content], { type: 'text/markdown;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = /\.(md|markdown|txt)$/i.test(doc.name) ? doc.name : `${doc.name}.md`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
-  }
-  return (
-    <div className="inline-block text-left border border-neutral-700 rounded-md bg-neutral-900 max-w-[85%] overflow-hidden align-top">
-      <div className="flex items-center gap-2 px-2 py-1 text-xs">
-        <span className="text-base leading-none">📄</span>
-        <span className="text-neutral-200 truncate max-w-[160px]">{doc.name}</span>
-        <span className="text-neutral-500 shrink-0">{t('chat.docChars', { n: doc.chars })}</span>
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className="ml-1 text-neutral-400 hover:text-neutral-100 shrink-0"
-        >
-          {open ? t('chat.docCollapse') : t('chat.docPreview')}
-        </button>
-        <button onClick={download} className="text-neutral-400 hover:text-neutral-100 shrink-0">
-          {t('chat.docDownload')}
-        </button>
-      </div>
-      {open && (
-        <div className="max-h-60 overflow-auto px-2 py-1 border-t border-neutral-800 text-xs text-neutral-300 whitespace-pre-wrap select-text">
-          {doc.content}
-        </div>
-      )}
-    </div>
-  )
-}
-
-type ExecPermissionMode = 'plan' | 'auto' | 'full' | 'custom'
-type ReasoningLevel = 'low' | 'medium' | 'high'
-
-// 步数=安全天花板，不是"到点就收尾"。纳川的 agent 本来就会在"模型给出最终答案"时自然停，
-// 加上循环/停滞检测挡打转——所以这里放宽，让复杂长任务能真正干到完成(像 Claude/Codex 那样)，
-// 而不是到 24 就被砍断。真跑飞了有停滞检测兜底。
-const maxStepsForReasoning = (level: ReasoningLevel): number =>
-  level === 'high' ? 80 : level === 'medium' ? 50 : 30
-
-const EXEC_PERMISSION_OPTIONS: {
-  value: ExecPermissionMode
-  label: string
-  desc: string
-}[] = [
-  { value: 'plan', label: 'chat.perm_request', desc: 'chat.permdesc_request' },
-  { value: 'auto', label: 'chat.perm_auto', desc: 'chat.permdesc_auto' },
-  { value: 'full', label: 'chat.perm_full', desc: 'chat.permdesc_full' },
-  { value: 'custom', label: 'chat.perm_custom', desc: 'chat.permdesc_custom' }
-]
-
-function PermissionIcon({ mode, className = '' }: { mode: ExecPermissionMode; className?: string }): React.ReactNode {
-  const common = {
-    width: 22,
-    height: 22,
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 1.8,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
-    className
-  }
-  if (mode === 'plan') {
-    return (
-      <svg {...common}>
-        <path d="M7 11.5V6.8a1.4 1.4 0 0 1 2.8 0v4.1" />
-        <path d="M9.8 10.7V5.4a1.4 1.4 0 0 1 2.8 0v5.3" />
-        <path d="M12.6 10.5V6.7a1.4 1.4 0 0 1 2.8 0v4.6" />
-        <path d="M15.4 11.7V8.8a1.4 1.4 0 0 1 2.8 0v5.6c0 4.1-2.5 6.6-6.2 6.6h-.7c-2.2 0-3.7-.9-4.8-2.5L4.2 15a1.5 1.5 0 0 1 2.5-1.6L8 15.1" />
-      </svg>
-    )
-  }
-  if (mode === 'auto') {
-    return (
-      <svg {...common}>
-        <path d="M12 3.2 19 6v5.3c0 4.3-2.7 7.7-7 9.5-4.3-1.8-7-5.2-7-9.5V6l7-2.8Z" />
-        <path d="m8.8 12.1 2.1 2.1 4.4-4.6" />
-      </svg>
-    )
-  }
-  if (mode === 'full') {
-    return (
-      <svg {...common}>
-        <path d="M12 3.2 19 6v5.3c0 4.3-2.7 7.7-7 9.5-4.3-1.8-7-5.2-7-9.5V6l7-2.8Z" />
-        <path d="M12 7.8v5.1" />
-        <path d="M12 16.3h.01" />
-      </svg>
-    )
-  }
-  return (
-    <svg {...common}>
-      <path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" />
-      <path d="M19.4 15a1.8 1.8 0 0 0 .4 2l.1.1a2.1 2.1 0 0 1-3 3l-.1-.1a1.8 1.8 0 0 0-2-.4 1.8 1.8 0 0 0-1.1 1.6v.2a2.1 2.1 0 0 1-4.2 0v-.2a1.8 1.8 0 0 0-1.1-1.6 1.8 1.8 0 0 0-2 .4l-.1.1a2.1 2.1 0 0 1-3-3l.1-.1a1.8 1.8 0 0 0 .4-2 1.8 1.8 0 0 0-1.6-1.1H2a2.1 2.1 0 0 1 0-4.2h.2a1.8 1.8 0 0 0 1.6-1.1 1.8 1.8 0 0 0-.4-2l-.1-.1a2.1 2.1 0 0 1 3-3l.1.1a1.8 1.8 0 0 0 2 .4h.1a1.8 1.8 0 0 0 1-1.6V2a2.1 2.1 0 0 1 4.2 0v.2a1.8 1.8 0 0 0 1.1 1.6 1.8 1.8 0 0 0 2-.4l.1-.1a2.1 2.1 0 0 1 3 3l-.1.1a1.8 1.8 0 0 0-.4 2v.1a1.8 1.8 0 0 0 1.6 1H22a2.1 2.1 0 0 1 0 4.2h-.2a1.8 1.8 0 0 0-1.6 1.1l-.8.2Z" />
-    </svg>
-  )
-}
-
-function ExecPermissionMenu({
-  value,
-  onChange
-}: {
-  value: ExecPermissionMode
-  onChange: (v: ExecPermissionMode) => void
-}): React.ReactNode {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent): void => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [open])
-
-  const cur = EXEC_PERMISSION_OPTIONS.find((o) => o.value === value) ?? EXEC_PERMISSION_OPTIONS[1]
-  const hot = value === 'full'
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        title={t('chat.execPerm')}
-        onClick={() => setOpen((v) => !v)}
-        className={`h-8 inline-flex items-center gap-1.5 rounded-md px-2 text-sm hover:bg-neutral-800 ${
-          hot ? 'text-orange-400' : 'text-neutral-300'
-        }`}
-      >
-        <PermissionIcon mode={value} className="shrink-0" />
-        <span className="max-w-[9rem] truncate">{t(cur.label)}</span>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 opacity-70">
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="absolute left-0 bottom-full z-50 mb-2 w-[min(430px,calc(100vw-40px))] rounded-2xl border border-neutral-700 bg-neutral-950/95 py-2 shadow-2xl backdrop-blur">
-          {EXEC_PERMISSION_OPTIONS.map((o) => {
-            const selected = o.value === value
-            return (
-              <button
-                key={o.value}
-                type="button"
-                onClick={() => {
-                  onChange(o.value)
-                  setOpen(false)
-                }}
-                className={`flex w-full items-center gap-4 px-5 py-3 text-left transition-colors ${
-                  selected ? 'bg-neutral-800/80' : 'hover:bg-neutral-900'
-                }`}
-              >
-                <PermissionIcon mode={o.value} className="shrink-0 text-neutral-400" />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-base leading-6 text-neutral-100">{t(o.label)}</span>
-                  <span className="block text-sm leading-5 text-neutral-500">{t(o.desc)}</span>
-                </span>
-                {selected && (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-neutral-200">
-                    <path d="m20 6-11 11-5-5" />
-                  </svg>
-                )}
-              </button>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function ComposerIcon({
-  type,
-  className = ''
-}: {
-  type: 'plus' | 'file' | 'target' | 'plan' | 'x'
-  className?: string
-}): React.ReactNode {
-  const common = {
-    width: 20,
-    height: 20,
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 1.8,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
-    className
-  }
-  if (type === 'file') {
-    return (
-      <svg {...common}>
-        <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7Z" />
-        <path d="M14 2v5h5" />
-        <path d="M9 13h6" />
-        <path d="M9 17h4" />
-      </svg>
-    )
-  }
-  if (type === 'target') {
-    return (
-      <svg {...common}>
-        <circle cx="12" cy="12" r="8" />
-        <circle cx="12" cy="12" r="3" />
-        <path d="M12 2v3" />
-        <path d="M12 19v3" />
-        <path d="M2 12h3" />
-        <path d="M19 12h3" />
-      </svg>
-    )
-  }
-  if (type === 'plan') {
-    return (
-      <svg {...common}>
-        <path d="M8 6h13" />
-        <path d="M8 12h13" />
-        <path d="M8 18h13" />
-        <path d="m3 6 .6.6L5 5.2" />
-        <path d="m3 12 .6.6L5 11.2" />
-        <path d="m3 18 .6.6L5 17.2" />
-      </svg>
-    )
-  }
-  if (type === 'x') {
-    return (
-      <svg {...common}>
-        <path d="M18 6 6 18" />
-        <path d="m6 6 12 12" />
-      </svg>
-    )
-  }
-  return (
-    <svg {...common}>
-      <path d="M12 5v14" />
-      <path d="M5 12h14" />
-    </svg>
-  )
-}
-
-export function ComposerAttachmentRow({
-  runtimeKind,
-  runtimeCapabilities,
-  onPickFile,
-  onPickFolder
-}: {
-  runtimeKind: RuntimeKind
-  runtimeCapabilities: RuntimeCapabilityManifest
-  onPickFile: () => void
-  onPickFolder: () => void
-}): React.JSX.Element {
-  const { t } = useTranslation()
-  const surface = runtimeKind === 'electron' ? 'electron' : 'localWeb'
-  const directorySupport =
-    runtimeCapabilities.capabilities.directoryPicker.surfaces[surface].declaredSupport
-  const canPickDirectory =
-    directorySupport === 'implemented' || directorySupport === 'implemented-with-preconditions'
-
-  return (
-    <div className="flex px-1.5">
-      <button
-        type="button"
-        onClick={onPickFile}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-neutral-900"
-      >
-        <ComposerIcon type="file" className="shrink-0 text-neutral-400" />
-        <span className="min-w-0 flex-1 truncate text-sm text-neutral-100">{t('chat.addFile')}</span>
-      </button>
-      {canPickDirectory && (
-        <button
-          type="button"
-          onClick={onPickFolder}
-          className="ml-1 rounded-lg border border-neutral-800 px-2 text-xs text-neutral-300 hover:bg-neutral-900"
-        >
-          {t('chat.addFolder')}
-        </button>
-      )}
-    </div>
-  )
-}
-
-function ComposerMenu({
-  runtimeKind,
-  runtimeCapabilities,
-  target,
-  onPickFile,
-  onPickFolder,
-  onTargetChange,
-  onPlanMode
-}: {
-  runtimeKind: RuntimeKind
-  runtimeCapabilities: RuntimeCapabilityManifest
-  target: string
-  onPickFile: () => void
-  onPickFolder: () => void
-  onTargetChange: (target: string) => void
-  onPlanMode: () => void
-}): React.ReactNode {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-  const [targetOpen, setTargetOpen] = useState(false)
-  const [draft, setDraft] = useState(target)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => setDraft(target), [target])
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent): void => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [open])
-
-  const applyTarget = (): void => {
-    onTargetChange(draft.trim())
-    setTargetOpen(false)
-  }
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        title={t('chat.addMenu')}
-        className="h-8 w-8 shrink-0 flex items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-800 disabled:opacity-40"
-      >
-        <ComposerIcon type="plus" />
-      </button>
-      {open && (
-        <div className="absolute left-0 bottom-full z-50 mb-2 w-[min(360px,calc(100vw-40px))] rounded-xl border border-neutral-700 bg-neutral-950/95 py-1.5 shadow-2xl backdrop-blur">
-          <ComposerAttachmentRow
-            runtimeKind={runtimeKind}
-            runtimeCapabilities={runtimeCapabilities}
-            onPickFile={() => {
-              onPickFile()
-              setOpen(false)
-            }}
-            onPickFolder={() => {
-              onPickFolder()
-              setOpen(false)
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => setTargetOpen((v) => !v)}
-            className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-neutral-900"
-          >
-            <ComposerIcon type="target" className="shrink-0 text-neutral-400" />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm text-neutral-100">{t('chat.target')}</span>
-              {target && <span className="block truncate text-xs text-neutral-500">{target}</span>}
-            </span>
-          </button>
-          {targetOpen && (
-            <div className="px-4 pb-2">
-              <div className="flex gap-1">
-                <input
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') applyTarget()
-                    if (e.key === 'Escape') setTargetOpen(false)
-                  }}
-                  placeholder={t('chat.targetPlaceholder')}
-                  className="min-w-0 flex-1 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-100 outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={applyTarget}
-                  className="rounded-md bg-blue-600 px-2 text-xs text-white hover:bg-blue-500"
-                >
-                  {t('chat.apply')}
-                </button>
-              </div>
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              onPlanMode()
-              setOpen(false)
-            }}
-            className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-neutral-900"
-          >
-            <ComposerIcon type="plan" className="shrink-0 text-neutral-400" />
-            <span className="min-w-0 flex-1 truncate text-sm text-neutral-100">{t('chat.planMode')}</span>
-          </button>
-        </div>
-      )}
-    </div>
-  )
+export {
+  ComposerAttachmentRow,
+  ComposerPrivacyControls,
+  isLocalModelInfo,
+  observePaidMediaNearViewport,
+  resolveChatPrivacyFlags,
+  type ResolvedChatPrivacyFlags
 }
 
 export interface ChatPaneProps {
@@ -927,11 +150,13 @@ export default function ChatPane({
   const currentModel = useAppStore((s) => s.currentModel)
   const setView = useAppStore((s) => s.setView)
   const engineStatus = useAppStore((s) => s.status) // 视频重启恢复：等引擎在线再代下
+  const engineFeatures = useAppStore((s) => s.engineFeatures)
+  const offlineMode = useAppStore((s) => s.offlineMode)
   const setAgentBusy = useAppStore((s) => s.setAgentBusy)
   const setLastAgentReply = useAppStore((s) => s.setLastAgentReply)
   const openBrowser = useAppStore((s) => s.openBrowser)
-  // 消息按「当前对话」存在 store 里（多对话 + 持久化）。setMessages 保持同样的签名（数组或更新函数），
-  // 所以下面所有 setMessages(...) 调用都无需改动。
+  const setConvIncognito = useAppStore((s) => s.setConvIncognito)
+  // 消息按「当前对话」存在 store 里（服务端 /v1/conversations 单一真相源 + 内存响应副本）。
   const messages = useAppStore((s) => {
     const c = s.conversations.find((x) => x.id === s.currentConvId)
     return c?.messages ?? EMPTY_MSGS
@@ -950,11 +175,28 @@ export default function ChatPane({
     paidVideoSubmissionGateRef.current ??
     createPaidVideoSubmissionGate(setPaidVideoSubmissionInFlight)
   paidVideoSubmissionGateRef.current = paidVideoSubmissionGate
-  const [recording, setRecording] = useState(false)
-  const [transcribing, setTranscribing] = useState(false)
-  const [micLevel, setMicLevel] = useState(0)
+  const { recording, transcribing, micLevel, toggleRecord } = useVoiceRecorder({
+    input,
+    setInput,
+    t
+  })
+  const voiceFeatureEnabled = engineFeatures.voice !== false && engineFeatures.stt !== false
+  const webSearchFeatureEnabled = engineFeatures.web_search !== false
   const [reasoningLevel, setReasoningLevel] = useState<ReasoningLevel>('medium')
   const [execMode, setExecMode] = useState<ExecPermissionMode>('auto')
+  // P0-1 & P0-2：默认关闭联网搜索（绝不静默外发 Bing），提供显式联网开关与一键无痕隐私模式。
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false)
+  const [incognito, setIncognito] = useState(false)
+  const currentModelInfo = models.find((item) => item.id === currentModel)
+  const composerPrivacy = resolveChatPrivacyFlags({
+    webSearchEnabled,
+    incognito,
+    model: currentModelInfo,
+    modelId: currentModel,
+    conversationId: useAppStore.getState().currentConvId,
+    webSearchFeatureEnabled,
+    offlineMode
+  })
   const [pendingEdits, setPendingEdits] = useState<{ text: string; removed: DisplayMsg[] }[]>([])
   const [stackExpanded, setStackExpanded] = useState(false)
   const [queued, setQueued] = useState<QueuedMessage[]>([]) // 生成时排队的消息，完成后自动发
@@ -1078,10 +320,6 @@ export default function ChatPane({
   const drainingRef = useRef(false)
   const lastInjectRef = useRef<{ text: string; at: number } | null>(null) // 插话去重（10s 内同文只注入一次）
   const abortRef = useRef<AbortController | null>(null) // 当前生成的中止器（撤回时打断模型）
-  const recRef = useRef<MediaRecorder | null>(null)
-  const chunksRef = useRef<Blob[]>([])
-  const audioCtxRef = useRef<AudioContext | null>(null)
-  const micRafRef = useRef<number | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   // 每次消息变化都滚到底——你发的最后一条始终在最底部
@@ -1090,39 +328,11 @@ export default function ChatPane({
     if (el) el.scrollTo({ top: el.scrollHeight })
   }, [messages])
 
-  // 完成提示音：Web Audio 现合成一段柔和「叮—咚」（两声下行三度），零文件零依赖。
   const soundEnabled = useAppStore((s) => s.soundEnabled)
-  const playDone = (): void => {
-    try {
-      const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-      if (!Ctx) return
-      const ctx = new Ctx()
-      const now = ctx.currentTime
-      // 两个音符：G5(784) → E5(659)，正弦波 + 渐弱包络，温和不刺耳
-      ;[
-        { f: 784, t: 0 },
-        { f: 659, t: 0.16 }
-      ].forEach(({ f, t }) => {
-        const osc = ctx.createOscillator()
-        const gain = ctx.createGain()
-        osc.type = 'sine'
-        osc.frequency.value = f
-        gain.gain.setValueAtTime(0.0001, now + t)
-        gain.gain.exponentialRampToValueAtTime(0.16, now + t + 0.02) // 快起
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + t + 0.32) // 慢落
-        osc.connect(gain).connect(ctx.destination)
-        osc.start(now + t)
-        osc.stop(now + t + 0.34)
-      })
-      setTimeout(() => void ctx.close().catch(() => {}), 800)
-    } catch {
-      /* 音频不可用就静默，绝不影响功能 */
-    }
-  }
   // busy true→false 跃迁 = 一轮生成/任务真正结束 → 响一声（一处统一，覆盖聊天/agent/图/短视频所有路径）
   const prevBusyRef = useRef(false)
   useEffect(() => {
-    if (prevBusyRef.current && !busy && soundEnabled) playDone()
+    if (prevBusyRef.current && !busy && soundEnabled) playCompletionChime()
     prevBusyRef.current = busy
   }, [busy, soundEnabled])
 
@@ -1212,8 +422,6 @@ export default function ChatPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, engineStatus, busy])
 
-  useEffect(() => () => stopMicMeter(), []) // eslint-disable-line react-hooks/exhaustive-deps
-
   // 排队：当前生成完(空闲)后，把暂存的消息按顺序自动发出去。
   // 只发**属于当前对话**的排队消息——否则删除/打断后 busy 一解除，旧排队消息会窜进新开的对话
   //（机主实测：开新窗口就"忙起来/输入没反应"的元凶之一）；别的对话的留在队里，切回去再发。
@@ -1228,82 +436,6 @@ export default function ChatPane({
       drainingRef.current = false
     })
   }, [busy, queued, currentConvId]) // eslint-disable-line react-hooks/exhaustive-deps
-
-
-  // 语音输入：点一下开录、再点停；停止时把整段录音（完整 webm）一次性转写。
-  // 关键：不用 timeslice 分片——MediaRecorder 分片拼出来的 webm，ffmpeg 常无法解码
-  // （正是之前 500「Invalid data」的根因）。不分片时 stop 会一次给出完整可解码的 webm。
-  const stopMicMeter = (): void => {
-    if (micRafRef.current !== null) {
-      cancelAnimationFrame(micRafRef.current)
-      micRafRef.current = null
-    }
-    void audioCtxRef.current?.close().catch(() => {})
-    audioCtxRef.current = null
-    setMicLevel(0)
-  }
-
-  const startMicMeter = (stream: MediaStream): void => {
-    stopMicMeter()
-    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-    if (!Ctx) return
-    const ctx = new Ctx()
-    const analyser = ctx.createAnalyser()
-    analyser.fftSize = 256
-    ctx.createMediaStreamSource(stream).connect(analyser)
-    const data = new Uint8Array(analyser.frequencyBinCount)
-    const tick = (): void => {
-      analyser.getByteTimeDomainData(data)
-      let sum = 0
-      for (const v of data) {
-        const d = v - 128
-        sum += d * d
-      }
-      setMicLevel(Math.min(1, Math.sqrt(sum / data.length) / 42))
-      micRafRef.current = requestAnimationFrame(tick)
-    }
-    audioCtxRef.current = ctx
-    tick()
-  }
-
-  const toggleRecord = async (): Promise<void> => {
-    if (recording) {
-      recRef.current?.stop()
-      return
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const rec = new MediaRecorder(stream)
-      chunksRef.current = []
-      startMicMeter(stream)
-      const baseText = input.trim() // 录音前已有的文字，转写结果追加在它后面
-      rec.ondataavailable = (ev): void => {
-        if (ev.data.size) chunksRef.current.push(ev.data)
-      }
-      rec.onstop = async (): Promise<void> => {
-        stream.getTracks().forEach((tk) => tk.stop())
-        stopMicMeter()
-        setRecording(false)
-        if (!chunksRef.current.length) return
-        const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' })
-        setTranscribing(true)
-        try {
-          const text = await transcribeAudio(blob)
-          if (text) setInput(baseText ? `${baseText} ${text}` : text)
-        } catch (e) {
-          setInput((prev) => `${prev}${t('chat.sttFail', { e: String(e) })}`)
-        } finally {
-          setTranscribing(false)
-        }
-      }
-      recRef.current = rec
-      rec.start() // 不分片：stop 时一次拿到完整录音再转写
-      setRecording(true)
-    } catch (e) {
-      setInput((prev) => `${prev}${t('chat.micFail', { e: String(e) })}`)
-    }
-  }
-
 
   // F4 行内消息译：点某条消息的「译」→ 中⇄英互译，结果显示在该条下方（微信式）
   // 回退编辑：把这条「你发的」消息取回输入框，并移除它及其之后的内容，改完重发即可（撤回+修改一步到位）
@@ -1357,23 +489,7 @@ export default function ChatPane({
   const copyMsg = async (i: number): Promise<void> => {
     const c = messages[i]?.content
     if (!c) return
-    try {
-      await navigator.clipboard.writeText(c)
-    } catch {
-      // 极少数环境 clipboard API 不可用 → 兜底 execCommand
-      const ta = document.createElement('textarea')
-      ta.value = c
-      ta.style.position = 'fixed'
-      ta.style.opacity = '0'
-      document.body.appendChild(ta)
-      ta.select()
-      try {
-        document.execCommand('copy')
-      } catch {
-        /* 都失败就算了，不打断 */
-      }
-      ta.remove()
-    }
+    await copyTextToClipboard(c)
     setCopiedIdx(i)
     if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
     copiedTimerRef.current = setTimeout(() => setCopiedIdx(null), 1600)
@@ -1604,7 +720,7 @@ export default function ChatPane({
             const note = st.partial ? (st.msg || t('chat.videoPartial')) : ''
             if (url) patch({ video: url, videoSrc: `studio:${jid}`, content: note, videoTask: undefined, completedAt: Date.now() })
             else patch({ content: t('chat.videoTimeout'), videoTask: undefined, completedAt: Date.now() })
-            if (useAppStore.getState().soundEnabled) playDone() // 长视频成片贴回（不走 busy）→ 单独提示
+            if (useAppStore.getState().soundEnabled) playCompletionChime() // 长视频成片贴回（不走 busy）→ 单独提示
             return
           }
           if (st.status === 'unknown') {
@@ -1647,7 +763,7 @@ export default function ChatPane({
             ? { videoTask: undefined, completedAt: Date.now() }
             : { completedAt: undefined })
         })
-        if (useAppStore.getState().soundEnabled) playDone() // 短视频异步成片贴回（不走 busy）→ 提示
+        if (useAppStore.getState().soundEnabled) playCompletionChime() // 短视频异步成片贴回（不走 busy）→ 提示
       } else {
         patch({
           content: `${t('chat.videoTimeout')}（任务编号已保留，可稍后继续）`,
@@ -2741,13 +1857,23 @@ export default function ChatPane({
               )
             )
           }
+          const execModelInfo = models.find((item) => item.id === (explicitModel ?? turnModelId))
+          const execPrivacy = resolveChatPrivacyFlags({
+            webSearchEnabled,
+            incognito,
+            model: execModelInfo,
+            modelId: explicitModel ?? turnModelId,
+            conversationId: convId,
+            webSearchFeatureEnabled
+          })
           const res = await agentRunStream(modelText, explicitModel, {
             history: histForAgent,
             workdir: targetWorkdir,
             mode: runExecMode,
             max_steps: agentMaxSteps,
             signal: ac.signal,
-            ...(convId ? { conversation_id: convId } : {}),
+            ...(execPrivacy.conversationId ? { conversation_id: execPrivacy.conversationId } : {}),
+            ...(execPrivacy.incognito ? { incognito: true, inject_memory: false } : {}),
             ...(allow ? { allow } : {}),
             onEvent: (ev: AgentEvent) => {
               // 视频任务派发即登记（不等最终结果）：点「插队」中止流也不丢——job 在引擎后台照跑，
@@ -2817,7 +1943,24 @@ export default function ChatPane({
       let servedModel = turnModelId
       let usage: TokenUsage | undefined
       const seenVideoTasks = new Set<string>()
-      for await (const delta of chatStream(turnModelId, history, ac.signal, true, reasoningLevel, convId || undefined)) {
+      const turnModelInfo = models.find((item) => item.id === turnModelId)
+      const turnPrivacy = resolveChatPrivacyFlags({
+        webSearchEnabled,
+        incognito,
+        model: turnModelInfo,
+        modelId: turnModelId,
+        conversationId: convId,
+        webSearchFeatureEnabled
+      })
+      for await (const delta of chatStream(
+        turnModelId,
+        history,
+        ac.signal,
+        turnPrivacy.webSearch,
+        reasoningLevel,
+        turnPrivacy.conversationId,
+        { incognito: turnPrivacy.incognito, injectMemory: turnPrivacy.injectMemory }
+      )) {
         if (ac.signal.aborted) break
         if (delta.model) servedModel = delta.model
         if (delta.usage) usage = delta.usage
@@ -3360,6 +2503,29 @@ export default function ChatPane({
       )}
       <div className="nachuan-composer-region p-2 border-t border-neutral-800">
         <div className="nachuan-composer-card rounded-2xl border border-neutral-700 bg-neutral-950 px-3 pt-1.5 pb-1.5 shadow-lg">
+          {offlineMode && (
+            <div
+              data-testid="chat-offline-banner"
+              className="mb-1 flex items-center justify-between gap-2 rounded-md border border-emerald-600/40 bg-emerald-50 px-2 py-1 text-[11px] text-emerald-800"
+            >
+              <span>
+                🛡{' '}
+                {t('chat.offlineBanner', {
+                  defaultValue: '纯离线（空气间隙）模式已开启：已拦截全部公网出站与联网搜索，仅允许本地回环运行。'
+                })}
+              </span>
+            </div>
+          )}
+          {incognito && (
+            <div className="mb-1 flex items-center justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-950/30 px-2 py-1 text-[11px] text-amber-200">
+              <span>
+                🕶{' '}
+                {t('chat.incognitoBanner', {
+                  defaultValue: '已开启无痕隐私模式：本轮不注入/不抽取长期记忆，不联网搜索，不留服务端摘要。'
+                })}
+              </span>
+            </div>
+          )}
           {workTarget && (
             <div className="mb-1 flex items-center gap-1 rounded-md border border-neutral-800 bg-neutral-900/70 px-2 py-1 text-xs text-neutral-400">
               <ComposerIcon type="target" className="h-4 w-4 shrink-0" />
@@ -3425,8 +2591,8 @@ export default function ChatPane({
           <div className="mt-1 flex items-center justify-between gap-2">
             <div className="min-w-0 flex items-center gap-1">
               <ComposerMenu
-                runtimeKind={window.api.runtimeKind}
-                runtimeCapabilities={window.api.runtimeCapabilities}
+                runtimeKind={window.api?.runtimeKind ?? 'web'}
+                runtimeCapabilities={window.api?.runtimeCapabilities ?? CLIENT_PORT_CAPABILITIES}
                 target={workTarget}
                 onPickFile={() => fileRef.current?.click()}
                 onPickFolder={() => void onPickFolder()}
@@ -3452,6 +2618,20 @@ export default function ChatPane({
                 </button>
               )}
               <ExecPermissionMenu value={execMode} onChange={setExecMode} />
+              <ComposerPrivacyControls
+                webSearchEnabled={webSearchEnabled}
+                onToggleWebSearch={() => setWebSearchEnabled((prev) => !prev)}
+                incognito={incognito}
+                onToggleIncognito={() =>
+                  setIncognito((prev) => {
+                    const next = !prev
+                    if (currentConvId) setConvIncognito(currentConvId, next)
+                    return next
+                  })
+                }
+                webSearchBlockedBy={composerPrivacy.webSearchBlockedBy}
+                disabled={busy}
+              />
             </div>
 
             <div className="shrink-0 flex items-center gap-1">
@@ -3473,11 +2653,17 @@ export default function ChatPane({
               </select>
               <button
                 onClick={() => void toggleRecord()}
-                disabled={transcribing}
+                disabled={transcribing || !voiceFeatureEnabled}
                 title={
-                  transcribing ? t('chat.transcribing') : recording ? t('chat.micStop') : t('chat.micTitle')
+                  !voiceFeatureEnabled
+                    ? t('chat.voiceUnavailable', { defaultValue: '当前运行环境未启用语音转写' })
+                    : transcribing
+                      ? t('chat.transcribing')
+                      : recording
+                        ? t('chat.micStop')
+                        : t('chat.micTitle')
                 }
-                className={`relative h-8 w-8 flex items-center justify-center overflow-hidden rounded-md ${
+                className={`relative h-8 w-8 flex items-center justify-center overflow-hidden rounded-md disabled:opacity-40 ${
                   recording
                     ? 'text-red-400 bg-red-500/10'
                     : 'text-neutral-400 hover:bg-neutral-800'

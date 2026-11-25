@@ -9,6 +9,8 @@ import { basename, dirname, join } from 'node:path'
 import { Transform, type TransformCallback } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
+import { isDesktopOfflineModeEnabled, OfflineModeError } from './offline-guard'
+
 export const MAX_INLINE_MEDIA_BYTES = 32 * 1024 * 1024
 export const MAX_REMOTE_MEDIA_BYTES = 512 * 1024 * 1024
 const MAX_URL_LENGTH = 4096
@@ -315,8 +317,15 @@ export async function downloadPublicMedia(
       deadline: number
     ) => Promise<DownloadAttempt>
     totalTimeoutMs?: number
+    isOfflineMode?: () => boolean
   } = {}
 ): Promise<number> {
+  const isOffline = dependencies.isOfflineMode ?? isDesktopOfflineModeEnabled
+  if (isOffline()) {
+    throw new OfflineModeError(
+      'Offline air-gap mode is enabled; blocked external media download'
+    )
+  }
   const boundedMax = Math.max(1, Math.min(Math.floor(maxBytes), MAX_REMOTE_MEDIA_BYTES))
   const totalTimeout = Math.max(
     1,
@@ -330,6 +339,11 @@ export async function downloadPublicMedia(
   const visited = new Set<string>()
   try {
     for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
+      if (isOffline()) {
+        throw new OfflineModeError(
+          'Offline air-gap mode is enabled; blocked external media download'
+        )
+      }
       const target = await resolvePublicMediaTarget(current, resolver, deadline)
       const canonical = target.url.toString()
       if (visited.has(canonical)) throw new Error('media redirect loop detected')

@@ -22,7 +22,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from gateway.failover import chat_with_fallback
+from gateway.failover import chat_with_fallback, same_origin_only_fallback
+from gateway.privacy import is_same_origin_model
 from gateway.provider_call_ledger import bind_provider_call_scope
 from gateway.schemas import ChatCompletionRequest
 from orchestrator.embedder import cosine_blobs, encode, encode_query, fuse, to_blob
@@ -56,7 +57,12 @@ class MemoryStore:
     def __init__(self, db_path: str):
         p = Path(db_path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(p), check_same_thread=False)
+        self._conn = sqlite3.connect(str(p), check_same_thread=False, timeout=5.0)
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        from storage.unified_db import ensure_unified_wal, is_unified_db_path
+
+        if is_unified_db_path(p):
+            ensure_unified_wal(self._conn, busy_timeout_ms=5000)
         self._lock = threading.Lock()
         self._init()
 
@@ -310,19 +316,31 @@ async def extract_and_store(
     user_msg: str,
     assistant_msg: str,
     model: str,
+    source_model: str | None = None,
+    incognito: bool = False,
+    same_origin_only: bool = True,
 ) -> list[str]:
-    """用便宜/免费模型从一轮对话抽取用户事实并入库。返回新写入的事实。
+    """用同源模型从一轮对话抽取用户事实并入库。返回新写入的事实。
 
-    防投毒（抗失智闸①）：每条抽取的事实须过 _grounded 校验——有用户原话支撑才入库，
-    模型脑补/臆断的直接丢弃，避免脏记忆污染之后每一轮的注入。
+    隐私与防投毒闸：
+    - 无痕模式（incognito=True）彻底跳过抽取与落库；
+    - 同源隔离（same_origin_only=True）：若提供 source_model，二次校验抽取模型必须与
+      source_model 同源（本地对话绝不外发云端、云端对话绝不跨供应商偷传），并锁死跨商 fallback；
+    - 防投毒（抗失智闸①）：每条抽取的事实须过 _grounded 校验——有用户原话支撑才入库。
     """
-    if not user_id or len((user_msg or "").strip()) < 4:
+    if incognito or not user_id or not model or len((user_msg or "").strip()) < 4:
+        return []
+    if same_origin_only and source_model and not is_same_origin_model(router, source_model, model):
         return []
     prompt = _EXTRACT_PROMPT.format(user=user_msg[:1500], assistant=(assistant_msg or "")[:1500])
     req = ChatCompletionRequest(model=model, messages=[{"role": "user", "content": prompt}])  # type: ignore[arg-type]
     try:
-        with bind_provider_call_scope(role="memory.extract"):
-            res, _served, _route = await chat_with_fallback(router, req)
+        if same_origin_only:
+            with bind_provider_call_scope(role="memory.extract"), same_origin_only_fallback():
+                res, _served, _route = await chat_with_fallback(router, req)
+        else:
+            with bind_provider_call_scope(role="memory.extract"):
+                res, _served, _route = await chat_with_fallback(router, req)
     except Exception:  # noqa: BLE001
         return []
     text = (res.get("choices") or [{}])[0].get("message", {}).get("content") or ""

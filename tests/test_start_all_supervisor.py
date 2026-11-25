@@ -1267,6 +1267,8 @@ def _weixin_health(pid: int, **overrides) -> dict:
         "pending_outbound": 0,
         "dead_inbound": 0,
         "dead_outbound": 0,
+        "closed_without_replay_inbound": 0,
+        "closed_without_replay_outbound": 0,
         "oldest_processing_age_seconds": 0.0,
         "consecutive_poll_failures": 0,
         "last_error_code": "",
@@ -1387,6 +1389,8 @@ def test_weixin_pending_or_dead_work_is_fresh_but_not_ready(tmp_path: Path):
                 pending_outbound=2,
                 dead_inbound=3,
                 dead_outbound=4,
+                closed_without_replay_inbound=5,
+                closed_without_replay_outbound=6,
             )
         ),
         encoding="utf-8",
@@ -1411,6 +1415,8 @@ def test_weixin_pending_or_dead_work_is_fresh_but_not_ready(tmp_path: Path):
     assert health["pending_outbound"] == 2
     assert health["dead_inbound"] == 3
     assert health["dead_outbound"] == 4
+    assert health["closed_without_replay_inbound"] == 5
+    assert health["closed_without_replay_outbound"] == 6
     assert "dead_inbound" in health["reason"]
     weixin = next(service for service in payload["services"] if service["name"] == "weixin")
     assert weixin["running"] is False
@@ -1790,6 +1796,116 @@ def test_stop_latch_blocks_restart_before_any_key_or_process_start(tmp_path: Pat
     assert not (tmp_path / "data" / "gateway_api_key.txt").exists()
 
 
+def test_operator_hold_blocks_weixin_without_blocking_engine_plan(tmp_path: Path):
+    data = tmp_path / "data"
+    data.mkdir(parents=True)
+    (data / "ilink_token.json").write_text(
+        json.dumps({"bot_token": "test-only"}), encoding="utf-8"
+    )
+
+    result = _run_supervisor(
+        "-Action",
+        "Run",
+        "-Root",
+        str(tmp_path),
+        "-EnginePort",
+        "65431",
+        "-DryRun",
+        "-HoldWeixin",
+        "-Json",
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout)
+    services = {row["name"]: row for row in payload["services"]}
+    assert payload["supervisor"]["weixin_operator_hold"] is True
+    assert services["engine"]["action"] == "would-start"
+    assert services["weixin"]["configured"] is True
+    assert services["weixin"]["running"] is False
+    assert services["weixin"]["ready"] is False
+    assert services["weixin"]["action"] == "blocked-operator-hold"
+
+
+def test_supervisor_binds_an_explicit_connection_vault_in_status(tmp_path: Path):
+    data = tmp_path / "data"
+    vault_dir = tmp_path / "vault"
+    data.mkdir(parents=True)
+    vault_dir.mkdir()
+    vault = vault_dir / "connections.json"
+    vault.write_text("{}", encoding="utf-8")
+    (vault_dir / "connections.json.verification-key").write_text(
+        "test-only", encoding="utf-8"
+    )
+
+    result = _run_supervisor(
+        "-Action",
+        "Run",
+        "-Root",
+        str(tmp_path),
+        "-EnginePort",
+        "65431",
+        "-DryRun",
+        "-ConnectionsPath",
+        str(vault),
+        "-Json",
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    supervisor = json.loads(result.stdout)["supervisor"]
+    assert supervisor["connections_authority"] == "external-user-vault"
+    assert len(supervisor["connections_path_sha256"]) == 64
+    assert str(vault) not in result.stdout
+
+
+def test_supervisor_ignores_an_ambient_connection_vault(
+    monkeypatch, tmp_path: Path
+):
+    (tmp_path / "data").mkdir(parents=True)
+    monkeypatch.setenv(
+        "NACHUAN_CONNECTIONS_PATH", str(tmp_path / "attacker" / "connections.json")
+    )
+
+    result = _run_supervisor(
+        "-Action",
+        "Run",
+        "-Root",
+        str(tmp_path),
+        "-EnginePort",
+        "65431",
+        "-DryRun",
+        "-Json",
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    supervisor = json.loads(result.stdout)["supervisor"]
+    assert supervisor["connections_authority"] == "runtime-data"
+    assert "attacker" not in result.stdout
+
+
+def test_scheduled_supervisor_rejects_a_non_installed_connection_vault(
+    tmp_path: Path,
+):
+    vault = tmp_path / "connections.json"
+    vault.write_text("{}", encoding="utf-8")
+    (tmp_path / "connections.json.verification-key").write_text(
+        "test-only", encoding="utf-8"
+    )
+
+    result = _run_supervisor(
+        "-Action",
+        "Status",
+        "-Scheduled",
+        "-ConnectionsPath",
+        str(vault),
+        "-Json",
+    )
+
+    assert result.returncode != 0
+    assert "only accepts the installed Nachuan connection vault" in (
+        result.stderr + result.stdout
+    )
+
+
 def test_scheduled_production_refuses_an_alternate_source_root(tmp_path: Path):
     result = _run_supervisor(
         "-Action",
@@ -1804,6 +1920,42 @@ def test_scheduled_production_refuses_an_alternate_source_root(tmp_path: Path):
     )
     assert result.returncode != 0
     assert "refuses an alternate project root" in (result.stderr + result.stdout)
+
+
+def test_runtime_acl_scan_tolerates_a_disappearing_sqlite_sidecar(tmp_path: Path):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    transient = runtime / "usage.db-shm"
+    transient.write_bytes(b"temporary")
+    runtime_ps = str(runtime).replace("'", "''")
+    transient_ps = str(transient).replace("'", "''")
+
+    result = _run_supervisor_function(
+        "Protect-PrivateRuntimeTree",
+        f"""
+$runtime = '{runtime_ps}'
+$transient = '{transient_ps}'
+function Assert-NoReparseComponents([string]$Path) {{}}
+function New-PrivateRuntimeAcl([bool]$Directory) {{
+    if (-not $Directory) {{ throw 'disappeared file must not be ACLed' }}
+    return ([IO.DirectoryInfo]$runtime).GetAccessControl()
+}}
+function Get-Item {{
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][string]$LiteralPath, [switch]$Force)
+    if ([string]::Equals($LiteralPath, $transient, [StringComparison]::OrdinalIgnoreCase) -and
+        (Test-Path -LiteralPath $transient -PathType Leaf)) {{
+        Remove-Item -LiteralPath $transient -Force
+    }}
+    Microsoft.PowerShell.Management\\Get-Item @PSBoundParameters
+}}
+Protect-PrivateRuntimeTree $runtime
+Write-Output 'TRANSIENT_SIDE_CAR_TOLERATED'
+""",
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "TRANSIENT_SIDE_CAR_TOLERATED" in result.stdout
 
 
 @pytest.mark.skipif(os.name != "nt", reason="junction validation is Windows-specific")
@@ -1975,6 +2127,7 @@ def test_running_supervisor_writes_bound_identity_and_stops_gracefully(tmp_path:
             "65431",
             "-PollSeconds",
             "2",
+            "-HoldWeixin",
             "-Json",
         ],
         stdout=subprocess.PIPE,
@@ -2000,6 +2153,25 @@ def test_running_supervisor_writes_bound_identity_and_stops_gracefully(tmp_path:
         assert Path(identity["root"]) == root
         assert identity["instance_id"]
         assert identity["command_line_sha256"]
+        assert identity["weixin_operator_hold"] is True
+
+        status = _run_supervisor(
+            "-Action",
+            "Status",
+            "-Root",
+            str(root),
+            "-EnginePort",
+            "65431",
+            "-Json",
+            timeout_seconds=45,
+        )
+        assert status.returncode == 0, status.stderr or status.stdout
+        status_payload = json.loads(status.stdout)
+        assert status_payload["supervisor"]["record_present"] is True
+        assert status_payload["supervisor"]["running"] is True
+        assert status_payload["supervisor"]["identity_bound"] is True
+        assert status_payload["supervisor"]["pid"] == supervisor.pid
+        assert status_payload["supervisor"]["weixin_operator_hold"] is True
 
         duplicate = _run_supervisor(
             "-Action",

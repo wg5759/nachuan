@@ -38,6 +38,7 @@ from gateway.runtime_profile import RuntimeCapability, current_runtime_profile
 from gateway.admission import (
     AdmissionControlMiddleware,
     BackgroundJobLimitExceeded,
+    InstalledDrainAdmissionMiddleware,
     configure_background_job_pool,
     get_background_job_pool,
     hash_api_keys,
@@ -207,7 +208,17 @@ from gateway.schemas import (
     WorkflowOutputLimitError,
 )
 from gateway.streaming import sse_encode
+from gateway.outbound_guard import OfflineModeBlockedError, is_offline_mode
+from gateway.privacy import (
+    is_incognito_request,
+    is_local_model,
+    is_offline_only_router,
+    select_same_origin_helper_model,
+    should_inject_memory,
+)
 from gateway.usage import UsageLogger
+from gateway.light_media_idempotency import LightMediaIdempotencyStore
+from storage.unified_db import migrate_legacy_dbs_if_needed, resolve_db_path
 from gateway.weixin_idempotency import (
     WeixinIdempotencyStore,
     WeixinIdempotencyUnavailable,
@@ -505,7 +516,7 @@ def _initialize_channel_media_authority(
     if not packaged:
         try:
             store = DurableChannelMediaRequestStore(
-                data_dir / "channel_media_requests.db"
+                resolve_db_path("channel_media_requests", data_dir=data_dir)
             )
         except (OSError, ValueError, DurableMediaRequestUnavailable):
             return _set_channel_media_authority_status(
@@ -1253,6 +1264,7 @@ async def _close_gateway_resources(
     close_state_sync("approvals", "approvals")
     close_state_sync("conversations", "conversations")
     close_state_sync("ledger", "ledger")
+    close_state_sync("light_media_idempotency", "light_media_idempotency")
 
     def close_paid_media_authority() -> None:
         _close_paid_media_authority(target_app)
@@ -1489,14 +1501,23 @@ async def _lifespan_impl(app: FastAPI):
         task.add_done_callback(_finish_service)
 
     data_dir = Path(settings.usage_db_path).parent
-    workflow_event_log = DurableWorkflowEventLog(data_dir / "workflow-events.db")
+    # P1-2: unified 模式下在任何存储打开前先幂等迁移旧单库并安全备份至 legacy_db_backup
+    await run_in_threadpool(
+        migrate_legacy_dbs_if_needed, data_dir, db_mode=settings.db_mode
+    )
+    workflow_event_log = DurableWorkflowEventLog(
+        resolve_db_path("workflow-events", data_dir=data_dir, db_mode=settings.db_mode)
+    )
     app.state.workflow_event_log = workflow_event_log
-    store = ConnectionStore(data_dir / "connections.json")
+    store = ConnectionStore(settings.connection_store_path)
     app.state.store = store
     app.state.router = Router(
         store=store,
         durable_event_sink=workflow_event_log.append,
+        enable_enterprise_rag=settings.enable_enterprise_rag,
     )
+    if not settings.enable_enterprise_rag:
+        app.state.enterprise_rag_query_coordinator = None
     # 本地 GGUF 冷启/验证最长可达 90s，绝不能阻塞网关、微信或健康检查。
     # 先建立云端 Router 并开放服务，再在后台启动受审 local；成功后热重载。
     import threading as _threading
@@ -1531,14 +1552,32 @@ async def _lifespan_impl(app: FastAPI):
         daemon=True,
     )
     app.state.local_model_worker = local_model_worker
-    app.state.usage = UsageLogger(settings.usage_db_path)
+    app.state.usage = UsageLogger(
+        str(resolve_db_path("usage", data_dir=data_dir, db_mode=settings.db_mode))
+    )
     app.state.conversations = ConversationStore(
-        db_path=str(Path(settings.usage_db_path).parent / "conversations.db")
+        db_path=str(
+            resolve_db_path("conversations", data_dir=data_dir, db_mode=settings.db_mode)
+        )
     )  # 短期多轮记忆·持久化(引擎重启不丢上下文，飞书常驻机器人尤其需要)
     # The ordinary chat surface remains diagnosable if this fails, while every
     # rights endpoint fails closed before parsing a request body. Production
     # readiness must treat None as a compliance-control failure.
     app.state.privacy_rights = initialize_privacy_rights(data_dir)
+    # P2-2: 启动统一出站审计防火墙、进程级兜底 socket 离线保护与 privacy_prefs.json 持久化绑定
+    from gateway.outbound_guard import (
+        get_outbound_guard,
+        install_httpx_outbound_guard,
+        install_socket_offline_guard,
+    )
+
+    install_httpx_outbound_guard()
+    install_socket_offline_guard()
+    get_outbound_guard().configure_state_path(
+        data_dir / "privacy_prefs.json",
+        settings_offline_mode=bool(settings.offline_mode),
+    )
+    app.state.outbound_guard = get_outbound_guard()
     # Bind cloud credentials to the same runtime root as every other gateway
     # store, then migrate/revoke any legacy plaintext before the API becomes
     # reachable. Waiting for the periodic worker would leave exposed bearer
@@ -1548,32 +1587,77 @@ async def _lifespan_impl(app: FastAPI):
     cloud_sync.bind_data_dir(data_dir)
     await run_in_threadpool(cloud_sync.load_cfg)
     app.state.weixin_idempotency = WeixinIdempotencyStore(
-        data_dir / "weixin_agent_idempotency.db"
+        resolve_db_path(
+            "weixin_agent_idempotency", data_dir=data_dir, db_mode=settings.db_mode
+        )
     )
-    # Open paid authority first so packaged channel media can prove that its
-    # independently opened Root/controller belongs to that exact installation
-    # epoch.  Development still opens only its historical data-dir store.
-    await run_in_threadpool(_initialize_paid_media_authority, app, data_dir)
-    await run_in_threadpool(_initialize_channel_media_authority, app, data_dir)
-    if app.state.media_requests is not None:
-        try:
-            await _restore_durable_video_capacity(app.state.background_jobs)
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 -- isolate paid recovery from chat startup
-            await run_in_threadpool(
-                _disable_paid_media_authority,
-                app,
-                "paid-video-capacity-restore-failed",
-            )
-    app.state.memory = MemoryStore(str(data_dir / "memory.db"))  # 长期用户记忆
-    app.state.cases = CaseLibrary(str(data_dir / "cases.db"))  # 案例库/技能库（师生进化）
-    app.state.kb = KnowledgeBase(str(data_dir / "knowledge.db"))  # 知识库（IMA：文档检索+引用）
+    # P1-1: 轻量媒体幂等键常驻统一核心库；重型 paid-media 保险库仅在显式开启时冷启
+    app.state.light_media_idempotency = LightMediaIdempotencyStore(
+        data_dir=data_dir, db_mode=settings.db_mode
+    )
+    if settings.enable_paid_media_vault:
+        # Open paid authority first so packaged channel media can prove that its
+        # independently opened Root/controller belongs to that exact installation
+        # epoch.  Development still opens only its historical data-dir store.
+        await run_in_threadpool(_initialize_paid_media_authority, app, data_dir)
+        await run_in_threadpool(_initialize_channel_media_authority, app, data_dir)
+        if app.state.media_requests is not None:
+            try:
+                await _restore_durable_video_capacity(app.state.background_jobs)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 -- isolate paid recovery from chat startup
+                await run_in_threadpool(
+                    _disable_paid_media_authority,
+                    app,
+                    "paid-video-capacity-restore-failed",
+                )
+    else:
+        app.state.installation_root_control = None
+        app.state.asset_installation_control = None
+        app.state.media_requests = None
+        app.state.paid_media_assets = None
+        app.state.paid_media_web_ledger = None
+        app.state.paid_media_web_archive = None
+        app.state.paid_media_epoch = None
+        app.state.paid_media_installation_id = None
+        app.state.paid_media_principal = None
+        app.state.paid_media_root_principal = None
+        app.state.paid_media_authority_mode = "disabled"
+        app.state.channel_media_installation_control = None
+        app.state.channel_media_requests = None
+        _set_paid_media_authority_status(
+            app,
+            mode="disabled",
+            reason_code="feature-flag-disabled",
+            new_operations_ready=False,
+            replay_available=False,
+            packaged=_is_packaged_runtime(),
+        )
+        _set_channel_media_authority_status(
+            app,
+            mode="disabled",
+            reason_code="feature-flag-disabled",
+            new_operations_ready=False,
+            replay_available=False,
+            packaged=_is_packaged_runtime(),
+        )
+    app.state.memory = MemoryStore(
+        str(resolve_db_path("memory", data_dir=data_dir, db_mode=settings.db_mode))
+    )  # 长期用户记忆
+    app.state.cases = CaseLibrary(
+        str(resolve_db_path("cases", data_dir=data_dir, db_mode=settings.db_mode))
+    )  # 案例库/技能库（师生进化）
+    app.state.kb = KnowledgeBase(
+        str(resolve_db_path("knowledge", data_dir=data_dir, db_mode=settings.db_mode))
+    )  # 知识库（IMA：文档检索+引用）
     app.state.approvals = ApprovalStore(
-        str(data_dir / "approvals.db"),
+        str(resolve_db_path("approvals", data_dir=data_dir, db_mode=settings.db_mode)),
         action_ttl_sec=settings.approval_action_ttl_sec,
     )  # P5/P6 待审：重大动作 + 技能卡入库
-    app.state.ledger = TaskLedger(str(data_dir / "ledger.db"))  # 执行脊柱·任务台账（断点续跑）
+    app.state.ledger = TaskLedger(
+        str(resolve_db_path("ledger", data_dir=data_dir, db_mode=settings.db_mode))
+    )  # 执行脊柱·任务台账（断点续跑）
     # 撤销能力使用 DPAPI 保护的持久签名密钥 + 一次性 SQLite receipt。密钥不可用时
     # 安全降级为“无撤销按钮”，绝不回退成任意 path/content 写接口。
     app.state.undo_receipts = None
@@ -1591,7 +1675,10 @@ async def _lifespan_impl(app: FastAPI):
                 {"key_hex": undo_key.hex()},
                 purpose="undo-receipt-signing/v1",
             )
-        app.state.undo_receipts = UndoReceiptStore(data_dir / "undo_receipts.db", undo_key)
+        app.state.undo_receipts = UndoReceiptStore(
+            resolve_db_path("undo_receipts", data_dir=data_dir, db_mode=settings.db_mode),
+            undo_key,
+        )
         undo_receipts.configure(app.state.undo_receipts)
     except (SecureStorageError, OSError, ValueError):
         undo_receipts.configure(None)
@@ -1683,7 +1770,9 @@ async def _lifespan_impl(app: FastAPI):
         while True:
             await asyncio.sleep(max(120, settings.sync_interval_sec))
             try:
-                if cloud_sync.available():
+                from gateway.outbound_guard import get_outbound_guard
+
+                if not get_outbound_guard().is_offline_mode() and cloud_sync.available():
                     await run_in_threadpool(cloud_sync.sync_all)
             except Exception:  # noqa: BLE001
                 pass
@@ -1965,6 +2054,22 @@ async def _background_job_full(
     )
 
 
+@app.exception_handler(OfflineModeBlockedError)
+async def _offline_mode_blocked(
+    _request: Request, exc: OfflineModeBlockedError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "offline_mode_blocked",
+            "detail": str(exc),
+            "host": exc.host,
+            "reason": exc.reason,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 def _admission_key_hashes() -> frozenset[str]:
     """Use exactly the same live key sources as ``require_api_key``.
 
@@ -1994,7 +2099,11 @@ class _ConfiguredAdmissionControlMiddleware(AdmissionControlMiddleware):
         settings = get_settings()
         super().__init__(
             downstream,
-            db_path=Path(settings.usage_db_path).parent / "admission.db",
+            db_path=resolve_db_path(
+                "admission",
+                data_dir=Path(settings.usage_db_path).parent,
+                db_mode=settings.db_mode,
+            ),
             valid_key_hashes_provider=_admission_key_hashes,
             max_concurrency_per_key=settings.admission_max_concurrency_per_key,
             max_concurrency_global=settings.admission_max_concurrency_global,
@@ -2016,7 +2125,11 @@ def _bridge_protocol_keys() -> dict[str, str]:
 class _ConfiguredBridgeProtocolMiddleware(BridgeProtocolMiddleware):
     def __init__(self, downstream: Any) -> None:
         settings = get_settings()
-        replay_path = Path(settings.usage_db_path).parent / "bridge_protocol_replay.db"
+        replay_path = resolve_db_path(
+            "bridge_protocol_replay",
+            data_dir=Path(settings.usage_db_path).parent,
+            db_mode=settings.db_mode,
+        )
         super().__init__(
             downstream,
             key_provider=_bridge_protocol_keys,
@@ -2027,6 +2140,7 @@ class _ConfiguredBridgeProtocolMiddleware(BridgeProtocolMiddleware):
 app.add_middleware(_ConfiguredAdmissionControlMiddleware)
 app.add_middleware(_ConfiguredBridgeProtocolMiddleware)
 app.add_middleware(RequestBodyLimitMiddleware)
+app.add_middleware(InstalledDrainAdmissionMiddleware)
 # Starlette wraps user middleware in reverse addition order.  CORS must be
 # added last so BodyLimit/Bridge/Admission short-circuit responses still carry
 # the desktop renderer's allow-origin header.  The allowlist remains loopback
@@ -2038,7 +2152,7 @@ app.add_middleware(
     allow_origins=[],
     allow_origin_regex=r"^(?:https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?|null|file://)$",
     allow_credentials=False,
-    allow_methods=["GET", "POST", "DELETE", "PATCH", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 app.include_router(admin_router)
@@ -2047,6 +2161,49 @@ app.include_router(privacy_admin_router)
 app.include_router(subscription_connectors_router)
 app.include_router(team_session_router)
 app.include_router(enterprise_rag_router)
+
+from gateway.routes import register_gateway_routes  # noqa: E402
+from gateway.routes.audio_vision import (  # noqa: E402, F401
+    _CHANNEL_LAPIAN_RESULT_RESERVATION_BYTES,
+    _CHANNEL_MEDIA_HEARTBEAT_MAX_INTERVAL_SECONDS,
+    _CHANNEL_VISION_DEFAULT_QUESTION,
+    _CHANNEL_VISION_RESULT_RESERVATION_BYTES,
+    _abandon_channel_media_pre_provider,
+    _await_channel_media_provider,
+    _channel_media_heartbeat_loop,
+    _claim_bridge_channel_media,
+    _decode_bridge_channel_media,
+    _enter_channel_media_provider_phase,
+    _persist_channel_media_success,
+    vision_endpoint,
+)
+from gateway.routes.memory_kb import (  # noqa: E402, F401
+    _destructive_request_body,
+    _destructive_user_id,
+    _has_approval_id,
+    _knowledge_delete_spec,
+    _memory_clear_spec,
+    _normalized_mutation_id,
+    _snapshot_hash,
+)
+from gateway.routes.orchestrate import (  # noqa: E402, F401
+    _summary_clear_spec,
+    _validated_git_repo,
+)
+from gateway.routes.studio_lapian import (  # noqa: E402, F401
+    _LAPIAN_MAX_DOWNLOAD_BYTES,
+    _LAPIAN_OFFICIAL_HOSTS,
+    _LAPIAN_YTDLP_RISK_ACCEPT,
+    _LAPIAN_YTDLP_RISK_ENV,
+    _attested_ytdlp_ffmpeg_location,
+    _lapian_ytdlp_enabled,
+    _safe_lapian_url,
+    _ytdlp_download,
+    lapian_endpoint,
+    lapian_url_report,
+)
+
+register_gateway_routes(app)
 
 
 def _compute_code_version() -> int:
@@ -2561,6 +2718,15 @@ async def health(request: Request) -> dict[str, Any]:
         "pid": os.getpid(),
         "code_version": _CODE_VERSION,
         "boot_proof": boot_proof,
+        "features": {
+            "paid_media_vault": bool(settings.enable_paid_media_vault),
+            "enterprise_rag": bool(settings.enable_enterprise_rag),
+            "media_studio": bool(settings.enable_media_studio),
+            "db_mode": settings.db_mode,
+            "offline_mode": is_offline_mode(),
+            "outbound_audit": True,
+            "coding_control_plane": True,
+        },
         "checks": {
             "database": database,
             "financial_ledger": financial_ledger,
@@ -2958,15 +3124,25 @@ def _resolve_workdir(text: str, fallback: str) -> str:
 
 
 def _grow_memory(
-    router: Any, user_msg: str, assistant_msg: str
+    router: Any,
+    user_msg: str,
+    assistant_msg: str,
+    *,
+    source_model: str | None = None,
+    incognito: bool = False,
 ) -> asyncio.Task[Any] | None:
-    """A·记忆成长：后台从一次对话抽取并存机主长期记忆（任何对话路径都调它，让记忆越用越多）。"""
-    if not (user_msg and assistant_msg):
+    """A·记忆成长：后台从一次对话抽取并存机主长期记忆（严格同源隔离，禁止跨商偷传）。"""
+    if incognito or not (user_msg and assistant_msg):
         return None
     coro: Any | None = None
     try:
-        owner = get_settings().agent_user_id or "owner"
-        em = "agnes-flash" if router.resolve("agnes-flash") else (pick_model(router, "cheap") or "")
+        settings = get_settings()
+        if not settings.background_memory_extract_enabled:
+            return None
+        owner = settings.agent_user_id or "owner"
+        em = select_same_origin_helper_model(
+            router, source_model=source_model, incognito=incognito
+        )
         if em:
             coro = extract_and_store(
                 router,
@@ -2975,6 +3151,9 @@ def _grow_memory(
                 user_msg=user_msg,
                 assistant_msg=assistant_msg,
                 model=em,
+                source_model=source_model or em,
+                incognito=incognito,
+                same_origin_only=True,
             )
             registry = getattr(app.state, "background_tasks", None)
             if not isinstance(registry, set):
@@ -3002,17 +3181,68 @@ def _grow_memory(
     return None
 
 
+def _invoke_grow_memory(
+    router: Any,
+    user_msg: str,
+    assistant_msg: str,
+    *,
+    source_model: str | None = None,
+    incognito: bool = False,
+) -> asyncio.Task[Any] | None:
+    """调用 _grow_memory，同时兼容旧单测用 3 参桩函数 monkeypatch _grow_memory 的签名。"""
+    if incognito:
+        return None
+    import inspect
+
+    fn = _grow_memory
+    try:
+        sig = inspect.signature(fn)
+        params = sig.parameters
+        accepts_kwargs = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+        if accepts_kwargs or ("source_model" in params and "incognito" in params):
+            return fn(
+                router,
+                user_msg,
+                assistant_msg,
+                source_model=source_model,
+                incognito=incognito,
+            )
+    except (TypeError, ValueError):
+        pass
+    return fn(router, user_msg, assistant_msg)
+
+
 def _grow_from_terminal_agent_result(
-    router: Any, task: str, result: Mapping[str, Any]
+    router: Any,
+    task: str,
+    result: Mapping[str, Any],
+    *,
+    source_model: str | None = None,
+    incognito: bool = False,
 ) -> asyncio.Task[Any] | None:
     """Learn only from synchronous terminal answers that claim completion."""
 
-    if result.get("outcome") not in {"completed", "completed_unverified"}:
+    if incognito or result.get("outcome") not in {"completed", "completed_unverified"}:
         return None
     reply = result.get("reply")
     if not isinstance(reply, str) or not reply.strip():
         return None
-    return _grow_memory(router, task, reply)
+    result_model = result.get("model")
+    resolved_source = source_model or (
+        str(result_model).strip()
+        if isinstance(result_model, str)
+        and str(result_model).strip() not in {"", "(blocked)", "nachuan-engine"}
+        else None
+    )
+    return _invoke_grow_memory(
+        router,
+        task,
+        reply,
+        source_model=resolved_source,
+        incognito=incognito,
+    )
 
 
 async def _extract_and_store_scoped(
@@ -3194,8 +3424,14 @@ def _fleet_event_line(ev: dict[str, Any]) -> str | None:
 
 
 async def _run_fleet(
-    router: "Router", vid: str, task: str, history: list[dict[str, Any]],
+    router: "Router",
+    vid: str,
+    task: str,
+    history: list[dict[str, Any]],
     on_event=None,
+    *,
+    incognito: bool = False,
+    inject_memory: bool = True,
 ) -> dict[str, Any]:
     """按虚拟模型号跑对应编排。
 
@@ -3211,21 +3447,25 @@ async def _run_fleet(
     # or arbitrary paths mentioned in untrusted chat text.
     workdir = str(workspace_root())
     uid = s.agent_user_id or "owner"
-    # 长对话上下文压缩（无状态兜底；fleet 的累积滚动摘要已在 _fleet_chat_response 前置处理）。
-    history = await compress_history(router, list(history or []))
+    # 长对话上下文压缩（无状态兜底；无痕模式直接跳过）。
+    if not incognito:
+        history = await compress_history(router, list(history or []), incognito=incognito)
+    else:
+        history = list(history or [])
     # 身份罩袍：对外是"一个模型"，工人不得漏自家型号名（Fugu 的单一模型号门面）。
     history = [{
         "role": "system",
         "content": "你是「纳川·智脑」多模型舰队的执行单元。对外一律以「纳川·智脑」身份回答，"
                    "不要自称任何其它模型/厂商名，也不要提及内部编排细节。",
     }] + list(history or [])
-    # ④记忆进编排：把机主长期记忆作为一条 system 消息插到 history 头部（try/except 全吞）。
-    try:
-        _note, _ = memory_system_note(app.state.memory, uid, task)
-        if _note:
-            history = [{"role": "system", "content": _note}] + history
-    except Exception:  # noqa: BLE001
-        pass
+    # ④记忆进编排：无痕或显式关闭记忆注入时跳过。
+    if inject_memory and not incognito:
+        try:
+            _note, _ = memory_system_note(app.state.memory, uid, task)
+            if _note:
+                history = [{"role": "system", "content": _note}] + history
+        except Exception:  # noqa: BLE001
+            pass
     if VIRTUAL_FLEET.get(vid) == "conductor":
         res = await run_conductor_agent(
             router, task, workdir=workdir, max_steps=24,
@@ -3238,21 +3478,46 @@ async def _run_fleet(
             history=history or None, allow=set(), on_event=on_event,
             preload_context=False,
         )
-    # ④编排结束成长回写（后台，吞异常）。
-    try:
-        _grow_memory(router, task, str((res or {}).get("reply") or ""))
-    except Exception:  # noqa: BLE001
-        pass
+    # ④编排结束成长回写（无痕模式彻底跳过；否则仅用实际答复所属同源模型）。
+    if not incognito:
+        try:
+            route_meta = (res or {}).get("_route") if isinstance(res, dict) else None
+            nested_receipt = route_meta.get("final_route_receipt") if isinstance(route_meta, dict) else None
+            actual_model = (
+                (nested_receipt.get("actual_model") if isinstance(nested_receipt, dict) else None)
+                or (route_meta.get("actual_model") if isinstance(route_meta, dict) else None)
+                or ((res or {}).get("model") if isinstance(res, dict) else None)
+            )
+            _invoke_grow_memory(
+                router,
+                task,
+                str((res or {}).get("reply") or ""),
+                source_model=str(actual_model or "").strip() or None,
+                incognito=incognito,
+            )
+        except Exception:  # noqa: BLE001
+            pass
     return res
 
 
-async def _fleet_chat_response(req: ChatCompletionRequest, api_key: str, conv_id: str = "") -> Any:
+async def _fleet_chat_response(
+    req: ChatCompletionRequest,
+    api_key: str,
+    conv_id: str = "",
+    *,
+    incognito: bool = False,
+    inject_memory: bool = True,
+) -> Any:
     """/v1/chat/completions 的虚拟模型分流：非流式=标准 chat.completion；流式=进度行+正文。"""
     router: Router = app.state.router
     usage: UsageLogger = app.state.usage
     task, history = _fleet_task_history(req)
-    # 跨请求累积滚动摘要：长对话把老的折进摘要、近的原样留（真正无限长，不丢主线）。
-    history = await conv_summary.rolling_compress(router, conv_id, history) or history
+    # 跨请求累积滚动摘要：无痕模式绝不读写持久化摘要。
+    if not incognito:
+        history = (
+            await conv_summary.rolling_compress(router, conv_id, history, incognito=incognito)
+            or history
+        )
     if not task:
         raise HTTPException(
             status_code=422,
@@ -3316,7 +3581,15 @@ async def _fleet_chat_response(req: ChatCompletionRequest, api_key: str, conv_id
 
             async def runner():
                 try:
-                    res = await _run_fleet(router, req.model, task, history, on_event=on_event)
+                    res = await _run_fleet(
+                        router,
+                        req.model,
+                        task,
+                        history,
+                        on_event=on_event,
+                        incognito=incognito,
+                        inject_memory=inject_memory,
+                    )
                     await queue.put({"type": "_result", "result": res})
                 except Exception as e:  # noqa: BLE001
                     await queue.put({"type": "_fail", "message": str(e)})
@@ -3372,7 +3645,14 @@ async def _fleet_chat_response(req: ChatCompletionRequest, api_key: str, conv_id
         return StreamingResponse(sse_encode(_gen()), media_type="text/event-stream")
 
     try:
-        result = await _run_fleet(router, req.model, task, history)
+        result = await _run_fleet(
+            router,
+            req.model,
+            task,
+            history,
+            incognito=incognito,
+            inject_memory=inject_memory,
+        )
     except Exception:  # noqa: BLE001 互审(GLM)：非流式编排炸了别裸 500，记账+友好 502
         await _log_fleet({}, 0, {}, status="error")
         raise HTTPException(
@@ -3431,9 +3711,18 @@ async def chat_completions(request: Request, api_key: str = Depends(require_api_
             headers={"Cache-Control": "no-store"},
         ) from exc
 
+    _incognito = is_incognito_request(req)
+    _inject_memory = should_inject_memory(req)
+
     # F5 虚拟模型号：选中舰队 → 整套编排当作"一个模型"应答（缓存/记忆注入等直连逻辑不适用）。
     if req.model in VIRTUAL_FLEET:
-        return await _fleet_chat_response(req, api_key, str(body.get("conversation_id") or ""))
+        return await _fleet_chat_response(
+            req,
+            api_key,
+            "" if _incognito else str(body.get("conversation_id") or ""),
+            incognito=_incognito,
+            inject_memory=_inject_memory,
+        )
 
     _is_short_followup = _inject_followup_context(req.messages)
 
@@ -3442,29 +3731,32 @@ async def chat_completions(request: Request, api_key: str = Depends(require_api_
         (m.content for m in reversed(req.messages) if m.role == "user" and isinstance(m.content, str)),
         "",
     )
-    # A·记忆做成底层通用：注入机主长期记忆（只读检索；写入由 _grow_memory 后台负责）
+    # A·记忆做成底层通用：注入机主长期记忆（只读检索；无痕模式或显式关闭时彻底零注入）
     # ②缓存友好：放在「最后一条用户消息之前」作为独立 system 消息，不动 messages[0]。
-    # 原生 prompt 缓存是「前缀匹配」——每轮都改第一条会让整段历史缓存全失效；
-    # 把易变的记忆挪到末尾，稳定的系统提示+历史才能被各家自动缓存命中。
-    try:
-        _note, _ = memory_system_note(app.state.memory, get_settings().agent_user_id or "owner", _user_msg)
-        if _note:
-            _mem_msg = ChatMessage(role="system", content=_note)
-            _last_user = max(
-                (i for i, m in enumerate(req.messages) if m.role == "user"), default=-1
-            )
-            if _last_user >= 0:
-                req.messages.insert(_last_user, _mem_msg)
-            else:
-                req.messages.append(_mem_msg)
-    except Exception:  # noqa: BLE001
-        pass
-
-    # 联网搜索增强：请求带 web_search=true 时，搜最后一条用户消息、把结果作为 system 资料插到最前。
-    # 任何模型可用，本地小模型尤其需要（据实回答时事/事实题）。失败安全跳过。
-    if not _is_short_followup:
+    if _inject_memory and not _incognito:
         try:
-            await websearch.maybe_augment_request(req)
+            _note, _ = memory_system_note(app.state.memory, get_settings().agent_user_id or "owner", _user_msg)
+            if _note:
+                _mem_msg = ChatMessage(role="system", content=_note)
+                _last_user = max(
+                    (i for i, m in enumerate(req.messages) if m.role == "user"), default=-1
+                )
+                if _last_user >= 0:
+                    req.messages.insert(_last_user, _mem_msg)
+                else:
+                    req.messages.append(_mem_msg)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # 联网搜索增强（P0-1 强门禁）：仅当显式 web_search=True、非无痕隐私、且非本地离线模型时触发。
+    if (
+        req.web_search is True
+        and not _is_short_followup
+        and not _incognito
+        and not is_local_model(router, req.model)
+    ):
+        try:
+            await websearch.maybe_augment_request(req, router=router, incognito=_incognito)
         except Exception:  # noqa: BLE001
             pass
 
@@ -3611,16 +3903,27 @@ async def chat_completions(request: Request, api_key: str = Depends(require_api_
                     status=terminal_status,
                     receipt=final_receipt,
                 )
-                if terminal_status == "ok" and acc:
-                    _grow_memory(router, _user_msg, "".join(acc))
+                if terminal_status == "ok" and acc and not _incognito:
+                    _actual_stream_model = str(
+                        final_receipt.get("actual")
+                        or final_receipt.get("requested")
+                        or req.model
+                    )
+                    _invoke_grow_memory(
+                        router,
+                        _user_msg,
+                        "".join(acc),
+                        source_model=_actual_stream_model,
+                        incognito=_incognito,
+                    )
 
         return StreamingResponse(sse_encode(gen()), media_type="text/event-stream")
 
     # ── 非流式（带失败转移）──
     # 语义缓存（GPTCache，本地）：相近问题命中即直接返回上次答案，省一次大模型调用。
     # 安全降级：未开启/不可用/异常一律跳过，照常走下面的正常调用。只缓存“纯问答”，
-    # 带工具/带 response_format 的请求不缓存（避免误命中改变行为）。
-    _cacheable = bool(_user_msg) and not getattr(req, "tools", None) and not req.stream
+    # 带工具/带 response_format/无痕隐私模式的请求不缓存（避免误命中或隐私残留）。
+    _cacheable = bool(_user_msg) and not getattr(req, "tools", None) and not req.stream and not _incognito
     if _cacheable:
         try:
             hit = await run_in_threadpool(semcache.lookup, req.model, _user_msg)
@@ -3674,7 +3977,14 @@ async def chat_completions(request: Request, api_key: str = Depends(require_api_
             await run_in_threadpool(semcache.store, req.model, _user_msg, _reply_text)
         except Exception:  # noqa: BLE001
             pass
-    _grow_memory(router, _user_msg, _reply_text)
+    if not _incognito:
+        _invoke_grow_memory(
+            router,
+            _user_msg,
+            _reply_text,
+            source_model=served or req.model,
+            incognito=_incognito,
+        )
     return JSONResponse(result)
 
 
@@ -4139,6 +4449,9 @@ _AGENT_CHAT_REQUEST_FIELDS = frozenset(
         "video_async",
         "video_async_capacity_available",
         "idempotency_key",
+        "incognito",
+        "privacy_mode",
+        "inject_memory",
     }
 )
 _AGENT_CHAT_CHANNELS = frozenset({"api", "desktop", "weixin", "feishu"})
@@ -4255,6 +4568,17 @@ async def agent_chat_endpoint(
     if type(raw_video_async) is not bool:
         raise HTTPException(status_code=422, detail="video_async 必须是布尔值")
     video_async = raw_video_async
+    raw_incognito = body.get("incognito", False)
+    if type(raw_incognito) is not bool:
+        raise HTTPException(status_code=422, detail="incognito 必须是布尔值")
+    raw_privacy_mode = body.get("privacy_mode", False)
+    if type(raw_privacy_mode) is not bool:
+        raise HTTPException(status_code=422, detail="privacy_mode 必须是布尔值")
+    raw_inject_memory = body.get("inject_memory", None)
+    if raw_inject_memory is not None and type(raw_inject_memory) is not bool:
+        raise HTTPException(status_code=422, detail="inject_memory 必须是布尔值")
+    incognito = raw_incognito or raw_privacy_mode
+    inject_memory = (not incognito) and (raw_inject_memory is not False)
     raw_video_capacity = body.get("video_async_capacity_available", True)
     if type(raw_video_capacity) is not bool:
         raise HTTPException(
@@ -4786,7 +5110,7 @@ async def agent_chat_endpoint(
                         model=model,
                         model_locked=bool(str(requested_model or "").strip()),
                         system=system,
-                        memory=app.state.memory,
+                        memory=app.state.memory if inject_memory else None,
                         cases=app.state.cases,
                         approvals=app.state.approvals,
                         guard=app.state.guard,
@@ -4909,27 +5233,42 @@ async def agent_chat_endpoint(
         # Only schedule memory extraction after both the transactional Turn
         # receipt and the gateway replay ledger are durable.  A failed commit
         # therefore cannot enqueue duplicate extraction on retry.
-        if user_id and not response_result.get("blocked"):
-            extract_model = (
-                "agnes-flash"
-                if router.resolve("agnes-flash")
-                else (pick_model(router, "cheap") or model)
+        if (
+            user_id
+            and not incognito
+            and not response_result.get("blocked")
+            and get_settings().background_memory_extract_enabled
+        ):
+            _served_model = str(response_result.get("model") or "").strip()
+            _source_for_memory = (
+                _served_model
+                if _served_model and _served_model not in {"(blocked)", "nachuan-engine"}
+                else model
             )
-            background.add_task(
-                _extract_and_store_scoped,
-                ProviderCallContext(
-                    trace_id=str(request.state.trace_id),
-                    turn_id=turn_identity or str(request.state.trace_id),
-                    workflow_id=f"{channel}:agent_chat",
-                    role="memory.extract",
-                ),
+            extract_model = select_same_origin_helper_model(
                 router,
-                app.state.memory,
-                user_id=user_id,
-                user_msg=message,
-                assistant_msg=response_result.get("reply", ""),
-                model=extract_model,
+                source_model=_source_for_memory,
+                incognito=incognito,
             )
+            if extract_model:
+                background.add_task(
+                    _extract_and_store_scoped,
+                    ProviderCallContext(
+                        trace_id=str(request.state.trace_id),
+                        turn_id=turn_identity or str(request.state.trace_id),
+                        workflow_id=f"{channel}:agent_chat",
+                        role="memory.extract",
+                    ),
+                    router,
+                    app.state.memory,
+                    user_id=user_id,
+                    user_msg=message,
+                    assistant_msg=response_result.get("reply", ""),
+                    model=extract_model,
+                    source_model=_source_for_memory or extract_model,
+                    incognito=incognito,
+                    same_origin_only=True,
+                )
         headers = {"Cache-Control": "no-store"}
         if store is not None:
             headers["Idempotency-Replayed"] = "false"
@@ -5004,641 +5343,7 @@ async def agent_chat_endpoint(
             await _stop_durable_heartbeat(heartbeat_stop, heartbeat_task)
 
 
-@app.get("/v1/agent/memory")
-async def list_memory(user_id: str, _: str = Depends(require_api_key)):
-    """查看某用户已学到的长期记忆（供验证与“进化看板”）。"""
-    return {"user_id": user_id, "memories": app.state.memory.all_for(user_id)}
-
-
-def _normalized_mutation_id(value: Any, *, label: str, max_length: int = 256) -> str:
-    """Canonicalize a destructive-operation target before capability binding."""
-    if not isinstance(value, str):
-        raise HTTPException(status_code=422, detail=f"{label} 必须是字符串")
-    normalized = value.strip()
-    if (
-        not normalized
-        or len(normalized) > max_length
-        or any(ord(ch) < 32 or ord(ch) == 127 for ch in normalized)
-    ):
-        raise HTTPException(status_code=422, detail=f"{label} 格式无效")
-    return normalized
-
-
-async def _destructive_request_body(request: Request) -> dict[str, Any]:
-    try:
-        body = await request.json()
-    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象") from exc
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=422, detail="请求体必须是 JSON 对象")
-    return body
-
-
-def _destructive_user_id(body: dict[str, Any]) -> str:
-    raw = body.get("user_id")
-    if raw in (None, ""):
-        raw = get_settings().agent_user_id or "owner"
-    return _normalized_mutation_id(raw, label="user_id", max_length=128)
-
-
-def _has_approval_id(body: dict[str, Any]) -> bool:
-    return body.get("approval_id") not in (None, "", 0, "0")
-
-
-def _snapshot_hash(rows: Any) -> tuple[str, int]:
-    """Hash ordered SQLite rows without putting deleted content in approval rows."""
-    digest = hashlib.sha256()
-    count = 0
-    for row in rows:
-        encoded = json.dumps(
-            list(row), ensure_ascii=False, separators=(",", ":"), allow_nan=False
-        ).encode("utf-8")
-        digest.update(len(encoded).to_bytes(8, "big"))
-        digest.update(encoded)
-        count += 1
-    return digest.hexdigest(), count
-
-
-def _memory_clear_spec(user_id: str) -> dict[str, Any]:
-    store = app.state.memory
-    # Include active and superseded records: clear() removes both. The content is
-    # hashed locally and never copied into the approval payload/UI.
-    with store._lock:  # noqa: SLF001 - same-process transactional snapshot
-        rows = store._conn.execute(  # noqa: SLF001
-            "SELECT id,text,kind,status,source,created_at,updated_at "
-            "FROM user_memory WHERE user_id=? ORDER BY id",
-            (user_id,),
-        )
-        state_sha256, records = _snapshot_hash(rows)
-    return {
-        "target": {"kind": "memory_user", "user_id": user_id},
-        "snapshot": {"sha256": state_sha256, "records": records},
-    }
-
-
-@app.delete("/v1/agent/memory")
-async def clear_memory_legacy(_: str = Depends(require_api_key)):
-    """The legacy body-less DELETE cannot carry an exact one-time capability."""
-    raise HTTPException(
-        status_code=410,
-        detail="请使用 POST /v1/agent/memory/clear 走一次性审批",
-    )
-
-
-@app.post("/v1/agent/memory/clear")
-async def clear_memory_approved(request: Request, _: str = Depends(require_api_key)):
-    """Clear one user's exact reviewed memory snapshot after one-time approval."""
-    body = await _destructive_request_body(request)
-    user_id = _destructive_user_id(body)
-    spec = _memory_clear_spec(user_id)
-    if not _has_approval_id(body) and spec["snapshot"]["records"] == 0:
-        return {"ok": True, "user_id": user_id, "already_empty": True}
-    task = f"清空长期记忆：{user_id}"
-    approval_id, held = await _action_capability(
-        body=body,
-        router=app.state.router,
-        task=task,
-        workdir=str(Path(get_settings().usage_db_path).parent.resolve()),
-        user_id=user_id,
-        scope="memory_clear",
-        mode="full",
-        require_explicit_capability=True,
-        payload_extra=spec,
-    )
-    if held is not None:
-        return held
-    try:
-        if _memory_clear_spec(user_id) != spec:
-            raise HTTPException(status_code=409, detail="记忆已变化，请重新审批")
-        app.state.memory.clear(user_id)
-        if _memory_clear_spec(user_id)["snapshot"]["records"] != 0:
-            raise RuntimeError("memory clear did not remove the reviewed target")
-    except Exception:
-        app.state.approvals.finish_action(approval_id, success=False)
-        raise
-    app.state.approvals.finish_action(approval_id, success=True)
-    return {"ok": True, "user_id": user_id}
-
-
-@app.get("/v1/agent/cases")
-async def list_cases(user_id: str, _: str = Depends(require_api_key)):
-    """查看某用户的“技能/案例库”（强模型解过、可被免费模型复用的难题）。"""
-    return {"user_id": user_id, "cases": app.state.cases.all_for(user_id)}
-
-
-# ── 知识库（IMA）：导入文档 / 列表 / 删除 / 据实带引用问答 ──
-@app.get("/v1/kb/docs")
-async def kb_list(user_id: str, _: str = Depends(require_api_key)):
-    """列出某用户知识库的文档。"""
-    return {"user_id": user_id, "docs": app.state.kb.list_documents(user_id)}
-
-
-@app.post("/v1/kb/docs")
-async def kb_import(request: Request, _: str = Depends(require_api_key)):
-    """导入一篇文档到知识库：{user_id,title,text,source}。分块入库。"""
-    body = await request.json()
-    text = str(body.get("text") or "")
-    if not text.strip():
-        raise HTTPException(status_code=422, detail="需要 text 文本内容")
-    return app.state.kb.add_document(
-        str(body.get("user_id") or "owner"),
-        str(body.get("title") or "未命名"),
-        text,
-        str(body.get("source") or ""),
-    )
-
-
-@app.delete("/v1/kb/docs/{doc_id}")
-async def kb_delete_legacy(doc_id: int, _: str = Depends(require_api_key)):
-    """The legacy body-less DELETE cannot carry an exact one-time capability."""
-    del doc_id
-    raise HTTPException(
-        status_code=410,
-        detail="请使用 POST /v1/kb/docs/{doc_id}/delete 走一次性审批",
-    )
-
-
-def _knowledge_delete_spec(user_id: str, doc_id: int) -> dict[str, Any]:
-    kb = app.state.kb
-    with kb._lock:  # noqa: SLF001 - exact same-process document snapshot
-        doc = kb._conn.execute(  # noqa: SLF001
-            "SELECT id,user_id,title,source,chunks,created_at "
-            "FROM kb_docs WHERE user_id=? AND id=?",
-            (user_id, doc_id),
-        ).fetchone()
-        if doc is None:
-            state_sha256, records = _snapshot_hash([])
-            exists = False
-        else:
-            chunk_rows = kb._conn.execute(  # noqa: SLF001
-                "SELECT id,user_id,doc_id,title,text FROM kb_chunks "
-                "WHERE user_id=? AND doc_id=? ORDER BY id",
-                (user_id, doc_id),
-            ).fetchall()
-            state_sha256, records = _snapshot_hash([("doc", *doc), *chunk_rows])
-            exists = True
-    return {
-        "target": {
-            "kind": "knowledge_document",
-            "user_id": user_id,
-            "doc_id": doc_id,
-        },
-        "snapshot": {
-            "sha256": state_sha256,
-            "records": records,
-            "exists": exists,
-        },
-    }
-
-
-@app.post("/v1/kb/docs/{doc_id}/delete")
-async def kb_delete_approved(
-    doc_id: int, request: Request, _: str = Depends(require_api_key)
-):
-    """Delete the exact reviewed document and chunk snapshot once."""
-    if doc_id <= 0:
-        raise HTTPException(status_code=422, detail="doc_id 必须是正整数")
-    body = await _destructive_request_body(request)
-    user_id = _destructive_user_id(body)
-    spec = _knowledge_delete_spec(user_id, doc_id)
-    if not spec["snapshot"]["exists"] and not _has_approval_id(body):
-        raise HTTPException(status_code=404, detail="知识库文档不存在")
-    task = f"删除知识库文档：user={user_id}, doc_id={doc_id}"
-    approval_id, held = await _action_capability(
-        body=body,
-        router=app.state.router,
-        task=task,
-        workdir=str(Path(get_settings().usage_db_path).parent.resolve()),
-        user_id=user_id,
-        scope="knowledge_document_delete",
-        mode="full",
-        require_explicit_capability=True,
-        payload_extra=spec,
-    )
-    if held is not None:
-        return held
-    try:
-        if _knowledge_delete_spec(user_id, doc_id) != spec:
-            raise HTTPException(status_code=409, detail="知识库文档已变化，请重新审批")
-        deleted = app.state.kb.delete_document(user_id, doc_id)
-        if not deleted or _knowledge_delete_spec(user_id, doc_id)["snapshot"]["exists"]:
-            raise RuntimeError("knowledge document delete did not remove the reviewed target")
-    except Exception:
-        app.state.approvals.finish_action(approval_id, success=False)
-        raise
-    app.state.approvals.finish_action(approval_id, success=True)
-    return {"ok": True, "user_id": user_id, "doc_id": doc_id}
-
-
-@app.post("/v1/kb/query")
-async def kb_query(request: Request, _: str = Depends(require_api_key)):
-    """问知识库：检索相关分块 → 模型据实带引用回答。返回 {answer, sources}。"""
-    body = await request.json()
-    user_id = str(body.get("user_id") or "owner")
-    query = str(body.get("query") or "").strip()
-    if not query:
-        raise HTTPException(status_code=422, detail="需要 query")
-    router = app.state.router
-    hits = app.state.kb.search(user_id, query, k=int(body.get("k") or 5))
-    if not hits:
-        return {"answer": "知识库里没找到相关内容。", "sources": []}
-    model = "agnes-flash" if router.resolve("agnes-flash") else (pick_model(router, "cheap") or "echo")
-    req = ChatCompletionRequest(
-        model=model,
-        messages=[
-            ChatMessage(
-                role="system",
-                content=kb_context(hits)
-                + "\n\n只依据以上资料回答用户问题，引用处标[编号]；资料里没有就说「知识库里没有」、别编。",
-            ),
-            ChatMessage(role="user", content=query),
-        ],
-    )
-    try:
-        res, served, _route = await chat_with_fallback(router, req)
-        answer = (res.get("choices") or [{}])[0].get("message", {}).get("content", "")
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=502,
-            detail="知识库回答失败，请到诊断中心查看详情",
-            headers={"Cache-Control": "no-store"},
-        ) from exc
-    sources = [{"doc_id": h["doc_id"], "title": h["title"], "score": h["score"]} for h in hits]
-    return {"answer": answer, "sources": sources, "model": served, "usage": res.get("usage") or {}}
-
-
-@app.post("/v1/intent")
-async def intent_classify(request: Request, _: str = Depends(require_api_key)):
-    """意图分类（#17）：{message} → {intent}。免费模型判，比正则准；任何端共享（#15）。"""
-    body = await request.json()
-    message = str(body.get("message") or "").strip()
-    if not message:
-        return {"intent": "chat"}
-    intent = await classify_intent(app.state.router, message)
-    return {"intent": intent}
-
-
-@app.post("/v1/web/read")
-async def web_read(request: Request, _: str = Depends(require_api_key)):
-    """贴网页链接 → 抓正文 + 模型总结。body: {url, question?, model?}。视频链接请走 /v1/lapian/url。"""
-    body = await request.json()
-    raw = str(body.get("url") or "").strip()
-    if not raw:
-        raise HTTPException(status_code=422, detail="需要 url")
-    m = re.search(r"https?://[^\s，。、）)】」\"']+", raw)  # 从整段话里抠出真链接
-    url = m.group(0) if m else raw
-    try:
-        return await read_and_summarize(
-            app.state.router, url, question=str(body.get("question") or ""), model=str(body.get("model") or "")
-        )
-    except Exception as e:  # noqa: BLE001
-        from gateway.providers.base import friendly_error
-
-        raise HTTPException(status_code=502, detail=f"网页抓取失败：{friendly_error(e)}")
-
-
-@app.post("/v1/workflows/daily-video/start")
-async def daily_video_start(_: str = Depends(require_api_key)):
-    """Disabled until an independently sandboxed, attested worker exists."""
-    raise HTTPException(
-        status_code=503,
-        detail="日更 Python 启动器已关闭：需要独立低权限执行 worker 后才能启用",
-    )
-
-
-# ── 视频工作室（创作线·①②出方案+调教；③执行随后）──
-@app.post("/v1/studio/plan")
-async def studio_plan(request: Request, _: str = Depends(require_api_key)):
-    """出/改分镜方案：{goal, feedback?, plan?} → {plan}。只出方案、不生成视频。"""
-    body = await request.json()
-    goal = str(body.get("goal") or "").strip()
-    if not goal:
-        raise HTTPException(status_code=422, detail="需要 goal（视频目标）")
-    plan = await generate_plan(
-        app.state.router, goal, str(body.get("feedback") or ""), body.get("plan")
-    )
-    return {"plan": plan}
-
-
-@app.post("/v1/studio/execute")
-async def studio_execute(request: Request, _: str = Depends(require_api_key)):
-    """③ 按方案成片：{plan} → 起后台任务，返回 {job_id}（逐镜生成→拼接）。"""
-    if not current_runtime_profile().allows(RuntimeCapability.STUDIO_EXECUTION):
-        raise HTTPException(
-            status_code=503,
-            detail="当前运行配置已关闭工作室执行；需要独立低权限 worker",
-        )
-    body = await request.json()
-    plan = body.get("plan")
-    if not isinstance(plan, dict) or not isinstance(plan.get("shots"), list):
-        raise HTTPException(status_code=422, detail="plan 格式无效")
-    if not plan["shots"]:
-        raise HTTPException(status_code=422, detail="需要 plan（含 shots）")
-    if len(plan["shots"]) > 100 or len(json.dumps(plan, ensure_ascii=False)) > 256_000:
-        raise HTTPException(status_code=422, detail="plan 超过 100 个镜头或 256KB 安全上限")
-    out_dir = str(Path(get_settings().usage_db_path).parent / "studio")
-    task = str(body.get("task") or f"执行视频方案：{str(plan.get('title') or '未命名')}")
-    approval_id, held = await _action_capability(
-        body=body,
-        router=app.state.router,
-        task=task,
-        workdir=out_dir,
-        user_id=str(body.get("user_id") or get_settings().agent_user_id or "owner"),
-        scope="studio_execute",
-        mode="auto",
-        require_explicit_capability=True,
-        payload_extra={"plan": plan},
-    )
-    if held is not None:
-        return held
-    try:
-        job_id = start_execution(app.state.router, plan, out_dir)
-    except Exception:
-        if approval_id:
-            app.state.approvals.finish_action(approval_id, success=False)
-        raise
-    if approval_id:
-        app.state.approvals.finish_action(approval_id, success=True)
-    return {"job_id": job_id}
-
-
-@app.get("/v1/studio/execute/{job_id}")
-async def studio_execute_status(job_id: str, _: str = Depends(require_api_key)):
-    """轮询成片进度：{status, progress, total, msg, video, error}。完成后视频在 /v1/studio/video/{id}。"""
-    return get_job(job_id)
-
-
-@app.get("/v1/studio/video/{job_id}")
-async def studio_video(job_id: str, _: str = Depends(require_api_key)):
-    """取成片结果（mp4）。"""
-    from fastapi.responses import FileResponse
-
-    job = get_job(job_id)
-    vid = job.get("video") or ""
-    if job.get("status") != "done" or not vid or not Path(vid).exists():
-        raise HTTPException(status_code=404, detail="还没成片或文件不存在")
-    return FileResponse(vid, media_type="video/mp4", filename="video.mp4")
-
-
-@app.get("/v1/approvals")
-async def list_approvals(
-    user_id: str,
-    _: str = Depends(require_api_key),
-    __: str = Depends(require_approval_admin_key),
-):
-    """机主待审清单（P5 重大动作 + P6 技能卡入库）。前端据此弹「动作摘要 + 同意/换方案/取消 + 自定义输入」。"""
-    return {"user_id": user_id, "pending": app.state.approvals.list_pending(user_id)}
-
-
-@app.post("/v1/approvals/{approval_id}/resolve")
-async def resolve_approval(
-    approval_id: int,
-    request: Request,
-    _: str = Depends(require_api_key),
-    __: str = Depends(require_approval_admin_key),
-):
-    """裁决一条待审：decision=approve(同意)/reject(取消)/revise(换方案，note=机主自定义说明)。
-    技能卡同意 → 正式进案例库（P6 闭环）；重大动作的裁决回传，调用方据此放行/改方案/作罢。"""
-    body = await request.json()
-    decision = str(body.get("decision") or "").lower()
-    note = str(body.get("note") or "")
-    rec = app.state.approvals.resolve(approval_id, decision, note)
-    if rec is None:
-        raise HTTPException(status_code=422, detail="decision 需为 approve/reject/revise，且待审项需存在")
-    if rec.get("status") == "expired":
-        raise HTTPException(status_code=409, detail="审批已过期，请重新发起动作")
-    result: dict[str, Any] = {
-        "ok": True, "id": approval_id, "status": rec["status"], "kind": rec["kind"], "note": rec.get("note", ""),
-    }
-    # 技能卡审核「同意」→ 正式入案例库（复盘→技能卡→待审→审核→案例库 闭环）
-    if rec["kind"] == "skill_card" and rec["status"] == "approved":
-        p = rec.get("payload") or {}
-        result["case_id"] = app.state.cases.add(
-            rec["user_id"], p.get("problem", ""), p.get("solution", ""), p.get("model", "user_approved")
-        )
-    return JSONResponse(result)
-
-
-@app.post("/v1/sync/cases/push")
-async def sync_cases_push(request: Request, _: str = Depends(require_api_key)):
-    """跨设备同步：把一台机器学到的案例合并进本服务器的共享库（去重幂等，不重复堆）。"""
-    body = await request.json()
-    user_id = str(body.get("user_id") or "")
-    added = app.state.cases.import_merge(user_id, body.get("items") or []) if user_id else 0
-    return {"ok": True, "added": added}
-
-
-@app.get("/v1/sync/cases/pull")
-async def sync_cases_pull(user_id: str, _: str = Depends(require_api_key)):
-    """跨设备同步：拉取共享库全部案例，调用方 import_merge 到本地（各机各存全份=容灾）。"""
-    return {"user_id": user_id, "items": app.state.cases.export_all(user_id)}
-
-
-# ── 跨设备云同步（Supabase）：记忆+案例+知识库，按 Supabase 账户隔离 ──────────────
-@app.get("/v1/sync/status")
-async def cloud_sync_status(_: str = Depends(require_api_key)):
-    """同步状态（不回显任何密钥/token）：是否配置/登录、邮箱、上次同步时间。"""
-    from orchestrator import cloud_sync
-
-    return cloud_sync.status()
-
-
-@app.post("/v1/sync/config")
-async def cloud_sync_config(
-    request: Request,
-    _: str = Depends(require_api_key),
-    __: str = Depends(require_approval_admin_key),
-):
-    """录入 Supabase 项目 URL + anon key（不回显、存本地 data/sync.json）。"""
-    from orchestrator import cloud_sync
-
-    body = await request.json()
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=422, detail="同步配置必须是 JSON 对象")
-    url = body.get("url")
-    anon_key = body.get("anon_key")
-    if not isinstance(url, str) or not isinstance(anon_key, str):
-        raise HTTPException(status_code=422, detail="url/anon_key 必须是字符串")
-    if len(url) > 2048 or len(anon_key) > 16384:
-        raise HTTPException(status_code=413, detail="同步配置超过长度限制")
-    try:
-        target = cloud_sync.validate_target(url, anon_key)
-        cloud_sync.configure(target["url"], anon_key)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail="Supabase 目标不符合安全策略") from exc
-    except (OSError, SecureStorageError) as exc:
-        raise HTTPException(status_code=503, detail="同步配置未能安全持久化") from exc
-    return cloud_sync.status()
-
-
-@app.post("/v1/sync/signup")
-async def cloud_sync_signup(
-    request: Request,
-    _: str = Depends(require_api_key),
-    __: str = Depends(require_approval_admin_key),
-):
-    """Supabase 注册（商用：终端用户自助开账户）。"""
-    from starlette.concurrency import run_in_threadpool
-
-    from orchestrator import cloud_sync
-
-    body = await request.json()
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=422, detail="注册参数必须是 JSON 对象")
-    email = body.get("email")
-    password = body.get("password")
-    if (
-        not isinstance(email, str)
-        or not isinstance(password, str)
-        or not email.strip()
-        or not password
-        or len(email) > 320
-        or len(password) > 1024
-    ):
-        raise HTTPException(status_code=422, detail="邮箱或密码格式无效")
-    return await run_in_threadpool(
-        cloud_sync.signup, email.strip(), password
-    )
-
-
-@app.post("/v1/sync/login")
-async def cloud_sync_login(
-    request: Request,
-    _: str = Depends(require_api_key),
-    __: str = Depends(require_approval_admin_key),
-):
-    """Supabase 邮箱密码登录（拿 token、定账户）。"""
-    from starlette.concurrency import run_in_threadpool
-
-    from orchestrator import cloud_sync
-
-    body = await request.json()
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=422, detail="登录参数必须是 JSON 对象")
-    email = body.get("email")
-    password = body.get("password")
-    if (
-        not isinstance(email, str)
-        or not isinstance(password, str)
-        or not email.strip()
-        or not password
-        or len(email) > 320
-        or len(password) > 1024
-    ):
-        raise HTTPException(status_code=422, detail="邮箱或密码格式无效")
-    return await run_in_threadpool(
-        cloud_sync.login, email.strip(), password
-    )
-
-
-@app.post("/v1/sync/toggle")
-async def cloud_sync_toggle(
-    request: Request,
-    _: str = Depends(require_api_key),
-    __: str = Depends(require_approval_admin_key),
-):
-    """同步总开关。"""
-    from orchestrator import cloud_sync
-
-    body = await request.json()
-    if not isinstance(body, dict) or not isinstance(body.get("enabled"), bool):
-        raise HTTPException(status_code=422, detail="enabled 必须是布尔值")
-    enabled = body["enabled"]
-    current = cloud_sync.status()
-    if enabled and not (current.get("configured") and current.get("logged_in")):
-        raise HTTPException(status_code=409, detail="同步目标尚未配置并登录")
-    try:
-        cloud_sync.set_enabled(enabled)
-    except (OSError, SecureStorageError) as exc:
-        raise HTTPException(status_code=503, detail="同步开关未能安全持久化") from exc
-    return cloud_sync.status()
-
-
-@app.post("/v1/sync/run")
-async def cloud_sync_run(
-    _: str = Depends(require_api_key),
-    __: str = Depends(require_approval_admin_key),
-):
-    """立即同步一次：四张表各 push 本地 + pull 远端合并。未就绪则安全跳过。"""
-    from starlette.concurrency import run_in_threadpool
-
-    from orchestrator import cloud_sync
-
-    return await run_in_threadpool(cloud_sync.sync_all)
-
-
-@app.post("/v1/agent/feedback")
-async def agent_feedback(
-    request: Request, credential: str = Depends(require_bridge_or_api_key)
-):
-    """反馈（Reflexion）：rating=up/down。👎+note→存教训(下次注入)；👍→上一轮提升为案例。"""
-    body = await request.json()
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=422, detail="请求体必须是 JSON 对象")
-    requested_channel = str(body.get("channel") or "").strip().lower()
-    if credential.startswith("bridge:") and credential != f"bridge:{requested_channel}":
-        raise HTTPException(status_code=403, detail="bridge credential channel mismatch")
-    user_id = str(body.get("user_id") or "")
-    rating = str(body.get("rating") or "").lower()
-    if not user_id or rating not in ("up", "down"):
-        raise HTTPException(status_code=422, detail="需要 user_id 与 rating(up/down)")
-    idempotency_key = body.get("idempotency_key")
-    if requested_channel in {"feishu", "weixin"} and not isinstance(
-        idempotency_key, str
-    ):
-        raise HTTPException(
-            status_code=422,
-            detail=f"{requested_channel} feedback requires idempotency_key",
-        )
-    if idempotency_key is not None:
-        try:
-            return await run_in_threadpool(
-                record_feedback_once,
-                memory=app.state.memory,
-                cases=app.state.cases,
-                conv=app.state.conversations,
-                user_id=user_id,
-                rating=rating,
-                idempotency_key=idempotency_key,
-                channel=requested_channel or "api",
-                chat_id=str(body.get("chat_id") or ""),
-                note=body.get("note"),
-            )
-        except ValueError as exc:
-            status = 409 if "semantic conflict" in str(exc) else 422
-            raise HTTPException(status_code=status, detail=str(exc)) from exc
-        except ConversationReceiptUnavailable as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="durable feedback receipt is unavailable",
-            ) from exc
-    return record_feedback(
-        memory=app.state.memory,
-        cases=app.state.cases,
-        conv=app.state.conversations,
-        user_id=user_id,
-        rating=rating,
-        channel=requested_channel or "api",
-        chat_id=str(body.get("chat_id") or ""),
-        note=body.get("note"),
-    )
-
-
-@app.post("/v1/agent/reflect")
-async def agent_reflect(request: Request, _: str = Depends(require_api_key)):
-    """反思：把某用户的零散记忆归纳为高层洞察(insight)。"""
-    body = await request.json()
-    user_id = str(body.get("user_id") or "")
-    if not user_id:
-        raise HTTPException(status_code=422, detail="需要 user_id")
-    router: Router = app.state.router
-    model = (
-        "agnes-flash"
-        if router.resolve("agnes-flash")
-        else (pick_model(router, "cheap") or get_settings().bridge_model)
-    )
-    added = await reflect(router, app.state.memory, user_id=user_id, model=model)
-    return {"user_id": user_id, "insights_added": added}
+# [memory_kb + studio + approvals_sync + agent_feedback/reflect 已拆解迁移至 gateway/routes/]
 
 
 _READ_ONLY_AGENT_TOOLS = frozenset({
@@ -5815,293 +5520,7 @@ async def _run_agent_exec(
     )
 
 
-@app.post("/v1/agent/exec")
-async def agent_exec_endpoint(request: Request, _: str = Depends(require_api_key)):
-    """Native host execution is unavailable inside the gateway process."""
-    # 在解析任务、创建审批前即拒绝，避免给不可执行的宿主 CLI 签发 capability。
-    raise HTTPException(
-        status_code=503,
-        detail="本机 CLI 执行已关闭：需要独立低权限执行 worker 后才能启用",
-    )
-    router: Router = app.state.router
-    body = await request.json()
-    task = (body.get("task") or "").strip()
-    if not task:
-        raise HTTPException(status_code=422, detail="需要 task")
-    s = get_settings()
-    workdir = str(body.get("workdir") or s.agent_exec_workdir or str(PROJECT_ROOT))
-    uid = str(body.get("user_id") or s.agent_user_id or "owner")
-    # API 缺省是只读 plan；auto/full 任何可写执行都必须消费服务端一次性 capability。
-    _mode = _agent_mode(body)
-    _instr = str(body.get("instruction") or "").strip()
-    if not _instr and "【现在的指令】" in task:
-        _instr = task.split("【现在的指令】", 1)[1].strip()
-    _approval_id, held = await _action_capability(
-        body=body,
-        router=router,
-        task=task,
-        workdir=workdir,
-        user_id=uid,
-        scope="agent_exec",
-        mode=_mode,
-        summary=_instr,
-        soft_check=True,
-        require_explicit_capability=_mode != "plan",
-        payload_extra={
-            "backend": body.get("backend"),
-            "model": body.get("model"),
-        },
-    )
-    if held is not None:
-        return held
-    _claimed = bool(_approval_id)
-    try:
-        result = await _run_agent_exec(
-            router,
-            task,
-            backend=str(body.get("backend") or "auto").lower(),
-            mode=_mode,
-            workdir=workdir,
-            model_override=body.get("model"),
-        )
-    except ProviderError as e:
-        if _claimed:
-            app.state.approvals.finish_action(_approval_id, success=False)
-        raise _public_provider_http_error(e) from e
-    except Exception:
-        if _claimed:
-            app.state.approvals.finish_action(_approval_id, success=False)
-        raise
-    if _claimed:
-        app.state.approvals.finish_action(_approval_id, success=True)
-    return result
-
-
-_JOBS: set = set()
-
-
-def _make_step_executor(router: Router, *, workdir: str, backend: str, mode: str):
-    """每步执行器：action→当前启用工具执行，reason→模型思考。"""
-
-    async def executor(step: dict) -> str:
-        if step.get("kind") == "reason":
-            m = get_settings().bridge_model
-            prompt = f"任务步骤：{step.get('title', '')}\n{step.get('detail', '')}\n请完成这一步，直接给结论。"
-            req = ChatCompletionRequest(model=m, messages=[{"role": "user", "content": prompt}])  # type: ignore[arg-type]
-            res, _s, _r = await chat_with_fallback(router, req)
-            return ((res.get("choices") or [{}])[0].get("message", {}).get("content") or "").strip()
-        task = f"{step.get('title', '')}。{step.get('detail', '')}".strip("。 ")
-        res = await _run_agent_exec(router, task, backend=backend, mode=mode, workdir=workdir)
-        return str(res.get("result") or res.get("reply") or res.get("stdout") or "")[:4000]
-
-    return executor
-
-
-def _spawn_job(ledger: TaskLedger, jid: str, executor) -> None:
-    pool = get_background_job_pool()
-    lease = pool.try_acquire(kind="agent_job", external_ids=(jid,))
-    if lease is None:
-        raise BackgroundJobLimitExceeded("background agent-job capacity reached")
-
-    async def tracked() -> None:
-        try:
-            await run_job(ledger, jid, executor)
-        finally:
-            pool.release(lease)
-
-    try:
-        t = asyncio.create_task(tracked())
-    except Exception:
-        pool.release(lease)
-        raise
-    _JOBS.add(t)
-    t.add_done_callback(_JOBS.discard)
-
-
-@app.post("/v1/agent/job")
-async def create_job_endpoint(request: Request, _: str = Depends(require_api_key)):
-    """执行脊柱：把一个目标自动分解成多步、逐步执行、可断点续跑。后台跑，立即返回 job_id+步骤；GET 轮询进度。"""
-    raise HTTPException(
-        status_code=503,
-        detail="本机 CLI 任务执行已关闭：需要独立低权限执行 worker 后才能启用",
-    )
-    router: Router = app.state.router
-    body = await request.json()
-    s = get_settings()
-    approved = _approved_action_record(body, scope="agent_job")
-    if approved is not None:
-        if approved.get("status") == "revise":
-            raise HTTPException(
-                status_code=409,
-                detail="换方案会改变冻结步骤；请带补充要求重新发起并审批一份新计划",
-            )
-        # approval_id selects the complete server-side authority. Every other body
-        # field is untrusted compatibility noise and is deliberately ignored.
-        payload = approved.get("payload") or {}
-        try:
-            spec = validate_execution_spec(payload.get("execution_spec"))
-        except (TypeError, ValueError):
-            raise HTTPException(
-                status_code=403,
-                detail="审批记录缺少可验证的冻结执行规范，请重新发起任务",
-            )
-        uid = str(approved.get("user_id") or "owner")
-        claim_goal = str(spec["goal"])
-    else:
-        goal = str(body.get("goal") or "").strip()
-        if not goal:
-            raise HTTPException(status_code=422, detail="需要 goal")
-        workdir = str(body.get("workdir") or s.agent_exec_workdir or str(PROJECT_ROOT))
-        mode = _agent_mode(body)
-        uid = str(body.get("user_id") or "owner")
-        # Plan exactly once. This output is persisted in the approval payload and is
-        # never regenerated after approval, even if the planner is non-deterministic.
-        steps = body.get("steps") or await plan_job(router, goal)
-        if not steps:
-            raise HTTPException(status_code=502, detail="任务分解失败，换个说法或自带 steps")
-        try:
-            spec = freeze_execution_spec(
-                goal=goal,
-                steps=steps,
-                workdir=workdir,
-                backend=str(body.get("backend") or "auto"),
-                mode=mode,
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e))
-        claim_goal = str(spec["goal"])
-
-    goal = str(spec["goal"])
-    steps = list(spec["steps"])
-    workdir = str(spec["workdir"])
-    backend = str(spec["backend"])
-    mode = str(spec["mode"])
-    frozen_manifest = {
-        "steps": steps,
-        "backend": backend,
-        "execution_spec": spec,
-    }
-    approval_id, held = await _action_capability(
-        body=body,
-        router=router,
-        task=claim_goal,
-        workdir=workdir,
-        user_id=uid,
-        scope="agent_job",
-        mode=mode,
-        enforce_task_risk=mode != "plan",
-        require_explicit_capability=mode != "plan",
-        payload_extra=frozen_manifest,
-    )
-    if held is not None:
-        return held
-    ledger: TaskLedger = app.state.ledger
-    jid = ""
-    try:
-        jid = ledger.create_job(goal, steps, user_id=uid, execution_spec=spec)
-        _spawn_job(
-            ledger,
-            jid,
-            _make_step_executor(
-                router,
-                workdir=workdir,
-                backend=backend,
-                mode=mode,
-            ),
-        )
-    except Exception:
-        if jid:
-            ledger.fail_unclaimed_job(jid)
-        if approval_id:
-            app.state.approvals.finish_action(approval_id, success=False)
-        raise
-    if approval_id:
-        app.state.approvals.finish_action(approval_id, success=True)
-    return {"job_id": jid, **ledger.to_dict(jid)}
-
-
-@app.get("/v1/agent/job/{job_id}")
-async def job_status_endpoint(job_id: str, _: str = Depends(require_api_key)):
-    """查任务进度（轮询）：含每步 status/output 与 progress。"""
-    d = app.state.ledger.to_dict(job_id)
-    if not d:
-        raise HTTPException(status_code=404, detail="无此任务")
-    return d
-
-
-@app.post("/v1/agent/job/{job_id}/resume")
-async def job_resume_endpoint(job_id: str, request: Request, _: str = Depends(require_api_key)):
-    """断点续跑：把崩溃/失败的步骤复位，从断点接着跑（done 步骤跳过）。"""
-    raise HTTPException(
-        status_code=503,
-        detail="本机 CLI 任务执行已关闭：需要独立低权限执行 worker 后才能启用",
-    )
-    ledger: TaskLedger = app.state.ledger
-    job = ledger.to_dict(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="无此任务")
-    try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001
-        body = {}
-    spec = ledger.get_execution_spec(job_id)
-    if spec is None:
-        # Legacy jobs have no trustworthy record of the originally approved
-        # workdir/backend/mode. Fail closed instead of elevating a new request body
-        # into execution authority.
-        raise HTTPException(
-            status_code=409,
-            detail="任务缺少可验证的冻结执行规范，请新建任务",
-        )
-    approved = _approved_action_record(body, scope="agent_job_resume")
-    if approved is not None and approved.get("status") == "revise":
-        raise HTTPException(
-            status_code=409,
-            detail="恢复任务不能用换方案修改已冻结执行规范；请新建任务",
-        )
-    goal = str(spec["goal"])
-    workdir = str(spec["workdir"])
-    backend = str(spec["backend"])
-    mode = str(spec["mode"])
-    uid = str(job.get("user_id") or "owner")
-    claim_goal = goal
-    frozen_manifest = {
-        "job_id": job_id,
-        "backend": backend,
-        "execution_spec": spec,
-    }
-    approval_id, held = await _action_capability(
-        body=body,
-        router=app.state.router,
-        task=claim_goal,
-        workdir=workdir,
-        user_id=uid,
-        scope="agent_job_resume",
-        mode=mode,
-        enforce_task_risk=mode != "plan",
-        require_explicit_capability=mode != "plan",
-        payload_extra=frozen_manifest,
-    )
-    if held is not None:
-        return held
-    try:
-        _spawn_job(
-            ledger,
-            job_id,
-            _make_step_executor(
-                app.state.router,
-                workdir=workdir,
-                backend=backend,
-                mode=mode,
-            ),
-        )
-    except Exception:
-        if approval_id:
-            app.state.approvals.finish_action(approval_id, success=False)
-        raise
-    if approval_id:
-        app.state.approvals.finish_action(approval_id, success=True)
-    return ledger.to_dict(job_id)
+# [agent_exec + agent_job 已拆解迁移至 gateway/routes/]
 
 
 def _agent_run_spec_digest(spec: dict[str, Any]) -> str:
@@ -6417,19 +5836,27 @@ async def agent_run_endpoint(request: Request, api_key: str = Depends(require_ap
         except (TypeError, ValueError):
             max_steps = 50
         orchestrate = bool(body.get("orchestrate", True))
-        conversation_id = str(body.get("conversation_id") or "")
+        _run_incognito = is_incognito_request(body)
+        _run_inject_memory = should_inject_memory(body)
+        conversation_id = "" if _run_incognito else str(body.get("conversation_id") or "")
         history = body.get("history") or []
         if not isinstance(history, list):
             raise HTTPException(status_code=422, detail="history 必须是数组")
-        history = await conv_summary.rolling_compress(
-            app.state.router, conversation_id, list(history)
-        )
-        try:
-            _note, _ = memory_system_note(app.state.memory, s.agent_user_id or "owner", task)
-            if _note:
-                history = [{"role": "system", "content": _note}] + list(history or [])
-        except Exception:  # noqa: BLE001
-            pass
+        if not _run_incognito:
+            history = await conv_summary.rolling_compress(
+                app.state.router,
+                conversation_id,
+                list(history),
+                source_model=model,
+                incognito=_run_incognito,
+            )
+        if _run_inject_memory and not _run_incognito:
+            try:
+                _note, _ = memory_system_note(app.state.memory, s.agent_user_id or "owner", task)
+                if _note:
+                    history = [{"role": "system", "content": _note}] + list(history or [])
+            except Exception:  # noqa: BLE001
+                pass
         spec = _freeze_agent_run_spec(
             task=task,
             workdir=workdir,
@@ -6530,7 +5957,13 @@ async def agent_run_endpoint(request: Request, api_key: str = Depends(require_ap
                             "message": "Agent 返回了无效的终态结果",
                         })
                         return
-                    _grow_from_terminal_agent_result(app.state.router, task, res)
+                    _grow_from_terminal_agent_result(
+                        app.state.router,
+                        task,
+                        res,
+                        source_model=model,
+                        incognito=is_incognito_request(body),
+                    )
                     await queue.put(
                         {
                             "type": "result",
@@ -6599,7 +6032,13 @@ async def agent_run_endpoint(request: Request, api_key: str = Depends(require_ap
                 detail={"code": "invalid_agent_result", "retryable": False},
                 headers={"Cache-Control": "no-store"},
             ) from exc
-        _grow_from_terminal_agent_result(app.state.router, task, res)
+        _grow_from_terminal_agent_result(
+            app.state.router,
+            task,
+            res,
+            source_model=model,
+            incognito=is_incognito_request(body),
+        )
         return project_public_agent_result(
             res,
             file_change_validator=undo_receipts.verify_projection,
@@ -6653,983 +6092,7 @@ async def agent_run_endpoint(request: Request, api_key: str = Depends(require_ap
     return result
 
 
-@app.post("/v1/agent/inject")
-async def agent_inject_endpoint(request: Request, api_key: str = Depends(require_api_key)):
-    """运行中插话（steering）：agent 长任务跑着时把用户的话注入循环——任务不打断、
-    下一步动作前吸收（机主定案：插话=补充信息，不是砍任务）。
-    返回 {injected}：false=该对话当前没有运行中任务，前端应走普通发送/排队。"""
-    if not current_runtime_profile().allows(
-        RuntimeCapability.CONTROLLED_AGENT_EXECUTION
-    ):
-        raise HTTPException(
-            status_code=503,
-            detail="当前运行配置已关闭受控 Agent 执行；需要独立低权限 worker",
-        )
-    body = await request.json()
-    principal = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
-    ok = steer.push(
-        str(body.get("conversation_id") or ""),
-        str(body.get("message") or ""),
-        principal,
-    )
-    return {"injected": ok}
-
-
-@app.post("/v1/agent/undo")
-async def agent_undo_endpoint(request: Request, _: str = Depends(require_api_key)):
-    """Consume a server-issued one-time receipt and restore its exact pre-image."""
-    if not current_runtime_profile().allows(
-        RuntimeCapability.CONTROLLED_AGENT_EXECUTION
-    ):
-        raise HTTPException(
-            status_code=503,
-            detail="当前运行配置已关闭受控 Agent 执行；需要独立低权限 worker",
-        )
-    body = await request.json()
-    receipt = str(body.get("receipt") or "")
-    if not receipt:
-        # Legacy path/content was an authenticated arbitrary-write primitive.
-        raise HTTPException(status_code=410, detail="旧版任意路径撤销接口已停用；需要服务端签发的 receipt")
-    content = str(body.get("content") or "")
-    try:
-        result = undo_receipts.restore(receipt, content)
-    except UndoReceiptError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"ok": True, **result}
-
-
-@app.post("/v1/audio/transcriptions")
-async def transcribe_audio(
-    request: Request,
-    language: str | None = None,
-    _: str = Depends(require_bridge_or_api_key),
-):
-    """语音转文字（D1·本地 faster-whisper，免费离线）。请求体=音频字节；?language=zh 可选（默认自动）。"""
-    data = await request.body()
-    if not data:
-        raise HTTPException(status_code=422, detail="需要音频数据（请求体）")
-    try:
-        text = await run_in_threadpool(audio_mod.transcribe, data, language)
-    except AudioUnavailable:
-        raise HTTPException(
-            status_code=503,
-            detail="语音转写暂不可用；请检查本地模型与已锁定语音引擎",
-        )
-    return {"text": text}
-
-
-@app.get("/v1/audio/model")
-async def get_audio_model(_: str = Depends(require_api_key)):
-    """当前语音转写模型档 + 可选项。"""
-    return {"model": audio_mod.current_model_name(), "options": list(audio_mod.WHISPER_MODELS)}
-
-
-@app.post("/v1/audio/model")
-async def set_audio_model(request: Request, _: str = Depends(require_api_key)):
-    """切换语音转写模型档（tiny 最快 / base 均衡 / small 最准）。切完后台预热新档。"""
-    body = await request.json()
-    name = str(body.get("model") or "")
-    if not audio_mod.set_model(name):
-        raise HTTPException(
-            status_code=422, detail=f"无效档位；可选：{', '.join(audio_mod.WHISPER_MODELS)}"
-        )
-    import threading
-
-    threading.Thread(target=audio_mod.warm, daemon=True).start()
-    return {"model": audio_mod.current_model_name()}
-
-
-@app.post("/v1/translate")
-async def translate_endpoint(request: Request, _: str = Depends(require_api_key)):
-    """实时翻译（D2·走自家免费模型）。入参 text、target(语种码/名)；model 可选（默认免费 Agnes）。"""
-    router: Router = app.state.router
-    body = await request.json()
-    text = (body.get("text") or "").strip()
-    if not text:
-        raise HTTPException(status_code=422, detail="需要 text")
-    target = str(body.get("target") or body.get("target_lang") or "en")
-    model = str(
-        body.get("model")
-        or ("agnes-flash" if router.resolve("agnes-flash") else (pick_model(router, "cheap") or get_settings().bridge_model))
-    )
-    try:
-        return JSONResponse(await translate(router, text=text, target=target, model=model))
-    except ProviderError as e:
-        raise _public_provider_http_error(e) from e
-
-
-_CHANNEL_VISION_DEFAULT_QUESTION = (
-    "详细描述这张图片的内容；若图中有文字，逐字准确识别出来（OCR）。"
-)
-_CHANNEL_VISION_RESULT_RESERVATION_BYTES = 1024 * 1024
-_CHANNEL_LAPIAN_RESULT_RESERVATION_BYTES = 8 * 1024 * 1024
-_CHANNEL_MEDIA_HEARTBEAT_MAX_INTERVAL_SECONDS = 30.0
-_BRIDGE_CHANNEL_CREDENTIALS = frozenset({"bridge:feishu", "bridge:weixin"})
-
-
-def _decode_bridge_channel_media(
-    data: bytes,
-    *,
-    credential: str,
-    operation: str,
-    expected_params: dict[str, Any],
-) -> ChannelMediaFrame | None:
-    if credential not in _BRIDGE_CHANNEL_CREDENTIALS:
-        return None
-    try:
-        frame = decode_channel_media_frame(data)
-    except ChannelMediaFrameError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "invalid_channel_media_frame", "retryable": False},
-        ) from exc
-    if credential != f"bridge:{frame.channel}":
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "channel_media_credential_mismatch", "retryable": False},
-        )
-    if frame.operation != operation or frame.params != expected_params:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "channel_media_semantic_mismatch", "retryable": False},
-        )
-    return frame
-
-
-async def _claim_bridge_channel_media(
-    frame: ChannelMediaFrame,
-    *,
-    max_success_bytes: int,
-) -> tuple[DurableChannelMediaRequestStore, DurableMediaRequestClaim]:
-    await _refresh_waiting_channel_media_authority()
-    store = getattr(app.state, "channel_media_requests", None)
-    if not isinstance(store, DurableChannelMediaRequestStore):
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "channel_media_store_unavailable", "retryable": True},
-        )
-    identity = recompute_channel_media_identity(frame)
-    try:
-        claim = await run_in_threadpool(
-            store.claim,
-            channel=frame.channel,
-            operation=frame.operation,
-            message_key=frame.message_key,
-            principal_hash=identity.principal_hash,
-            request_sha256=identity.request_sha256,
-            max_success_bytes=max_success_bytes,
-        )
-    except (OSError, DurableMediaRequestUnavailable) as exc:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "channel_media_store_unavailable", "retryable": True},
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "invalid_channel_media_identity", "retryable": False},
-        ) from exc
-    if claim.state == "conflict":
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "channel_media_idempotency_conflict", "retryable": False},
-        )
-    if claim.state == "processing":
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "channel_media_in_progress", "retryable": True},
-            headers={"Retry-After": str(max(1, claim.retry_after_seconds))},
-        )
-    if claim.state == "recovery_required":
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "channel_media_recovery_required", "retryable": False},
-        )
-    if claim.state == "result_expired":
-        raise HTTPException(
-            status_code=410,
-            detail={"code": "channel_media_result_expired", "retryable": False},
-        )
-    if claim.state not in {"claimed", "succeeded"}:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "channel_media_state_invalid", "retryable": False},
-        )
-    return store, claim
-
-
-async def _enter_channel_media_provider_phase(
-    store: DurableChannelMediaRequestStore,
-    claim: DurableMediaRequestClaim,
-    *,
-    max_success_bytes: int,
-) -> None:
-    async def assert_packaged_provider_authority() -> None:
-        authority = getattr(app.state, "channel_media_authority", None)
-        if not isinstance(authority, Mapping) or not bool(
-            authority.get("packaged")
-        ):
-            return
-        controller = getattr(
-            app.state, "channel_media_installation_control", None
-        )
-        if controller is None:
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "code": "channel_media_authority_unavailable",
-                    "retryable": False,
-                },
-            )
-        try:
-            observed = await run_in_threadpool(
-                controller.assert_provider_dispatch_ready
-            )
-            attached_store = controller.store
-        except Exception as exc:  # noqa: BLE001 -- provider seam is fail-closed
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "code": "channel_media_authority_unavailable",
-                    "retryable": False,
-                },
-            ) from exc
-        paid_installation_id = getattr(
-            app.state, "paid_media_installation_id", None
-        )
-        paid_epoch = getattr(app.state, "paid_media_epoch", None)
-        if (
-            observed.mode != "ready"
-            or not bool(observed.provider_dispatch_ready)
-            or observed.installation_id != paid_installation_id
-            or observed.epoch != paid_epoch
-            or attached_store is not store
-        ):
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "code": "channel_media_authority_unavailable",
-                    "retryable": False,
-                },
-            )
-
-    await assert_packaged_provider_authority()
-    try:
-        entered = await run_in_threadpool(
-            store.enter_provider_phase,
-            turn_id=claim.turn_id,
-            fencing_token=claim.fencing_token,
-            max_success_bytes=max_success_bytes,
-        )
-    except DurableMediaRequestUnavailable as exc:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "channel_media_fence_unavailable", "retryable": True},
-        ) from exc
-    if not entered:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "channel_media_fence_lost", "retryable": True},
-        )
-    # The local mutation advances Root through the controller hook.  Re-prove
-    # the resulting exact snapshot at the final seam before network dispatch.
-    await assert_packaged_provider_authority()
-
-
-async def _abandon_channel_media_pre_provider(
-    store: DurableChannelMediaRequestStore,
-    claim: DurableMediaRequestClaim,
-) -> None:
-    try:
-        abandoned = await run_in_threadpool(
-            store.abandon_pre_provider,
-            turn_id=claim.turn_id,
-            fencing_token=claim.fencing_token,
-        )
-    except DurableMediaRequestUnavailable as exc:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "channel_media_abandon_unavailable", "retryable": True},
-        ) from exc
-    if not abandoned:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "channel_media_abandon_conflict", "retryable": True},
-        )
-
-
-async def _persist_channel_media_success(
-    store: DurableChannelMediaRequestStore,
-    claim: DurableMediaRequestClaim,
-    response: dict[str, Any],
-) -> dict[str, Any]:
-    try:
-        persisted = await run_in_threadpool(
-            store.succeed,
-            turn_id=claim.turn_id,
-            fencing_token=claim.fencing_token,
-            response=response,
-        )
-    except (DurableMediaRequestUnavailable, ValueError) as exc:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "channel_media_receipt_unavailable", "retryable": False},
-        ) from exc
-    if not persisted:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "channel_media_receipt_lost", "retryable": False},
-        )
-    return response
-
-
-async def _channel_media_heartbeat_loop(
-    store: DurableChannelMediaRequestStore,
-    claim: DurableMediaRequestClaim,
-    lost: asyncio.Event,
-) -> None:
-    interval = max(
-        0.001,
-        min(
-            _CHANNEL_MEDIA_HEARTBEAT_MAX_INTERVAL_SECONDS,
-            store.lease_seconds / 3.0,
-        ),
-    )
-    while True:
-        await asyncio.sleep(interval)
-        try:
-            owned = await run_in_threadpool(
-                store.heartbeat,
-                turn_id=claim.turn_id,
-                fencing_token=claim.fencing_token,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 -- any uncertain lease is a lost fence
-            owned = False
-        if not owned:
-            lost.set()
-            return
-
-
-async def _await_channel_media_provider(
-    store: DurableChannelMediaRequestStore,
-    claim: DurableMediaRequestClaim,
-    provider_call: Any,
-) -> Any:
-    lost = asyncio.Event()
-    provider_task = asyncio.create_task(provider_call)
-    heartbeat_task = asyncio.create_task(
-        _channel_media_heartbeat_loop(store, claim, lost)
-    )
-    lost_task = asyncio.create_task(lost.wait())
-    try:
-        done, _pending = await asyncio.wait(
-            {provider_task, lost_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if lost_task in done and lost_task.result():
-            provider_task.cancel()
-            await asyncio.gather(provider_task, return_exceptions=True)
-            raise HTTPException(
-                status_code=503,
-                detail={"code": "channel_media_lease_lost", "retryable": False},
-            )
-        return await provider_task
-    finally:
-        if not provider_task.done():
-            provider_task.cancel()
-        await asyncio.gather(provider_task, return_exceptions=True)
-        heartbeat_task.cancel()
-        lost_task.cancel()
-        await asyncio.gather(heartbeat_task, lost_task, return_exceptions=True)
-
-
-@app.post("/v1/vision")
-async def vision_endpoint(
-    request: Request,
-    question: str | None = None,
-    model: str | None = None,
-    credential: str = Depends(require_bridge_or_api_key),
-):
-    """看图理解 / OCR（#28）：API raw bytes；bridge uses a sealed durable frame."""
-    data = await request.body()
-    if not data:
-        raise HTTPException(status_code=422, detail="需要图片数据（请求体）")
-    normalized_question = question or _CHANNEL_VISION_DEFAULT_QUESTION
-    frame = _decode_bridge_channel_media(
-        data,
-        credential=credential,
-        operation="vision.describe",
-        expected_params={"question": normalized_question, "model": model or ""},
-    )
-    if frame is None:
-        text = await describe_image(
-            app.state.router,
-            data,
-            question=normalized_question,
-            model=model,
-        )
-        if not text:
-            raise HTTPException(status_code=503, detail="没有可用的视觉模型，或识别失败")
-        return {"text": text}
-
-    store, claim = await _claim_bridge_channel_media(
-        frame,
-        max_success_bytes=_CHANNEL_VISION_RESULT_RESERVATION_BYTES,
-    )
-    if claim.state == "succeeded":
-        if not isinstance(claim.response, dict):
-            raise HTTPException(
-                status_code=503,
-                detail={"code": "channel_media_receipt_corrupt", "retryable": False},
-            )
-        return claim.response
-    try:
-        selected_model = pick_vision_model(app.state.router, model)
-    except BaseException:
-        await _abandon_channel_media_pre_provider(store, claim)
-        raise
-    if not selected_model:
-        await _abandon_channel_media_pre_provider(store, claim)
-        raise HTTPException(status_code=503, detail="没有可用的视觉模型，或识别失败")
-    await _enter_channel_media_provider_phase(
-        store,
-        claim,
-        max_success_bytes=_CHANNEL_VISION_RESULT_RESERVATION_BYTES,
-    )
-    with bind_provider_call_scope(
-        turn_id=claim.turn_id,
-        workflow_id=f"{frame.channel}:vision.describe",
-        role="channel-media",
-    ):
-        text = await _await_channel_media_provider(
-            store,
-            claim,
-            describe_image(
-                app.state.router,
-                frame.raw,
-                question=normalized_question,
-                model=selected_model,
-            ),
-        )
-    if not text:
-        raise HTTPException(status_code=503, detail="没有可用的视觉模型，或识别失败")
-    return await _persist_channel_media_success(store, claim, {"text": text})
-
-
-@app.post("/v1/lapian")
-async def lapian_endpoint(
-    request: Request,
-    vision_model: str = "agnes-flash",
-    synth_model: str | None = None,
-    max_frames: int = 40,
-    with_audio: bool = True,
-    credential: str = Depends(require_bridge_or_api_key),
-):
-    """拉片（#29）：请求体=视频字节 → 抽帧+逐帧看图(+台词转写) → 拉片报告+复现SOP。
-
-    ?vision_model=（默认 agnes-flash 免费快；难片可 gpt-5.4）&synth_model=&max_frames=&with_audio=
-    """
-    import os
-    import tempfile
-
-    data = await request.body()
-    if not data:
-        raise HTTPException(status_code=422, detail="需要视频数据（请求体）")
-    frame = _decode_bridge_channel_media(
-        data,
-        credential=credential,
-        operation="lapian.analyze",
-        expected_params={
-            "vision_model": vision_model,
-            "synth_model": synth_model or "",
-            "max_frames": max_frames,
-            "with_audio": with_audio,
-        },
-    )
-    store: DurableChannelMediaRequestStore | None = None
-    claim: DurableMediaRequestClaim | None = None
-    payload = data
-    if frame is not None:
-        store, claim = await _claim_bridge_channel_media(
-            frame,
-            max_success_bytes=_CHANNEL_LAPIAN_RESULT_RESERVATION_BYTES,
-        )
-        if claim.state == "succeeded":
-            if not isinstance(claim.response, dict):
-                raise HTTPException(
-                    status_code=503,
-                    detail={"code": "channel_media_receipt_corrupt", "retryable": False},
-                )
-            return claim.response
-        payload = frame.raw
-        try:
-            selected_vision_model = pick_vision_model(app.state.router, vision_model)
-        except BaseException:
-            await _abandon_channel_media_pre_provider(store, claim)
-            raise
-        if not selected_vision_model:
-            await _abandon_channel_media_pre_provider(store, claim)
-            raise HTTPException(
-                status_code=503,
-                detail={"code": "channel_media_vision_unavailable", "retryable": True},
-            )
-        vision_model = selected_vision_model
-    fd, path = tempfile.mkstemp(suffix=".mp4", prefix="lapian_in_")
-    os.close(fd)
-    provider_started = False
-    preprovider_abandoned = False
-    heartbeat_lost = asyncio.Event()
-    heartbeat_task: asyncio.Task[None] | None = None
-
-    async def before_provider() -> None:
-        nonlocal heartbeat_task, provider_started
-        if provider_started or store is None or claim is None:
-            return
-        await _enter_channel_media_provider_phase(
-            store,
-            claim,
-            max_success_bytes=_CHANNEL_LAPIAN_RESULT_RESERVATION_BYTES,
-        )
-        provider_started = True
-        heartbeat_task = asyncio.create_task(
-            _channel_media_heartbeat_loop(store, claim, heartbeat_lost)
-        )
-
-    async def abandon_before_provider() -> None:
-        nonlocal preprovider_abandoned
-        if (
-            preprovider_abandoned
-            or provider_started
-            or store is None
-            or claim is None
-        ):
-            return
-        await _abandon_channel_media_pre_provider(store, claim)
-        preprovider_abandoned = True
-
-    try:
-        with open(path, "wb") as f:
-            f.write(payload)
-        scope = (
-            bind_provider_call_scope(
-                turn_id=claim.turn_id,
-                workflow_id=f"{frame.channel}:lapian.analyze",
-                role="channel-media",
-            )
-            if frame is not None and claim is not None
-            else bind_provider_call_scope()
-        )
-        with scope:
-            run_task = asyncio.create_task(
-                run_lapian(
-                    app.state.router,
-                    path,
-                    vision_model=vision_model,
-                    synth_model=synth_model,
-                    max_frames=max_frames,
-                    with_audio=with_audio,
-                    before_provider=before_provider if frame is not None else None,
-                )
-            )
-            lost_task = asyncio.create_task(heartbeat_lost.wait())
-            try:
-                done, _pending = await asyncio.wait(
-                    {run_task, lost_task},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if lost_task in done and lost_task.result():
-                    run_task.cancel()
-                    await asyncio.gather(run_task, return_exceptions=True)
-                    raise HTTPException(
-                        status_code=503,
-                        detail={
-                            "code": "channel_media_lease_lost",
-                            "retryable": False,
-                        },
-                    )
-                res = await run_task
-            finally:
-                if not run_task.done():
-                    run_task.cancel()
-                await asyncio.gather(run_task, return_exceptions=True)
-                lost_task.cancel()
-                if heartbeat_task is not None:
-                    heartbeat_task.cancel()
-                    await asyncio.gather(heartbeat_task, return_exceptions=True)
-                await asyncio.gather(lost_task, return_exceptions=True)
-        if res.get("error"):
-            await abandon_before_provider()
-            status = 503 if res.get("unavailable") is True and res.get("status_code") == 503 else 502
-            raise HTTPException(status_code=status, detail=res["error"])
-        if store is not None and claim is not None:
-            if not provider_started:
-                await abandon_before_provider()
-                raise HTTPException(
-                    status_code=503,
-                    detail={"code": "channel_media_provider_fence_missing", "retryable": True},
-                )
-            return await _persist_channel_media_success(store, claim, res)
-        return res
-    except BaseException:
-        await abandon_before_provider()
-        raise
-    finally:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-
-
-_LAPIAN_OFFICIAL_HOSTS = frozenset({
-    "youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be",
-    "bilibili.com", "www.bilibili.com", "b23.tv",
-    "douyin.com", "www.douyin.com", "v.douyin.com", "iesdouyin.com",
-    "vimeo.com", "www.vimeo.com", "player.vimeo.com",
-    "ixigua.com", "www.ixigua.com",
-    "kuaishou.com", "www.kuaishou.com", "v.kuaishou.com",
-    "xiaohongshu.com", "www.xiaohongshu.com", "xhslink.com",
-    "weibo.com", "www.weibo.com",
-    "twitter.com", "www.twitter.com", "x.com", "www.x.com",
-})
-_LAPIAN_MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
-_LAPIAN_YTDLP_RISK_ENV = "NACHUAN_ENABLE_UNPINNED_YTDLP"
-_LAPIAN_YTDLP_RISK_ACCEPT = "I_ACCEPT_UNPINNED_YTDLP_NETWORK"
-
-
-def _lapian_ytdlp_enabled() -> bool:
-    """Fail closed unless an operator accepts yt-dlp's unpinned network boundary."""
-
-    if not current_runtime_profile().allows(RuntimeCapability.PLUGIN_AUTO_DISCOVERY):
-        return False
-    return os.getenv(_LAPIAN_YTDLP_RISK_ENV, "") == _LAPIAN_YTDLP_RISK_ACCEPT
-
-
-def _safe_lapian_url(url: str) -> bool:
-    """Accept only exact, reviewed HTTPS origins before the explicit risk opt-in."""
-
-    try:
-        parsed = urlsplit(url)
-        if (
-            parsed.scheme.lower() != "https"
-            or not parsed.hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or "\\" in parsed.netloc
-            or any(ord(ch) < 32 or ord(ch) == 127 for ch in url)
-        ):
-            return False
-        if parsed.port not in (None, 443):
-            return False
-        host = parsed.hostname.lower()
-        if host not in _LAPIAN_OFFICIAL_HOSTS:
-            return False
-    except (UnicodeError, ValueError):
-        return False
-    # This is intentionally only a pre-check: yt-dlp resolves and follows its
-    # own extractor/CDN URLs, hence the separate, loudly named development opt-in.
-    return is_public_http_url(url)
-
-
-def _attested_ytdlp_ffmpeg_location() -> str:
-    """Require independently attested ffmpeg and ffprobe in one closed directory."""
-
-    ffmpeg = require_media_binary("ffmpeg")
-    ffprobe = require_media_binary("ffprobe")
-    ffmpeg_dir = os.path.normcase(os.path.abspath(os.path.dirname(ffmpeg.path)))
-    ffprobe_dir = os.path.normcase(os.path.abspath(os.path.dirname(ffprobe.path)))
-    if ffmpeg_dir != ffprobe_dir:
-        raise MediaBinaryUnavailable(
-            "yt-dlp 不可用：经认证的 ffmpeg 与 ffprobe 必须位于同一目录"
-        )
-    return ffmpeg_dir
-
-
-def _ytdlp_download(url: str, out_tmpl: str) -> tuple[str, str]:
-    """Development-only unpinned download with plugins and executable discovery off."""
-    import glob
-
-    if not _safe_lapian_url(url):
-        return "", "仅允许固定官方站点的公网 HTTPS 视频 URL（仅默认 443 端口）"
-    if not _lapian_ytdlp_enabled():
-        return "", (
-            "网址拉片默认关闭；仅开发环境可显式设置 "
-            f"{_LAPIAN_YTDLP_RISK_ENV}={_LAPIAN_YTDLP_RISK_ACCEPT} 接受未固定网络风险"
-        )
-    ffmpeg_location = _attested_ytdlp_ffmpeg_location()
-    # yt-dlp checks this environment variable while importing its plugin layer.
-    # Assign the exact disabling value before the first import, never inherit an
-    # operator-provided empty value.
-    os.environ["YTDLP_NO_PLUGINS"] = "1"
-    try:
-        import yt_dlp
-    except ImportError:
-        return "", "未安装 yt-dlp"
-    base = {
-        "outtmpl": out_tmpl, "quiet": True, "no_warnings": True,
-        "format": "mp4[height<=720]/best[height<=720]/best",
-        "merge_output_format": "mp4", "noplaylist": True,
-        "max_filesize": _LAPIAN_MAX_DOWNLOAD_BYTES,
-        "socket_timeout": 20,
-        "retries": 2,
-        "fragment_retries": 2,
-        "js_runtimes": {},
-        "remote_components": set(),
-        "cachedir": False,
-        "external_downloader": {},
-        "external_downloader_args": {},
-        "ffmpeg_location": ffmpeg_location,
-    }
-    err = ""
-    try:
-        with yt_dlp.YoutubeDL(base) as ydl:
-            ydl.download([url])
-    except Exception as exc:  # noqa: BLE001
-        err = str(exc)[:300]
-    files = glob.glob(out_tmpl.replace("%(ext)s", "*"))
-    if files:
-        try:
-            if os.path.getsize(files[0]) > _LAPIAN_MAX_DOWNLOAD_BYTES:
-                return "", "视频超过 512MB 安全上限"
-        except OSError:
-            return "", "下载结果不可读"
-    return (files[0] if files else "", err)
-
-
-async def lapian_url_report(
-    router: Any,
-    url: str,
-    *,
-    vision_model: str = "agnes-flash",
-    synth_model: Any = None,
-    max_frames: int = 40,
-    with_audio: bool = True,
-) -> dict[str, Any]:
-    """拉片·网址版内部函数：抠链接 → yt-dlp 下载 → run_lapian 出报告。
-
-    抽出供 /v1/lapian/url 端点与 tool_agent 的 lapian 工具共用。返回 run_lapian 结果 dict
-    （含 report/analyses…）或 {error}；下载失败也走 {error}，绝不抛（工具调用方友好化）。
-    """
-    import os as _os
-    import re as _re
-    import shutil
-    import tempfile
-
-    url = str(url or "").strip()
-    if not url:
-        return {"error": "需要 url"}
-    # 容错：用户常直接粘贴分享口令文本（如抖音「5.89 复制打开抖音…https://v.douyin.com/xxx kcN:/ w@F.hB」），
-    # 从中抠出第一个真链接喂给 yt-dlp，否则整段被当 URL 报 "is not a valid URL"。
-    _m = _re.search(r"https?://[^\s，。、）)\]】「」'\"]+", url)
-    if _m:
-        url = _m.group(0).rstrip("，。、）)】],.;")
-    if not _safe_lapian_url(url):
-        return {
-            "error": "仅允许固定官方站点的公网 HTTPS 视频 URL（仅默认 443 端口）",
-            "unsafe_url": True,
-        }
-    if not _lapian_ytdlp_enabled():
-        return {
-            "error": (
-                "网址拉片默认关闭；仅开发环境可显式设置 "
-                f"{_LAPIAN_YTDLP_RISK_ENV}={_LAPIAN_YTDLP_RISK_ACCEPT} "
-                "接受 yt-dlp 未固定网络风险"
-            ),
-            "unavailable": True,
-            "status_code": 503,
-        }
-    max_frames = max(1, min(80, int(max_frames)))
-    tmpdir = tempfile.mkdtemp(prefix="lapian_url_")
-    try:
-        try:
-            path, dl_err = await run_in_threadpool(
-                _ytdlp_download,
-                url,
-                _os.path.join(tmpdir, "v.%(ext)s"),
-            )
-        except MediaBinaryUnavailable as exc:
-            return {
-                "error": str(exc),
-                "unavailable": True,
-                "status_code": 503,
-            }
-        if not path:
-            return {"error": "下载失败：" + (dl_err or "网址不支持/网络/需登录")}
-        return await run_lapian(
-            router, path,
-            vision_model=vision_model,
-            synth_model=synth_model,
-            max_frames=max_frames,
-            with_audio=with_audio,
-        )
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-
-@app.post("/v1/lapian/url")
-async def lapian_url_endpoint(request: Request, _: str = Depends(require_api_key)):
-    """拉片·网址版：默认关闭；显式开发风险开关后仅接受固定官方 HTTPS URL。"""
-    body = await request.json()
-    url = str(body.get("url") or "").strip()
-    if not url:
-        raise HTTPException(status_code=422, detail="需要 url")
-    res = await lapian_url_report(
-        app.state.router, url,
-        vision_model=str(body.get("vision_model") or "agnes-flash"),
-        synth_model=body.get("synth_model"),
-        max_frames=max(1, min(80, int(body.get("max_frames") or 40))),
-        with_audio=bool(body.get("with_audio", True)),
-    )
-    if res.get("error"):
-        if res.get("unsafe_url"):
-            status = 422
-        elif res.get("unavailable") is True and res.get("status_code") == 503:
-            status = 503
-        else:
-            status = 502
-        raise HTTPException(status_code=status, detail=res["error"])
-    return res
-
-
-@app.get("/v1/mcp")
-async def mcp_list(_: str = Depends(require_api_key)):
-    """List MCP definitions without exposing plaintext legacy env values."""
-    servers = mcp_registry.public_servers()
-    raw = mcp_registry.list_servers()
-    status = {name: mcp_registry.probe(spec) for name, spec in raw.items()}
-    return {
-        "enabled": mcp_registry.verified_mcp_enabled(),
-        "mcpServers": servers,
-        "status": status,
-    }
-
-
-@app.get("/v1/mcp/presets")
-async def mcp_presets(_: str = Depends(require_api_key)):
-    """常用 MCP server 预设（#20）：一键挂载，附本机运行时是否就绪。"""
-    return {
-        "presets": [
-            {
-                **p,
-                # Historical presets depended on mutable npx/uvx resolution and
-                # remain documentation-only until an operator supplies a
-                # reviewed local binary and its digest.
-                "available": False,
-                "audited": False,
-            }
-            for p in mcp_registry.PRESETS
-        ]
-    }
-
-
-@app.post("/v1/mcp")
-async def mcp_add(request: Request, _: str = Depends(require_api_key)):
-    """Register one hash-attested local MCP executable after exact approval."""
-    if not current_runtime_profile().allows(RuntimeCapability.MCP_PLUGIN_REGISTRY):
-        raise HTTPException(
-            status_code=503,
-            detail="当前运行配置已关闭 MCP 注册表；需要独立低权限 worker",
-        )
-    if not mcp_registry.verified_mcp_enabled():
-        raise HTTPException(
-            status_code=403,
-            detail="可信 MCP 默认关闭；运维验收本地二进制后方可启用",
-        )
-    body = await request.json()
-    name = (body.get("name") or "").strip()
-    if not name:
-        raise HTTPException(status_code=422, detail="需要 name")
-    command = str(body.get("command") or "").strip()
-    args = [str(v) for v in (body.get("args") or [])]
-    sha256 = str(body.get("sha256") or "").strip().lower()
-    if not command or body.get("url"):
-        raise HTTPException(status_code=422, detail="只允许登记哈希证明的本地 stdio MCP")
-    if body.get("env"):
-        raise HTTPException(status_code=422, detail="禁止把 MCP 密钥作为明文 env 保存")
-    candidate = {"command": command, "args": args, "sha256": sha256}
-    attestation = mcp_registry.probe(candidate)
-    if not attestation.get("ok"):
-        raise HTTPException(
-            status_code=422,
-            detail=str(attestation.get("detail") or "MCP 证明无效"),
-        )
-    task = str(body.get("task") or f"登记并启用哈希证明 MCP：{name}")
-    approval_id, held = await _action_capability(
-        body=body,
-        router=app.state.router,
-        task=task,
-        workdir=str(PROJECT_ROOT),
-        user_id=str(body.get("user_id") or get_settings().agent_user_id or "owner"),
-        scope="mcp_add",
-        mode="full",
-        require_explicit_capability=True,
-        payload_extra={
-            "name": name,
-            "command": command,
-            "args": args,
-            "sha256": sha256,
-        },
-    )
-    if held is not None:
-        return held
-    try:
-        servers = mcp_registry.add_server(
-            name, command=command, args=args, sha256=sha256
-        )
-    except ValueError as exc:
-        if approval_id:
-            app.state.approvals.finish_action(approval_id, success=False)
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if approval_id:
-        app.state.approvals.finish_action(approval_id, success=True)
-    return {"ok": True, "mcpServers": servers, "probe": mcp_registry.probe(servers.get(name, {}))}
-
-
-@app.delete("/v1/mcp/{name}")
-async def mcp_remove(name: str, _: str = Depends(require_api_key)):
-    """Legacy mutation contract had no approval body; use the scoped POST route."""
-    del name
-    raise HTTPException(status_code=410, detail="请使用 POST /v1/mcp/{name}/remove 走一次性审批")
-
-
-@app.post("/v1/mcp/{name}/remove")
-async def mcp_remove_approved(name: str, request: Request, _: str = Depends(require_api_key)):
-    if not current_runtime_profile().allows(RuntimeCapability.MCP_PLUGIN_REGISTRY):
-        raise HTTPException(
-            status_code=503,
-            detail="当前运行配置已关闭 MCP 注册表；需要独立低权限 worker",
-        )
-    try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001
-        body = {}
-    current = mcp_registry.list_servers().get(name)
-    if not isinstance(current, dict):
-        raise HTTPException(status_code=404, detail="MCP server 不存在")
-    task = str(body.get("task") or f"移除 MCP：{name}")
-    approval_id, held = await _action_capability(
-        body=body,
-        router=app.state.router,
-        task=task,
-        workdir=str(PROJECT_ROOT),
-        user_id=str(body.get("user_id") or get_settings().agent_user_id or "owner"),
-        scope="mcp_remove",
-        mode="full",
-        require_explicit_capability=True,
-        payload_extra={"name": name, "spec": current},
-    )
-    if held is not None:
-        return held
-    try:
-        servers = mcp_registry.remove_server(name)
-    except Exception:
-        if approval_id:
-            app.state.approvals.finish_action(approval_id, success=False)
-        raise
-    if approval_id:
-        app.state.approvals.finish_action(approval_id, success=True)
-    return {"ok": True, "mcpServers": servers}
+# [agent_inject/undo + audio + translate + vision + lapian + mcp 已拆解迁移至 gateway/routes/]
 
 
 def _media_http_error(
@@ -9638,356 +8101,7 @@ async def image_generations(
     return _paid_media_response(public_result, replayed=replayed)
 
 
-@app.post("/v1/orchestrate/panel")
-async def orchestrate_panel(request: Request, api_key: str = Depends(require_api_key)):
-    """M4 协作编排 · 议会汇总：多个 panelists 独立作答 → judge 综合。"""
-    body = await request.json()
-    try:
-        spec = PanelWorkflowRequest.model_validate(body)
-        result = await run_panel(
-            app.state.router,
-            prompt=spec.prompt,
-            panelists=spec.panelists,
-            judge=spec.judge,
-        )
-    except (ValidationError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail="协作议会参数不符合资源限制") from exc
-    except WorkflowOutputLimitError as exc:
-        raise HTTPException(status_code=502, detail="协作模型输出超过安全上限") from exc
-    return JSONResponse(result)
-
-
-def _validated_git_repo(value: Any) -> str:
-    """Resolve an exact existing repository root for capability binding."""
-
-    raw = str(value or "").strip()
-    if not raw:
-        raise HTTPException(status_code=422, detail="需要 repo")
-    try:
-        repo = Path(raw).expanduser().resolve(strict=True)
-    except (OSError, RuntimeError) as exc:
-        raise HTTPException(status_code=422, detail="repo 不存在或无法解析") from exc
-    if not repo.is_dir() or repo.parent == repo or not (repo / ".git").exists():
-        raise HTTPException(status_code=422, detail="repo 必须是现有 Git 仓库根目录")
-    return str(repo)
-
-
-@app.post("/v1/orchestrate/coding")
-async def orchestrate_coding(request: Request, _: str = Depends(require_api_key)):
-    """M4 协作编排 · 编程团队：规划 → 并行实现(各 agent 一个 worktree) → 评审。"""
-    raise HTTPException(
-        status_code=503,
-        detail="编程 CLI 团队已关闭：需要独立低权限执行 worker 后才能启用",
-    )
-    body = await request.json()
-    repo = _validated_git_repo(body.get("repo"))
-    task = (body.get("task") or "").strip()
-    planner = str(body.get("planner") or "")
-    reviewer = str(body.get("reviewer") or "")
-    implementers = body.get("implementers") or []
-    if not task or not planner or not reviewer or not implementers:
-        raise HTTPException(
-            status_code=422, detail="需要 repo、task、planner、reviewer、implementers"
-        )
-    if app.state.router.resolve(planner) is None or app.state.router.resolve(reviewer) is None:
-        raise HTTPException(status_code=422, detail="planner/reviewer 必须是当前已连接模型")
-    approval_id, held = await _action_capability(
-        body=body,
-        router=app.state.router,
-        task=task,
-        workdir=repo,
-        user_id=str(body.get("user_id") or get_settings().agent_user_id or "owner"),
-        scope="orchestrate_coding",
-        mode="auto",
-        require_explicit_capability=True,
-        payload_extra={
-            "planner": planner,
-            "reviewer": reviewer,
-            "implementers": implementers,
-        },
-    )
-    if held is not None:
-        return held
-    try:
-        result = await run_coding_team(
-            app.state.router,
-            repo=repo,
-            task=task,
-            planner=planner,
-            implementers=implementers,
-            reviewer=reviewer,
-        )
-    except (ValueError, TypeError) as exc:
-        if approval_id:
-            app.state.approvals.finish_action(approval_id, success=False)
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception:
-        if approval_id:
-            app.state.approvals.finish_action(approval_id, success=False)
-        raise
-    if approval_id:
-        app.state.approvals.finish_action(approval_id, success=True)
-    return JSONResponse(result)
-
-
-@app.post("/v1/orchestrate/arch-editor")
-async def orchestrate_arch_editor(request: Request, _: str = Depends(require_api_key)):
-    """架构师/编辑：强模型规划 → 便宜模型出文件代码（省 token 的编程模式）。"""
-    raise HTTPException(
-        status_code=503,
-        detail="架构编辑执行已关闭：Git/worktree 写入需要独立低权限执行 worker 后才能启用",
-    )
-    body = await request.json()
-    repo = _validated_git_repo(body.get("repo"))
-    task = (body.get("task") or "").strip()
-    architect = str(body.get("architect") or "")
-    editor = str(body.get("editor") or "")
-    if not task or not architect or not editor:
-        raise HTTPException(status_code=422, detail="需要 repo、task、architect、editor")
-    if app.state.router.resolve(architect) is None or app.state.router.resolve(editor) is None:
-        raise HTTPException(status_code=422, detail="architect/editor 必须是当前已连接模型")
-    approval_id, held = await _action_capability(
-        body=body,
-        router=app.state.router,
-        task=task,
-        workdir=repo,
-        user_id=str(body.get("user_id") or get_settings().agent_user_id or "owner"),
-        scope="orchestrate_arch_editor",
-        mode="auto",
-        require_explicit_capability=True,
-        payload_extra={"architect": architect, "editor": editor},
-    )
-    if held is not None:
-        return held
-    try:
-        result = await run_arch_editor(
-            app.state.router, repo=repo, task=task, architect=architect, editor=editor
-        )
-    except Exception:
-        if approval_id:
-            app.state.approvals.finish_action(approval_id, success=False)
-        raise
-    if approval_id:
-        app.state.approvals.finish_action(approval_id, success=True)
-    return JSONResponse(result)
-
-
-def _summary_clear_spec(conv_id: str) -> dict[str, Any]:
-    store = conv_summary._get_store()  # noqa: SLF001 - module owns no public reader
-    if store is None:
-        raise HTTPException(status_code=503, detail="对话摘要存储不可用")
-    summary, covered = store.get(conv_id)
-    state_sha256, _ = _snapshot_hash([(summary, covered)])
-    return {
-        "target": {"kind": "conversation_summary", "conversation_id": conv_id},
-        "snapshot": {
-            "sha256": state_sha256,
-            "covered": covered,
-            "exists": bool(summary or covered),
-        },
-    }
-
-
-@app.post("/v1/conv/{conv_id}/clear-summary")
-async def clear_conv_summary(
-    conv_id: str, request: Request, _: str = Depends(require_api_key)
-):
-    """Clear one exact reviewed rolling-summary snapshot after approval."""
-    normalized_conv_id = _normalized_mutation_id(
-        conv_id, label="conversation_id", max_length=256
-    )
-    body = await _destructive_request_body(request)
-    user_id = _destructive_user_id(body)
-    spec = _summary_clear_spec(normalized_conv_id)
-    if not _has_approval_id(body) and not spec["snapshot"]["exists"]:
-        return {
-            "ok": True,
-            "conversation_id": normalized_conv_id,
-            "already_empty": True,
-        }
-    task = f"清空对话滚动摘要：{normalized_conv_id}"
-    approval_id, held = await _action_capability(
-        body=body,
-        router=app.state.router,
-        task=task,
-        workdir=str(Path(get_settings().usage_db_path).parent.resolve()),
-        user_id=user_id,
-        scope="conversation_summary_clear",
-        mode="full",
-        require_explicit_capability=True,
-        payload_extra=spec,
-    )
-    if held is not None:
-        return held
-    try:
-        if _summary_clear_spec(normalized_conv_id) != spec:
-            raise HTTPException(status_code=409, detail="对话摘要已变化，请重新审批")
-        conv_summary.clear(normalized_conv_id)
-        if _summary_clear_spec(normalized_conv_id)["snapshot"]["exists"]:
-            raise RuntimeError("conversation summary clear did not remove the reviewed target")
-    except Exception:
-        app.state.approvals.finish_action(approval_id, success=False)
-        raise
-    app.state.approvals.finish_action(approval_id, success=True)
-    return {"ok": True, "conversation_id": normalized_conv_id}
-
-
-@app.post("/v1/route")
-async def route_mode(request: Request, api_key: str = Depends(require_api_key)):
-    """单答模式调度：auto(自动智能·默认) / smart / cascade / economy / best / harness。"""
-    body = await request.json()
-    mode = body.get("mode", "smart")
-    messages = body.get("messages") or []
-    # 长对话累积滚动摘要（带 conversation_id 才启用；老对话折进摘要、近的原样留）。
-    messages = await conv_summary.rolling_compress(
-        app.state.router, str(body.get("conversation_id") or ""), messages
-    ) or messages
-    _is_short_followup = _inject_followup_context(messages)
-    reasoning_effort = str(body.get("reasoning_effort") or "").strip().lower()
-    if reasoning_effort in {"low", "medium", "high"}:
-        effort_zh = {"low": "低", "medium": "中", "high": "高"}[reasoning_effort]
-        messages.insert(
-            0,
-            {
-                "role": "system",
-                "content": f"本次推理级别：{effort_zh}。低=快速简答；中=平衡；高=更充分地核查与规划，但最终仍只输出结论和必要过程摘要。",
-            },
-        )
-    if body.get("web_search") and not _is_short_followup:
-        try:
-            _web_req = ChatCompletionRequest(
-                model=str(body.get("model") or get_settings().bridge_model),
-                messages=messages,
-                web_search=True,
-            )
-            await websearch.maybe_augment_request(_web_req)
-            messages = [m.model_dump(exclude_none=True) for m in _web_req.messages]
-        except Exception:  # noqa: BLE001
-            pass
-    # 注入机主长期记忆（与 /v1/chat/completions 一致：让 auto/smart 等模式也带上记忆，行为统一）
-    try:
-        _um = next(
-            (
-                m.get("content")
-                for m in reversed(messages)
-                if m.get("role") == "user" and isinstance(m.get("content"), str)
-            ),
-            "",
-        )
-        _note, _ = memory_system_note(app.state.memory, get_settings().agent_user_id or "owner", _um)
-        if _note:
-            _li = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1)
-            _mm = {"role": "system", "content": _note}
-            if _li >= 0:
-                messages.insert(_li, _mm)
-            else:
-                messages.append(_mm)
-    except Exception:  # noqa: BLE001
-        pass
-    fn = SINGLE_ANSWER_MODES.get(mode)
-    if fn is None:
-        raise HTTPException(status_code=422, detail=f"未知模式 {mode}")
-    try:
-        result = await fn(app.state.router, messages)
-    except ProviderError as e:
-        raise _public_provider_http_error(e) from e
-    # 记账：按最终命中的真实模型记，用量看板能正确归类
-    meta = result.get("_route", {})
-    u = result.get("usage") or {}
-    _pd = u.get("prompt_tokens_details") or {}
-    await _log_usage_best_effort(
-        app.state.usage,
-        api_key=api_key,
-        virtual_model=mode,
-        provider=str(meta.get("provider") or "mode-unserved"),
-        upstream_model=str(meta.get("upstream_model") or ""),
-        tier=str(meta.get("tier") or "mode"),
-        prompt_tokens=int(u.get("prompt_tokens", 0) or 0),
-        completion_tokens=int(u.get("completion_tokens", 0) or 0),
-        total_tokens=int(u.get("total_tokens", 0) or 0),
-        cached_tokens=int(u.get("cached_tokens", 0) or _pd.get("cached_tokens", 0) or 0),
-        cost_usd=float(u.get("cost_usd", 0) or 0),
-        stream=0,
-        status="ok",
-        latency_ms=0,
-    )
-    return JSONResponse(result)
-
-
-@app.post("/v1/orchestrate/debate")
-async def orchestrate_debate(request: Request, api_key: str = Depends(require_api_key)):
-    """辩论：多模型多轮互评 → 裁判综合。"""
-    body = await request.json()
-    try:
-        spec = DebateWorkflowRequest.model_validate(body)
-        result = await run_debate(
-            app.state.router,
-            prompt=spec.prompt,
-            debaters=spec.debaters,
-            judge=spec.judge,
-            rounds=spec.rounds,
-        )
-    except (ValidationError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail="辩论参数不符合资源限制") from exc
-    except WorkflowOutputLimitError as exc:
-        raise HTTPException(status_code=502, detail="辩论模型输出超过安全上限") from exc
-    return JSONResponse(result)
-
-
-@app.post("/v1/orchestrate/decompose")
-async def orchestrate_decompose(request: Request, api_key: str = Depends(require_api_key)):
-    """拆解分工：规划→子任务各派最便宜能做的→汇总。"""
-    body = await request.json()
-    try:
-        spec = DecomposeWorkflowRequest.model_validate(body)
-        result = await run_decompose(
-            app.state.router,
-            task=spec.task,
-            planner=spec.planner,
-            aggregator=spec.aggregator,
-        )
-    except (ValidationError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail="任务拆解参数不符合资源限制") from exc
-    except WorkflowOutputLimitError as exc:
-        raise HTTPException(status_code=502, detail="任务拆解模型输出超过安全上限") from exc
-    return JSONResponse(result)
-
-
-@app.post("/v1/orchestrate/pipeline")
-async def orchestrate_pipeline(request: Request, api_key: str = Depends(require_api_key)):
-    """流水线：固定工序，每步指定模型。"""
-    body = await request.json()
-    try:
-        spec = PipelineWorkflowRequest.model_validate(body)
-        try:
-            lease = app.state.router.plugin_kernel.borrow_service(
-                PIPELINE_WORKFLOW_SERVICE
-            )
-        except ServiceNotFound as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="流水线工作流插件当前不可用",
-            ) from exc
-        try:
-            service = lease.value
-            result = await service(
-                app.state.router,
-                prompt=spec.prompt,
-                steps=[step.model_dump() for step in spec.steps],
-            )
-        finally:
-            lease.release()
-    except (ValidationError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail="流水线参数不符合资源限制") from exc
-    except WorkflowOutputLimitError as exc:
-        raise HTTPException(status_code=502, detail="流水线模型输出超过安全上限") from exc
-    except DurableWorkflowEventUnavailable as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="流水线持久事件日志当前不可用",
-            headers={"X-Nachuan-Retry-Safe": "false"},
-        ) from exc
-    return JSONResponse(result)
+# [orchestrate + clear_conv_summary + route 已拆解迁移至 gateway/routes/]
 
 
 def _video_job_ids(payload: Any) -> tuple[str, ...]:
@@ -10807,13 +8921,7 @@ async def poll_video(
     )
 
 
-@app.get("/v1/scoreboard")
-async def get_scoreboard(_: str = Depends(require_api_key)) -> dict[str, Any]:
-    """只读战绩看板（F6）：返回记分牌全表（每行含胜率），供桌面「进化 · 战绩」页。
-
-    读失败一律降级为空表（scoreboard.dump_all 内部已全吞异常），永不 500。
-    """
-    return {"rows": scoreboard.dump_all()}
+# [scoreboard 已拆解迁移至 gateway/routes/]
 
 
 def _stage_ready_installation_principal(public_app: FastAPI) -> str | None:

@@ -12,6 +12,10 @@ import {
 import { observePaidMediaNearViewport } from './ChatPane'
 
 const source = readFileSync(new URL('./ChatPane.tsx', import.meta.url), 'utf8')
+const paidMediaViewSource = readFileSync(
+  new URL('./chat/PaidMediaView.tsx', import.meta.url),
+  'utf8'
+)
 
 function between(start: string, end: string): string {
   const from = source.indexOf(start)
@@ -61,12 +65,9 @@ describe('ChatPane paid-media conversation routing', () => {
   })
 
   it('materializes durable media only while its element is near the viewport', () => {
-    const resolver = between(
-      'function useResolvedMediaSource',
-      'function formatElapsed'
-    )
+    const resolver = paidMediaViewSource
 
-    expect(source).toContain("rootMargin: '512px 0px'")
+    expect(resolver).toContain("rootMargin: '512px 0px'")
     expect(resolver).toContain('observePaidMediaNearViewport')
     expect(resolver).toContain('setResolved(undefined)')
     expect(resolver).toContain('releasePaidMediaAsset')

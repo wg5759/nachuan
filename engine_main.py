@@ -9,14 +9,22 @@ import os
 import sys
 from pathlib import Path
 
-from gateway.runtime_profile import enforce_frozen_store_profile
-
 INSTALLATION_PROVISION_ARGUMENT = "--nachuan-provision-installation-root"
 WEIXIN_BRIDGE_ARGUMENT = "--nachuan-weixin-bridge"
+FEISHU_BRIDGE_ARGUMENT = "--nachuan-feishu-bridge"
+CHANNEL_SUPERVISOR_ARGUMENT = "--nachuan-channel-supervisor"
+NACHUAN_CORE_SERVICE_ARGUMENT = "--nachuan-core-service"
 ISOLATED_PLUGIN_WORKER_ARGUMENT = "--nachuan-isolated-plugin-worker"
 _EXIT_USAGE = 64
 _EXIT_UNAVAILABLE = 69
 _EXIT_REFUSED = 77
+
+
+def _bridge_exit_code(result: object) -> int:
+    # The legacy Weixin main returns None on normal completion.
+    if result is None:
+        return 0
+    return result if type(result) is int and 0 <= result <= 255 else _EXIT_UNAVAILABLE
 
 
 def enforce_frozen_financial_ledger() -> None:
@@ -73,15 +81,54 @@ def run_engine_entrypoint(arguments: list[str] | None = None) -> int:
                 max_request=request_limit,
                 max_response=response_limit,
             )
+        if args in ([WEIXIN_BRIDGE_ARGUMENT], [FEISHU_BRIDGE_ARGUMENT]) and (
+            not bool(getattr(sys, "frozen", False)) or os.name != "nt"
+        ):
+            return _EXIT_REFUSED
         if args == [WEIXIN_BRIDGE_ARGUMENT]:
             # The signed engine payload is also the only reviewed Python
             # runtime available in an installed Desktop build. Reuse that
             # exact payload instead of a system Python or unpacked source.
+            from gateway.runtime_profile import enforce_frozen_store_profile
+
             enforce_frozen_store_profile()
             from scripts.run_weixin_ilink_bridge import main as bridge_main
 
-            bridge_main()
-            return 0
+            return _bridge_exit_code(bridge_main())
+        if args == [FEISHU_BRIDGE_ARGUMENT]:
+            # Keep both installed channels on the exact same attested frozen
+            # Python payload; never fall back to ambient Python or source.
+            from gateway.runtime_profile import enforce_frozen_store_profile
+
+            enforce_frozen_store_profile()
+            from scripts.run_feishu_bridge import main as bridge_main
+
+            return _bridge_exit_code(bridge_main())
+        if args == [NACHUAN_CORE_SERVICE_ARGUMENT]:
+            if not bool(getattr(sys, "frozen", False)) or os.name != "nt":
+                return _EXIT_REFUSED
+            try:
+                from gateway.windows_nachuan_core_service_host import run
+
+                return int(run())
+            except Exception:  # noqa: BLE001 - service output stays nonsecret
+                sys.stderr.write("NACHUAN_CORE_SERVICE_FAILED\n")
+                return _EXIT_UNAVAILABLE
+        if args == [CHANNEL_SUPERVISOR_ARGUMENT]:
+            if not bool(getattr(sys, "frozen", False)) or os.name != "nt":
+                return _EXIT_REFUSED
+            try:
+                from gateway.runtime_profile import (
+                    bind_frozen_store_profile_from_installed_layout,
+                )
+
+                bind_frozen_store_profile_from_installed_layout()
+                from gateway.installed_channel_supervisor_entrypoint import run
+
+                return int(run())
+            except Exception:  # noqa: BLE001 - task output must remain nonsecret
+                sys.stderr.write("NACHUAN_CHANNEL_SUPERVISOR_FAILED\n")
+                return _EXIT_UNAVAILABLE
         if args != [INSTALLATION_PROVISION_ARGUMENT]:
             # A closed argument set prevents a misspelled installer command
             # from accidentally falling through to a long-running Gateway.
@@ -98,6 +145,8 @@ def run_engine_entrypoint(arguments: list[str] | None = None) -> int:
             # into an NSIS log that may be collected by third parties.
             sys.stderr.write("NACHUAN_INSTALLATION_AUTHORITY_FAILED\n")
             return _EXIT_UNAVAILABLE
+
+    from gateway.runtime_profile import enforce_frozen_store_profile
 
     enforce_frozen_store_profile()
     enforce_frozen_financial_ledger()

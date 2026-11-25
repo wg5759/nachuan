@@ -75,3 +75,14 @@ _claude_task.txt
 /安装与维护/构建输入/下载/
 /安装与维护/构建输入/records/
 /安装与维护/构建输入/ffmpeg-8.0.1-essentials_build/
+
+# Machine-local desktop preview, including its isolated encrypted profile.
+/安装与维护/本机桌面体验版/
+
+# Local test temporary directories (never commit or ship)
+/.codex-test-tmp-*
+/.codex-kimi-bind-smoke-*
+/.pytest-tmp-*
+/.pytest-*
+/.ptmp/
+/.tmp/

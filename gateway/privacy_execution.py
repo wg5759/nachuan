@@ -224,7 +224,10 @@ class PrivacyTombstoneStore:
     def __init__(
         self, path: str | os.PathLike[str], *, busy_timeout_ms: int = 10_000
     ) -> None:
+        from storage.unified_db import is_unified_db_path
+
         self.path = Path(os.path.abspath(os.fspath(path)))
+        self._unified = is_unified_db_path(self.path)
         self.busy_timeout_ms = max(100, min(int(busy_timeout_ms), 30_000))
         self._lock = threading.RLock()
         self._closed = False
@@ -257,6 +260,44 @@ class PrivacyTombstoneStore:
             connection.close()
 
     def _initialize(self, connection: sqlite3.Connection) -> None:
+        if self._unified:
+            from storage.unified_db import ensure_unified_wal
+
+            ensure_unified_wal(connection, busy_timeout_ms=self.busy_timeout_ms)
+            rows = connection.execute(
+                "SELECT name, tbl_name FROM sqlite_master WHERE type IN ('table','index',"
+                "'trigger','view')"
+            ).fetchall()
+            objects = {
+                str(name)
+                for name, tbl_name in rows
+                if not str(name).startswith("sqlite_")
+                and str(tbl_name) in _TOMBSTONE_OBJECTS
+            }
+            if not objects:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(_META_DDL)
+                connection.execute(_TOMBSTONES_DDL)
+                connection.execute(_RUNS_DDL)
+                connection.execute(
+                    "INSERT INTO privacy_tombstone_meta VALUES(1,?,?)",
+                    (_TOMBSTONE_SCHEMA_VERSION, _TOMBSTONE_SCHEMA_FINGERPRINT),
+                )
+                return
+            if objects != _TOMBSTONE_OBJECTS:
+                raise PrivacyStoreSchemaMismatch(
+                    "privacy tombstone store subset schema is not exact v1 generation"
+                )
+            meta = connection.execute(
+                "SELECT schema_version,schema_fingerprint "
+                "FROM privacy_tombstone_meta WHERE singleton=1"
+            ).fetchone()
+            if meta != (_TOMBSTONE_SCHEMA_VERSION, _TOMBSTONE_SCHEMA_FINGERPRINT):
+                raise PrivacyStoreSchemaMismatch(
+                    "privacy tombstone store fingerprint mismatch"
+                )
+            return
+
         application_id = int(
             connection.execute("PRAGMA application_id").fetchone()[0]
         )
@@ -607,10 +648,24 @@ class PrivacyExecutionEngine:
         self._max_export_bytes = max(
             1024, min(int(max_export_bytes), _MAX_EXPORT_BYTES)
         )
+        from storage.unified_db import AUDIT_DB, resolve_db_path
+
+        if tombstone_path is not None:
+            resolved_tombstone = tombstone_path
+        else:
+            legacy_tombstone = self._data_dir / "privacy_tombstones.db"
+            has_legacy_store = legacy_tombstone.is_file() or any(
+                (self._data_dir / spec.filename).is_file()
+                for spec in _STORE_SPECS.values()
+            )
+            if has_legacy_store and not (self._data_dir / AUDIT_DB).is_file():
+                resolved_tombstone = legacy_tombstone
+            else:
+                resolved_tombstone = resolve_db_path(
+                    "privacy_tombstones", data_dir=self._data_dir
+                )
         self._tombstones = PrivacyTombstoneStore(
-            tombstone_path
-            if tombstone_path is not None
-            else self._data_dir / "privacy_tombstones.db",
+            resolved_tombstone,
             busy_timeout_ms=self._busy_timeout_ms,
         )
 
@@ -626,12 +681,20 @@ class PrivacyExecutionEngine:
         return spec
 
     def _open_store(self, spec: _StoreSpec) -> sqlite3.Connection | None:
-        path = self._data_dir / spec.filename
+        from storage.unified_db import is_unified_db_path, resolve_db_path
+
+        legacy_path = self._data_dir / spec.filename
+        unified_path = resolve_db_path(spec.store_id, data_dir=self._data_dir)
         try:
-            if not path.is_file():
+            if legacy_path.is_file():
+                path = legacy_path
+            elif unified_path.is_file():
+                path = unified_path
+            else:
                 return None
         except OSError as exc:
             raise PrivacyStoreUnavailable(str(exc)) from exc
+        unified_target = is_unified_db_path(path)
         try:
             connection = sqlite3.connect(
                 str(path), timeout=self._busy_timeout_ms / 1000
@@ -641,7 +704,18 @@ class PrivacyExecutionEngine:
         except sqlite3.Error as exc:
             raise _map_sqlite_error(exc) from exc
         try:
-            if spec.application_id is not None:
+            if unified_target:
+                # 在统一库中若该业务表尚未建表，则视作该 store 尚无数据（等价单库文件不存在）
+                present_tables = {
+                    str(r[0])
+                    for r in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                if not any(tbl in present_tables for tbl in spec.tables):
+                    connection.close()
+                    return None
+            elif spec.application_id is not None:
                 application_id = int(
                     connection.execute("PRAGMA application_id").fetchone()[0]
                 )

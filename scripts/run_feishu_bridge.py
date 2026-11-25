@@ -73,6 +73,18 @@ from gateway.channel_delivery_claim import (  # noqa: E402
     ClaimLeaseLost,
     ClaimLeaseSession,
 )
+from gateway.installed_channel_drain import InstalledChannelClaimTracker  # noqa: E402
+from gateway.feishu_sdk_lifecycle import (  # noqa: E402
+    FeishuSdkLifecycleError,
+    run_feishu_sdk,
+)
+
+_INSTALLED_CLAIMS = InstalledChannelClaimTracker("feishu")
+_VIDEO_POLL_SECONDS = 12.0
+_BRIDGE_WORKERS: list[threading.Thread] = []
+_BRIDGE_SHUTDOWN_INCOMPLETE = False
+_BRIDGE_CONTROL_BOUND = False
+_BRIDGE_MAIN_OWNER = threading.Lock()
 from gateway.channel_media_protocol import (  # noqa: E402
     MAX_CHANNEL_MEDIA_METADATA_BYTES,
     encode_channel_media_frame,
@@ -2534,9 +2546,16 @@ def _claim_inbound(*, now=None) -> dict[str, object] | None:
         ).rowcount
         if changed != 1:
             return None
+        payload = json.loads(str(row[1]))
+        if not isinstance(payload, dict):
+            raise ValueError("invalid durable inbound payload")
+        claim_key = ("inbound", int(row[0]), claim_token, int(row[3]) + 1)
+        if not _INSTALLED_CLAIMS.commit(claim_key, conn.commit):
+            conn.rollback()
+            return None
         return {
             "id": int(row[0]),
-            "payload": json.loads(str(row[1])),
+            "payload": payload,
             "attempts": int(row[2]),
             "claim_token": claim_token,
             "claim_deadline": current + ttl,
@@ -2544,6 +2563,11 @@ def _claim_inbound(*, now=None) -> dict[str, object] | None:
         }
 
 
+@_INSTALLED_CLAIMS.finishes(
+    lambda claim, **_kwargs: (
+        "inbound", int(claim["id"]), str(claim["claim_token"]), int(claim["claim_epoch"])
+    )
+)
 def _finish_inbound(
     claim: dict[str, object],
     *,
@@ -2859,6 +2883,12 @@ def _claim_finish_outcome(
     return "dead" if attempts >= terminal_at else "retry"
 
 
+@_INSTALLED_CLAIMS.finishes(
+    lambda kind, claim, **_kwargs: (
+        "inbound" if kind == "inbox" else "outbox",
+        int(claim["id"]), str(claim["claim_token"]), int(claim["claim_epoch"]),
+    )
+)
 def _finish_was_committed(
     kind: str,
     claim: dict[str, object],
@@ -3904,7 +3934,7 @@ def _claim_outbox(
         ).rowcount
         if changed != 1:
             return None
-        return {
+        claim = {
             "id": int(row[0]),
             "delivery_uuid": str(row[1]),
             "chat_id": str(row[2]),
@@ -3915,8 +3945,18 @@ def _claim_outbox(
             "claim_deadline": current + ttl,
             "claim_epoch": int(row[6]) + 1,
         }
+        key = ("outbox", claim["id"], claim_token, claim["claim_epoch"])
+        if not _INSTALLED_CLAIMS.commit(key, conn.commit):
+            conn.rollback()
+            return None
+        return claim
 
 
+@_INSTALLED_CLAIMS.finishes(
+    lambda claim, **_kwargs: (
+        "outbox", int(claim["id"]), str(claim["claim_token"]), int(claim["claim_epoch"])
+    )
+)
 def _finish_outbox(
     claim: dict[str, object],
     *,
@@ -4046,6 +4086,11 @@ def _begin_outbox_submission(
     return changed == 1
 
 
+@_INSTALLED_CLAIMS.finishes(
+    lambda claim, **_kwargs: (
+        "outbox", int(claim["id"]), str(claim["claim_token"]), int(claim["claim_epoch"])
+    )
+)
 def _quarantine_outbox_submission(
     claim: dict[str, object], *, error_code: str, now=None
 ) -> bool:
@@ -5550,6 +5595,8 @@ def _pending_require_upload_recovery(
 
 
 def _enqueue_video_task(task_id: object, chat_id: object) -> bool:
+    if _INSTALLED_CLAIMS.wait_for_close(0):
+        return False
     task = str(task_id or "")
     chat = str(chat_id or "")
     if not task or not chat or len(task) > 512 or len(chat) > 512:
@@ -5566,6 +5613,8 @@ def _enqueue_video_task(task_id: object, chat_id: object) -> bool:
 
 
 def _feed_pending_videos() -> int:
+    if _INSTALLED_CLAIMS.wait_for_close(0):
+        return 0
     with _pending_lock:
         pending = dict(_pending_load())
     added = 0
@@ -5590,42 +5639,58 @@ def _feed_pending_videos() -> int:
     return added
 
 
-def _run_one_video_queue_item(*, timeout: float = 0.5) -> bool:
+def _run_one_video_queue_item(*, timeout: float = 0.5, stop_event=None) -> bool:
+    if _INSTALLED_CLAIMS.wait_for_close(0, stop_event=stop_event):
+        return False
     try:
         task_id, queued_chat_id = _VIDEO_QUEUE.get(timeout=max(0.0, float(timeout)))
     except queue.Empty:
         return False
-    with _VIDEO_DISPATCH_LOCK:
-        _VIDEO_QUEUED.discard(task_id)
-        _VIDEO_ACTIVE.add(task_id)
+    claim_key = ("video", task_id, queued_chat_id, uuid.uuid4().hex)
+    completed = False
     try:
+        with _VIDEO_DISPATCH_LOCK:
+            _VIDEO_QUEUED.discard(task_id)
+            if not _INSTALLED_CLAIMS.commit(claim_key, lambda: _VIDEO_ACTIVE.add(task_id)):
+                return False
         with _pending_lock:
             current = _pending_load().get(task_id)
         if not isinstance(current, dict):
+            completed = True
             return True
         chat_id = str(current.get("chat_id") or queued_chat_id)
         try:
-            _video_worker(task_id, chat_id)
+            if stop_event is None:
+                _video_worker(task_id, chat_id)
+            else:
+                _video_worker(task_id, chat_id, stop_event=stop_event)
         except Exception as exc:  # noqa: BLE001 - durable pending remains for feeder retry
             with _HEALTH_LOCK:
                 _HEALTH_STATE["service_state"] = "degraded"
                 _HEALTH_STATE["last_error_code"] = _safe_error_code(
                     type(exc).__name__, "video_worker_error"
                 )
+        else:
+            completed = True
         return True
     finally:
-        with _VIDEO_DISPATCH_LOCK:
-            _VIDEO_ACTIVE.discard(task_id)
-        _VIDEO_QUEUE.task_done()
+        try:
+            if completed:
+                _INSTALLED_CLAIMS.finish(claim_key)
+        finally:
+            with _VIDEO_DISPATCH_LOCK:
+                _VIDEO_ACTIVE.discard(task_id)
+            _VIDEO_QUEUE.task_done()
 
 
 def _video_queue_worker(stop_event: threading.Event) -> None:
     while not stop_event.is_set():
-        _run_one_video_queue_item(timeout=0.5)
+        _run_one_video_queue_item(timeout=0.5, stop_event=stop_event)
 
 
 def _start_video_workers(
-    stop_event: threading.Event, *, worker_count: int | None = None
+    stop_event: threading.Event, *, worker_count: int | None = None,
+    workers: list[threading.Thread] | None = None,
 ) -> list[threading.Thread]:
     if worker_count is None:
         try:
@@ -5633,22 +5698,27 @@ def _start_video_workers(
         except ValueError:
             worker_count = 4
     bounded_count = max(1, min(int(worker_count), 4))
-    workers: list[threading.Thread] = []
+    if workers is None:
+        workers = []
     for index in range(bounded_count):
+        if stop_event.is_set():
+            break
         worker = threading.Thread(
             target=_video_queue_worker,
             args=(stop_event,),
             name=f"feishu-video-{index + 1}",
             daemon=True,
         )
-        worker.start()
         workers.append(worker)
+        worker.start()
     return workers
 
 
-def _video_worker(task_id: str, chat_id: str) -> None:
+def _video_worker(task_id: str, chat_id: str, *, stop_event=None) -> None:
     """Poll, upload and hand off one video without replaying an uncertain upload."""
 
+    if _INSTALLED_CLAIMS.wait_for_close(0, stop_event=stop_event):
+        return
     from orchestrator.media import _find_media_url
 
     with _pending_lock:
@@ -5668,6 +5738,8 @@ def _video_worker(task_id: str, chat_id: str) -> None:
     if state == "recovery_required":
         return
     if state == "upload_confirmed":
+        if _INSTALLED_CLAIMS.wait_for_close(0, stop_event=stop_event):
+            return
         try:
             _send_video(
                 chat_id,
@@ -5683,22 +5755,29 @@ def _video_worker(task_id: str, chat_id: str) -> None:
 
     deadline = time.time() + 1500
     while time.time() < deadline:
-        time.sleep(12)
+        if _INSTALLED_CLAIMS.wait_for_close(_VIDEO_POLL_SECONDS, stop_event=stop_event):
+            return
         try:
             status_document = _get(f"/v1/videos/{task_id}?model=agnes-video")
         except Exception:  # upstream polling is a read and remains retryable
             continue
+        if _INSTALLED_CLAIMS.wait_for_close(0, stop_event=stop_event):
+            return
         url = _find_media_url(status_document)
         if url:
             try:
                 data = _download_url(url, "video")
             except Exception:  # no upload boundary was crossed; a link is safe
+                if _INSTALLED_CLAIMS.wait_for_close(0, stop_event=stop_event):
+                    return
                 _reply(
                     chat_id,
                     f"视频已经生成，但下载失败。链接：{url}",
                     delivery_key=f"video-task:{task_id}:fallback",
                 )
                 _pending_remove(task_id)
+                return
+            if _INSTALLED_CLAIMS.wait_for_close(0, stop_event=stop_event):
                 return
             request_sha256 = _pending_upload_request_sha256(
                 task_id,
@@ -5727,6 +5806,8 @@ def _video_worker(task_id: str, chat_id: str) -> None:
                     )
                     return
                 except Exception:  # explicit provider rejection: no asset was accepted
+                    if _INSTALLED_CLAIMS.wait_for_close(0, stop_event=stop_event):
+                        return
                     _reply(
                         chat_id,
                         f"视频已经生成，但飞书直传被拒绝。链接：{url}",
@@ -5740,6 +5821,8 @@ def _video_worker(task_id: str, chat_id: str) -> None:
                     request_sha256,
                     file_key,
                 )
+            if _INSTALLED_CLAIMS.wait_for_close(0, stop_event=stop_event):
+                return
             try:
                 _send_video(
                     chat_id,
@@ -5765,6 +5848,8 @@ def _video_worker(task_id: str, chat_id: str) -> None:
             )
             _pending_remove(task_id)
             return
+    if _INSTALLED_CLAIMS.wait_for_close(0, stop_event=stop_event):
+        return
     _reply(
         chat_id,
         "视频生成等待超时，本次任务已经停止。请稍后重新发起。",
@@ -5916,11 +6001,15 @@ def _inbound_worker(stop_event: threading.Event) -> None:
         finally:
             session.close()
         if finished:
+            _INSTALLED_CLAIMS.finish((
+                "inbound", int(claim["id"]), str(claim["claim_token"]), int(claim["claim_epoch"])
+            ))
             _touch_message_finished()
 
 
 def _start_inbound_workers(
-    stop_event: threading.Event, *, worker_count: int | None = None
+    stop_event: threading.Event, *, worker_count: int | None = None,
+    workers: list[threading.Thread] | None = None,
 ) -> list[threading.Thread]:
     if worker_count is None:
         try:
@@ -5928,16 +6017,19 @@ def _start_inbound_workers(
         except ValueError:
             worker_count = 4
     bounded_count = max(1, min(int(worker_count), 8))
-    workers: list[threading.Thread] = []
+    if workers is None:
+        workers = []
     for index in range(bounded_count):
+        if stop_event.is_set():
+            break
         worker = threading.Thread(
             target=_inbound_worker,
             args=(stop_event,),
             name=f"feishu-inbound-{index + 1}",
             daemon=True,
         )
-        worker.start()
         workers.append(worker)
+        worker.start()
     return workers
 
 
@@ -6137,10 +6229,107 @@ def _maintenance_worker(stop_event: threading.Event) -> None:
         stop_event.wait(2.0)
 
 
-def main() -> int:
+def _join_bridge_workers(workers, *, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    for worker in workers:
+        if worker.is_alive():
+            worker.join(max(0.0, deadline - time.monotonic()))
+    return not any(worker.is_alive() for worker in workers)
+
+
+def _run_feishu_connections(app_id, app_secret, handler, stop_event) -> int:
+    global _CURRENT_WS
+    backoff = 3
+    while not stop_event.is_set():
+        generation_before = _connection_generation()
+        def create_client():
+            global _CURRENT_WS
+            ws = lark.ws.Client(app_id, app_secret, event_handler=handler,
+                                log_level=lark.LogLevel.ERROR)
+            ws.on_reconnecting = lambda: _mark_disconnected('sdk_reconnecting')
+            ws.on_reconnected = lambda: _mark_connected()
+            _CURRENT_WS = ws
+            return ws
+        try:
+            run_feishu_sdk(create_client, stop_event)
+            if stop_event.is_set():
+                return 0
+            _mark_disconnected('connection_ended')
+        except FeishuSdkLifecycleError as exc:
+            stop_event.set()
+            _mark_disconnected(type(exc).__name__)
+            return 1
+        except KeyboardInterrupt:
+            stop_event.set()
+            return 0
+        except Exception as exc:  # SDK cleaned successfully; reconnect may be safe.
+            _mark_disconnected(type(exc).__name__)
+            if stop_event.is_set():
+                return 1
+        finally:
+            _CURRENT_WS = None
+        delay, backoff = _reconnect_backoff_step(
+            backoff, observed_connected=_connection_generation() > generation_before,
+        )
+        if stop_event.wait(delay):
+            return 0
+        print('↻ 重连飞书长连接…')
+    return 0
+
+
+def main(*, stop_event: threading.Event | None = None, control_runtime=None) -> int:
+    # The worker list is still empty during startup/recovery. Serialize the
+    # complete entry lifecycle so a second caller cannot bind a different gate.
+    if not _BRIDGE_MAIN_OWNER.acquire(blocking=False):
+        return 1
+    try:
+        return _main_entry(stop_event=stop_event, control_runtime=control_runtime)
+    finally:
+        _BRIDGE_MAIN_OWNER.release()
+
+
+def _main_entry(*, stop_event: threading.Event | None = None, control_runtime=None) -> int:
+    """Source entry or a pre-authenticated installed control handoff."""
+    global _BRIDGE_SHUTDOWN_INCOMPLETE, _BRIDGE_CONTROL_BOUND
+    if (_BRIDGE_SHUTDOWN_INCOMPLETE or _BRIDGE_CONTROL_BOUND
+            or any(worker.is_alive() for worker in _BRIDGE_WORKERS)):
+        return 1
+    if control_runtime is None:
+        return _run_bridge_main(stop_event=stop_event)
+    from gateway.installed_channel_child_drain_runtime import (
+        InstalledChannelChildDrainRuntime, InstalledChannelChildDrainRuntimeError,
+    )
+    if _NACHUAN_FEISHU_STATE_ONLY:
+        return 78
+    if stop_event is not None or not isinstance(control_runtime, InstalledChannelChildDrainRuntime):
+        return 1
+    def bind_control(fence):
+        global _BRIDGE_CONTROL_BOUND
+        _INSTALLED_CLAIMS.bind(fence)
+        _BRIDGE_CONTROL_BOUND = True
+    try:
+        return control_runtime.run_business(
+            lambda *, stop_event: _run_bridge_main(
+                stop_event=stop_event, exit_validator=control_runtime.validate_business_exit,
+            ),
+            bind_fence=bind_control,
+        )
+    except InstalledChannelChildDrainRuntimeError:
+        _BRIDGE_SHUTDOWN_INCOMPLETE = True
+        return 1
+
+
+def _run_bridge_main(*, stop_event: threading.Event | None = None, exit_validator=None) -> int:
+    global _BRIDGE_SHUTDOWN_INCOMPLETE
     if _NACHUAN_FEISHU_STATE_ONLY:
         print("飞书 state-only 模块禁止启动渠道客户端。", flush=True)
         return 78
+    if stop_event is None:
+        stop_event = threading.Event()
+    if _BRIDGE_SHUTDOWN_INCOMPLETE or any(worker.is_alive() for worker in _BRIDGE_WORKERS):
+        return 1
+    if stop_event.is_set():
+        return 0
     app_id, app_secret = S.feishu_app_id, S.feishu_app_secret
     if not app_id or not app_secret:
         print("缺 FEISHU_APP_ID / FEISHU_APP_SECRET（启动时用 env 传入）")
@@ -6157,64 +6346,68 @@ def main() -> int:
         (Path(S.usage_db_path).parent / "feishu_bridge.pid").write_text(str(os.getpid()), "utf-8")
     except Exception:  # noqa: BLE001
         pass
-    _validate_recovery_ledgers_before_channel_start()
-    _api["c"] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
-    _recover_inflight()
-    stop_event = threading.Event()
-    _start_inbound_workers(stop_event)
-    _start_video_workers(stop_event)
-    threading.Thread(
-        target=_maintenance_worker,
-        args=(stop_event,),
-        name="feishu-maintenance",
-        daemon=True,
-    ).start()
-    # 桥重启：durable pending 分批进入有界队列；满载时由 maintenance 以后补入。
-    _feed_pending_videos()
-    handler = (
-        lark.EventDispatcherHandler.builder("", "")
-        .register_p2_im_message_receive_v1(on_message)
-        .build()
-    )
-    print(f"飞书桥接已启动（长连接·超级智能体），默认模型 {MODEL}。给机器人发消息试试。")
-    # 长连接断了自动重连——网络抖动/飞书侧断开都不让桥接挂掉（之前 start() 一返回进程就退=老断线）。
-    # 指数退避 3→30s 封顶；干净断开则重置退避。生成中的请求各自在独立线程里，不受重连影响。
-    backoff = 3
-    while True:
-        generation_before = _connection_generation()
-        try:
-            ws = lark.ws.Client(
-                app_id,
-                app_secret,
-                event_handler=handler,
-                log_level=lark.LogLevel.ERROR,
-            )
-            ws.on_reconnecting = lambda: _mark_disconnected("sdk_reconnecting")
-            ws.on_reconnected = lambda: _mark_connected()
-            _CURRENT_WS = ws
-            ws.start()  # 阻塞；正常不返回，一返回即代表断开
-            _mark_disconnected("connection_ended")
-            print("[warning] 飞书长连接结束。")
-        except KeyboardInterrupt:
-            stop_event.set()
+    _BRIDGE_WORKERS.clear()
+    result = 1
+    try:
+        _validate_recovery_ledgers_before_channel_start()
+        if stop_event.is_set():
+            result = 0
+        else:
+            _api['c'] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
+            _recover_inflight()
+        _start_inbound_workers(stop_event, workers=_BRIDGE_WORKERS)
+        _start_video_workers(stop_event, workers=_BRIDGE_WORKERS)
+        if not stop_event.is_set():
+            maintenance = threading.Thread(target=_maintenance_worker, args=(stop_event,),
+                                           name='feishu-maintenance', daemon=True)
+            _BRIDGE_WORKERS.append(maintenance)
+            maintenance.start()
+            _feed_pending_videos()
+        handler = (lark.EventDispatcherHandler.builder('', '')
+                   .register_p2_im_message_receive_v1(on_message).build())
+        if not stop_event.is_set():
+            print('飞书桥接正在连接。')
+        result = _run_feishu_connections(app_id, app_secret, handler, stop_event)
+    except KeyboardInterrupt:
+        stop_event.set()
+        result = 0
+    finally:
+        stop_event.set()
+        with _HEALTH_LOCK:
+            _HEALTH_STATE['connected'] = False
+            _HEALTH_STATE['service_state'] = 'stopping'
+        if not _join_bridge_workers(_BRIDGE_WORKERS):
+            result = 1
             with _HEALTH_LOCK:
-                _HEALTH_STATE["connected"] = False
-                _HEALTH_STATE["service_state"] = "stopping"
-                _HEALTH_STATE["last_error_code"] = ""
+                _HEALTH_STATE['last_error_code'] = 'worker_shutdown_incomplete'
+            # Keep singleton and worker handles until the process owner exits.
+        _BRIDGE_SHUTDOWN_INCOMPLETE = result != 0
+        if exit_validator is not None:
+            try:
+                exit_validator()
+            except Exception:
+                result = 1
+                _BRIDGE_SHUTDOWN_INCOMPLETE = True
+                with _HEALTH_LOCK:
+                    _HEALTH_STATE['last_error_code'] = 'installed_control_exit_unverified'
+        with _HEALTH_LOCK:
+            _HEALTH_STATE['connected'] = False
+            _HEALTH_STATE['service_state'] = 'stopping'
+        try:
             _update_health()
-            print("收到中断，退出。")
-            return 0
-        except Exception as e:  # noqa: BLE001
-            _mark_disconnected(type(e).__name__)
-            print(f"[warning] 飞书长连接异常：{type(e).__name__}")
-        finally:
-            _CURRENT_WS = None
-        delay, backoff = _reconnect_backoff_step(
-            backoff,
-            observed_connected=_connection_generation() > generation_before,
-        )
-        time.sleep(delay)
-        print("↻ 重连飞书长连接…")
+        except Exception:
+            # Do not replace the original startup/SDK exception with health I/O.
+            _BRIDGE_SHUTDOWN_INCOMPLETE = True
+            result = 1
+        if result == 0:
+            try:
+                _singleton.close()
+            except Exception:
+                _BRIDGE_SHUTDOWN_INCOMPLETE = True
+                result = 1
+            else:
+                _BRIDGE_WORKERS.clear()
+    return result
 
 
 if __name__ == "__main__":

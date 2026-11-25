@@ -28,6 +28,11 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from gateway.sqlite_runtime import enable_wal_with_deadline
+from storage.unified_db import is_unified_db_path
+
+_LEDGER_OWNED_TABLES = frozenset(
+    {"jobs", "steps", "ledger_capacity", "ledger_terminal_headroom"}
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -694,6 +699,7 @@ class TaskLedger:
 
     def __init__(self, path: str | Path = "data/ledger.db") -> None:
         self.path = os.path.abspath(os.fspath(path))
+        self._unified = is_unified_db_path(self.path)
         self._assert_database_path(require_main=False)
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._assert_database_path(require_main=False)
@@ -758,19 +764,29 @@ class TaskLedger:
         if self._database_path_identity() != self._database_identity:
             raise sqlite3.DatabaseError("TaskLedger database pathname identity changed")
 
-    @staticmethod
     def _schema_snapshot(
+        self,
         connection: sqlite3.Connection,
     ) -> dict[tuple[str, str, str], str | None]:
+        rows = connection.execute(
+            "SELECT type,name,tbl_name,sql FROM sqlite_master "
+            "ORDER BY type,name,tbl_name"
+        ).fetchall()
+        if self._unified:
+            return {
+                (str(row[0]), str(row[1]), str(row[2])): _schema_sql(row[3])
+                for row in rows
+                if str(row[2]) in _LEDGER_OWNED_TABLES
+            }
         return {
             (str(row[0]), str(row[1]), str(row[2])): _schema_sql(row[3])
-            for row in connection.execute(
-                "SELECT type,name,tbl_name,sql FROM sqlite_master "
-                "ORDER BY type,name,tbl_name"
-            ).fetchall()
+            for row in rows
         }
 
     def _assert_database_family_bounds(self) -> None:
+        if self._unified:
+            self._assert_database_path(require_main=False)
+            return
         limits = {
             "": _MAX_LEDGER_BYTES,
             "-wal": _MAX_WAL_BYTES,
@@ -800,11 +816,26 @@ class TaskLedger:
             )
 
     def _classify_database(self, connection: sqlite3.Connection) -> str:
+        actual = self._schema_snapshot(connection)
+        if self._unified:
+            if not actual:
+                return "empty"
+            if actual == _expected_current_schema():
+                self._validate_current_database(connection)
+                return "current"
+            if actual == _expected_v2_schema():
+                self._validate_v2_database(connection)
+                return "legacy:current-v2"
+            for generation, expected in _legacy_schema_generations().items():
+                if actual == expected:
+                    return f"legacy:{generation}"
+            raise sqlite3.DatabaseError(
+                "TaskLedger unified database subset schema is incompatible"
+            )
         application_id = int(
             connection.execute("PRAGMA application_id").fetchone()[0]
         )
         user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-        actual = self._schema_snapshot(connection)
         if application_id == 0 and user_version == 0:
             if not actual:
                 return "empty"
@@ -924,17 +955,20 @@ class TaskLedger:
         ) from last_change
 
     def _open_authority_writer(self) -> sqlite3.Connection:
-        preflight_kind, preflight_identity = (
-            self._stabilized_preflight_database_kind()
-        )
-        presence_before_writer = self._database_family_presence()
-        if presence_before_writer != self._preflight_family_presence:
-            # Re-run the immutable classifier so any family member arriving or
-            # disappearing after the first snapshot cannot be consumed by the
-            # writer open below.
+        preflight_kind: str | None = None
+        preflight_identity: tuple[int, int] | None = None
+        if not self._unified:
             preflight_kind, preflight_identity = (
                 self._stabilized_preflight_database_kind()
             )
+            presence_before_writer = self._database_family_presence()
+            if presence_before_writer != self._preflight_family_presence:
+                # Re-run the immutable classifier so any family member arriving or
+                # disappearing after the first snapshot cannot be consumed by the
+                # writer open below.
+                preflight_kind, preflight_identity = (
+                    self._stabilized_preflight_database_kind()
+                )
         connection = sqlite3.connect(
             self.path,
             timeout=_BUSY_TIMEOUT_MS / 1000.0,
@@ -954,14 +988,21 @@ class TaskLedger:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 locked_kind = self._classify_database(connection)
-                if preflight_kind in {"missing", "empty"}:
+                if self._unified:
+                    if locked_kind == "empty":
+                        self._provision_current(connection)
+                    elif locked_kind.startswith("legacy:"):
+                        self._migrate_legacy_database(connection, locked_kind)
+                    elif locked_kind != "current":
+                        raise sqlite3.DatabaseError("unsupported TaskLedger unified state")
+                elif preflight_kind in {"missing", "empty"}:
                     if locked_kind == "empty":
                         self._provision_current(connection)
                     elif locked_kind != "current":
                         raise sqlite3.DatabaseError(
                             "TaskLedger changed during cold-start provisioning"
                         )
-                elif preflight_kind.startswith("legacy:"):
+                elif preflight_kind is not None and preflight_kind.startswith("legacy:"):
                     if locked_kind == preflight_kind:
                         self._migrate_legacy_database(connection, locked_kind)
                     elif locked_kind != "current":
@@ -987,7 +1028,11 @@ class TaskLedger:
                 connection,
                 error_message="TaskLedger requires SQLite WAL mode",
             )
-            self._apply_storage_profile(connection)
+            if not self._unified:
+                self._apply_storage_profile(connection)
+            else:
+                connection.execute("PRAGMA synchronous=FULL")
+                connection.execute("PRAGMA foreign_keys=ON")
             self._validate_current_identity(connection)
             self._assert_database_family_bounds()
             if self._database_path_identity() != opened_identity:
@@ -1015,8 +1060,9 @@ class TaskLedger:
             "INSERT INTO ledger_capacity(singleton,job_rows,step_rows,payload_bytes) "
             "VALUES(1,0,0,0)"
         )
-        connection.execute(f"PRAGMA application_id={_APPLICATION_ID}")
-        connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+        if not self._unified:
+            connection.execute(f"PRAGMA application_id={_APPLICATION_ID}")
+            connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         self._validate_current_identity(connection)
 
     def _migrate_legacy_database(
@@ -1065,8 +1111,9 @@ class TaskLedger:
             )
         connection.execute("DROP TABLE steps_legacy")
         connection.execute("DROP TABLE jobs_legacy")
-        connection.execute(f"PRAGMA application_id={_APPLICATION_ID}")
-        connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+        if not self._unified:
+            connection.execute(f"PRAGMA application_id={_APPLICATION_ID}")
+            connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         self._populate_required_terminal_headroom_locked(connection)
         self._validate_current_identity(connection)
 
@@ -1080,7 +1127,8 @@ class TaskLedger:
         for ddl in _CURRENT_HEADROOM_TRIGGER_DDLS:
             connection.execute(ddl)
         self._populate_required_terminal_headroom_locked(connection)
-        connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+        if not self._unified:
+            connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         self._validate_current_identity(connection)
 
     def _populate_required_terminal_headroom_locked(
@@ -1117,10 +1165,11 @@ class TaskLedger:
         # and rolls the complete DDL migration back to the exact legacy generation.
 
     def _validate_current_identity(self, connection: sqlite3.Connection) -> None:
-        if int(connection.execute("PRAGMA application_id").fetchone()[0]) != _APPLICATION_ID:
-            raise sqlite3.DatabaseError("TaskLedger application id is invalid")
-        if int(connection.execute("PRAGMA user_version").fetchone()[0]) != _SCHEMA_VERSION:
-            raise sqlite3.DatabaseError("TaskLedger schema version is invalid")
+        if not self._unified:
+            if int(connection.execute("PRAGMA application_id").fetchone()[0]) != _APPLICATION_ID:
+                raise sqlite3.DatabaseError("TaskLedger application id is invalid")
+            if int(connection.execute("PRAGMA user_version").fetchone()[0]) != _SCHEMA_VERSION:
+                raise sqlite3.DatabaseError("TaskLedger schema version is invalid")
         self._validate_current_database(connection)
 
     def _validate_v2_database(self, connection: sqlite3.Connection) -> None:
@@ -1346,10 +1395,11 @@ class TaskLedger:
             self._trusted_schema_version = schema_version
 
     def _validate_reader_identity_cheap(self, connection: sqlite3.Connection) -> None:
-        if int(connection.execute("PRAGMA application_id").fetchone()[0]) != _APPLICATION_ID:
-            raise sqlite3.DatabaseError("TaskLedger reader application id is invalid")
-        if int(connection.execute("PRAGMA user_version").fetchone()[0]) != _SCHEMA_VERSION:
-            raise sqlite3.DatabaseError("TaskLedger reader schema version is invalid")
+        if not self._unified:
+            if int(connection.execute("PRAGMA application_id").fetchone()[0]) != _APPLICATION_ID:
+                raise sqlite3.DatabaseError("TaskLedger reader application id is invalid")
+            if int(connection.execute("PRAGMA user_version").fetchone()[0]) != _SCHEMA_VERSION:
+                raise sqlite3.DatabaseError("TaskLedger reader schema version is invalid")
         if self._schema_snapshot(connection) != _expected_current_schema():
             raise sqlite3.DatabaseError("TaskLedger reader exact schema is invalid")
 

@@ -28,6 +28,181 @@ def _load_bridge():
     return module
 
 
+
+
+@pytest.mark.parametrize("stop_during_claim", [False, True, "malformed"])
+def test_installed_drain_keeps_inbound_until_durable_finish(
+    monkeypatch, tmp_path, stop_during_claim
+):
+    from gateway.installed_channel_drain import (
+        InstalledChildDrainFence, InstalledDrainBinding,
+        InstalledDrainCommand, InstalledDrainOperation,
+    )
+    from gateway.installed_channel_supervisor_status import InstalledChannelProcessReceipt
+
+    bridge = _load_bridge()
+    monkeypatch.setattr(bridge, "_OUTBOX_DB", tmp_path / "weixin_state.db")
+    binding = InstalledDrainBinding("a" * 64, 7, 11, "b" * 64)
+    fence = InstalledChildDrainFence(
+        binding=binding, role="weixin",
+        process=InstalledChannelProcessReceipt(4102, 133_000_000_000_000_002, "2" * 64),
+    )
+    bridge._INSTALLED_CLAIMS.bind(fence)
+    messages = [{
+        "message_id": f"drain-{index}", "from_user_id": f"test-user-{index}",
+        "context_token": "test-context",
+        "item_list": [{"type": 1, "text_item": {"text": "hello"}}],
+    } for index in (1, 2)]
+    assert bridge._store_updates(messages, "test-cursor") is True
+    now = 10**12
+    operation = InstalledDrainOperation(binding, "c" * 64, 3, 1_900_000_000_000_000_000)
+    if stop_during_claim == "malformed":
+        with sqlite3.connect(tmp_path / "weixin_state.db") as conn:
+            conn.execute("UPDATE inbound_message SET payload='invalid' WHERE id=1")
+        with pytest.raises(json.JSONDecodeError):
+            bridge._claim_inbound(now=now)
+        receipt = fence.apply_command(InstalledDrainCommand(operation, "close_claims"))
+        assert receipt.active_claims == 0
+        with sqlite3.connect(tmp_path / "weixin_state.db") as conn:
+            assert conn.execute("SELECT status FROM inbound_message WHERE id=1").fetchone()[0] == "pending"
+        return
+    if stop_during_claim:
+        def closing_clock():
+            fence.apply_command(InstalledDrainCommand(operation, "close_claims"))
+            return now
+        assert bridge._claim_inbound(now=closing_clock) is None
+        assert fence.snapshot(operation=operation).phase == "drained"
+        restarted = _load_bridge()
+        monkeypatch.setattr(restarted, "_OUTBOX_DB", tmp_path / "weixin_state.db")
+        assert restarted._claim_inbound(now=now) is not None
+        return
+    claimed = bridge._claim_inbound(now=now)
+    assert claimed is not None
+    receipt = fence.apply_command(InstalledDrainCommand(operation, "close_claims"))
+    assert receipt.active_claims == 1
+    assert receipt.phase == "claims_closed"
+    assert bridge._claim_inbound(now=now) is None
+    assert bridge._finish_inbound(
+        claimed[0], claim_token=claimed[2], claim_epoch=claimed[3], ok=True, now=now,
+        access_generation_before_refresh=bridge._ACCESS_GENERATION,
+        refreshed_access=ChannelAccessPolicy(allowed_users={"test-user-1", "test-user-2"}),
+    ) is True
+    assert fence.snapshot(operation=operation).phase == "drained"
+
+
+
+
+
+@pytest.mark.parametrize("queue_kind", ["outbox", "video"])
+@pytest.mark.parametrize("finish_kind", ["done", "retry", "recovery_required", "response_lost", "close_before_commit"])
+def test_installed_drain_outgoing_queue_keeps_claim_until_durable_outcome(
+    monkeypatch, tmp_path, queue_kind, finish_kind
+):
+    from gateway.installed_channel_drain import (
+        InstalledChildDrainFence, InstalledDrainBinding,
+        InstalledDrainCommand, InstalledDrainOperation,
+    )
+    from gateway.installed_channel_supervisor_status import InstalledChannelProcessReceipt
+
+    bridge = _load_bridge()
+    monkeypatch.setattr(bridge, "_OUTBOX_DB", tmp_path / "weixin_state.db")
+    binding = InstalledDrainBinding("a" * 64, 7, 11, "b" * 64)
+    fence = InstalledChildDrainFence(
+        binding=binding, role="weixin",
+        process=InstalledChannelProcessReceipt(4102, 133_000_000_000_000_002, "2" * 64),
+    )
+    bridge._INSTALLED_CLAIMS.bind(fence)
+    for index in (1, 2):
+        if queue_kind == "outbox":
+            bridge._enqueue_delivery(
+                f"target-{index}", "test-context", "test message",
+                delivery_key=f"stop-outbox-{index}",
+            )
+        else:
+            assert bridge._enqueue_pending_video(
+                f"stop-video-{index}", f"target-{index}", "test-context",
+                source_message_key=f"wxmsg-v1:stop-video-{index}",
+                now=time.time(), _internal_maintenance=True,
+            )
+    now = time.time()
+    claim_next = bridge._claim_delivery if queue_kind == "outbox" else bridge._claim_pending_video
+    operation = InstalledDrainOperation(binding, "c" * 64, 3, 1_900_000_000_000_000_000)
+    if finish_kind == "close_before_commit":
+        original_connect = bridge._outbox_connect
+        table = "PENDING_DELIVERY" if queue_kind == "outbox" else "PENDING_VIDEO"
+        closed = []
+        def traced_connect(**kwargs):
+            conn = original_connect(**kwargs)
+            def before_claim_update(statement):
+                sql = " ".join(statement.upper().split())
+                if sql.startswith(f"UPDATE {table} SET STATUS='PROCESSING'") and not closed:
+                    closed.append(True)
+                    fence.apply_command(InstalledDrainCommand(operation, "close_claims"))
+            conn.set_trace_callback(before_claim_update)
+            return conn
+        with monkeypatch.context() as fault:
+            fault.setattr(bridge, "_outbox_connect", traced_connect)
+            assert claim_next(now=now) is None
+        assert closed and fence.snapshot(operation=operation).phase == "drained"
+        restarted = _load_bridge()
+        monkeypatch.setattr(restarted, "_OUTBOX_DB", tmp_path / "weixin_state.db")
+        restart_claim = restarted._claim_delivery if queue_kind == "outbox" else restarted._claim_pending_video
+        assert restart_claim(now=now) is not None
+        return
+    claim = claim_next(now=now)
+    assert claim is not None
+    operation = InstalledDrainOperation(binding, "c" * 64, 3, 1_900_000_000_000_000_000)
+    receipt = fence.apply_command(InstalledDrainCommand(operation, "close_claims"))
+    assert receipt.active_claims == 1
+    assert claim_next(now=now) is None
+    actual_kind = "done" if finish_kind == "response_lost" else finish_kind
+    def finish():
+        if queue_kind == "outbox":
+            return bridge._finish_delivery(
+                claim, ok=actual_kind == "done", retry_safe=actual_kind == "retry",
+                recovery_required=actual_kind == "recovery_required", now=now,
+                error=RuntimeError("fixture"),
+            )
+        return bridge._finish_pending_video(
+            claim, terminal=actual_kind == "done",
+            recovery_required=actual_kind == "recovery_required", now=now,
+            error="fixture",
+        )
+    if finish_kind == "response_lost":
+        original_connect = bridge._outbox_connect
+        class LostCommitResponse:
+            def __init__(self, conn):
+                self.conn = conn
+            def __getattr__(self, name):
+                return getattr(self.conn, name)
+            def commit(self):
+                self.conn.commit()
+                raise sqlite3.OperationalError("fixture post-commit response loss")
+        with monkeypatch.context() as fault:
+            fault.setattr(
+                bridge, "_outbox_connect",
+                lambda **kwargs: LostCommitResponse(original_connect(**kwargs)),
+            )
+            with pytest.raises(sqlite3.OperationalError, match="post-commit"):
+                finish()
+        assert fence.snapshot(operation=operation).active_claims == 1
+        if queue_kind == "outbox":
+            outcome = bridge._DeliveryFinishRequest(outcome="done")
+            confirm = bridge._delivery_finish_was_committed
+        else:
+            outcome = bridge._PendingVideoFinishRequest(terminal=True, now=now, error="fixture")
+            confirm = bridge._pending_video_finish_was_committed
+        assert confirm({**claim, "claim_token": "wrong-token"}, outcome) is False
+        assert fence.snapshot(operation=operation).active_claims == 1
+        finished = confirm(claim, outcome)
+    else:
+        finished = finish()
+    assert finished is True
+    assert fence.snapshot(operation=operation).phase == "drained"
+    assert claim_next(now=now + 60) is None
+
+
+
 def _replace_access(path: Path, users: list[str], owner: str = "") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
@@ -4617,6 +4792,27 @@ def test_unknown_version_committed_in_wal_is_seen_by_readonly_preflight(
         writer.close()
 
 
+def test_clean_empty_wal_without_shm_is_a_stable_closed_database_family(
+    monkeypatch, tmp_path
+):
+    bridge = _load_bridge()
+    database = tmp_path / "weixin_state.db"
+    monkeypatch.setattr(bridge, "_OUTBOX_DB", database)
+    bridge._outbox_connect().close()
+    wal = Path(f"{database}-wal")
+    shm = Path(f"{database}-shm")
+    shm.unlink(missing_ok=True)
+    wal.write_bytes(b"")
+
+    generation, _identity, presence = bridge._preflight_outbox_schema()
+
+    assert generation == "v2"
+    assert presence["-wal"] is True
+    assert presence["-shm"] is False
+    with bridge._outbox_connect() as conn:
+        assert bridge._classify_outbox_schema(conn) == "v2"
+
+
 def test_v0_migration_failure_rolls_back_the_entire_schema_and_all_rows(
     monkeypatch, tmp_path
 ):
@@ -6872,6 +7068,62 @@ def test_health_cannot_be_healthy_while_delivery_work_is_pending_or_dead(
     assert snapshot["workers_alive"] == 0
 
 
+def test_health_treats_owner_closed_rows_as_audited_history(monkeypatch, tmp_path):
+    bridge = _load_bridge()
+    monkeypatch.setattr(bridge, "_OUTBOX_DB", tmp_path / "weixin_state.db")
+    monkeypatch.setattr(bridge, "_HEALTH_FILE", tmp_path / "weixin_bridge_health.json")
+    monkeypatch.setattr(bridge, "ENGINE_KEY", "bridge-key")
+    monkeypatch.setattr(bridge, "_ENGINE_AVAILABLE", True)
+    monkeypatch.setattr(bridge, "_inbound_worker_counts", lambda: (1, 1))
+    monkeypatch.setattr(
+        bridge,
+        "_refresh_access",
+        lambda: (ChannelAccessPolicy(allowed_users={"u1"}), "u1", ""),
+    )
+
+    with bridge._outbox_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO inbound_message
+              (message_key, from_user_id, payload, received_at, next_attempt_at,
+               status, last_error)
+            VALUES ('closed-in', 'sha256:opaque', ?, 1, 1, 'dead',
+                    'closed_without_replay')
+            """,
+            (bridge._RECOVERY_TOMBSTONE,),
+        )
+        conn.execute(
+            """
+            INSERT INTO inbound_message
+              (message_key, from_user_id, payload, received_at, next_attempt_at,
+               status, last_error)
+            VALUES ('closed-in-maintained', 'sha256:opaque', ?, 1, 1, 'dead',
+                    'closed_without_replay')
+            """,
+            (bridge._DEAD_INBOUND_TOMBSTONE,),
+        )
+        conn.execute(
+            """
+            INSERT INTO pending_delivery
+              (created_at, next_attempt_at, attempts, to_user_id, context_token,
+               text, status, last_error, terminal_verification)
+            VALUES (1, 1, 1, 'sha256:opaque', '', '', 'dead',
+                    'closed_without_replay', 'closed_without_replay')
+            """
+        )
+
+    snapshot = bridge._update_health("healthy", consecutive_poll_failures=0)
+
+    assert snapshot["ready"] is True
+    assert snapshot["state"] == "healthy"
+    assert snapshot["dead_inbound"] == 0
+    assert snapshot["dead_outbound"] == 0
+    assert snapshot["closed_without_replay_inbound"] == 2
+    assert snapshot["closed_without_replay_outbound"] == 1
+    assert "dead_inbound" not in snapshot["readiness_reasons"]
+    assert "dead_outbound" not in snapshot["readiness_reasons"]
+
+
 def test_access_locked_is_not_ready_and_replies_without_calling_engine(monkeypatch, tmp_path):
     bridge = _load_bridge()
     monkeypatch.setattr(bridge, "_OUTBOX_DB", tmp_path / "weixin_state.db")
@@ -7476,6 +7728,8 @@ def test_health_snapshot_is_exact_bounded_atomic_and_carries_expiry(
         "pending_video",
         "dead_inbound",
         "dead_outbound",
+        "closed_without_replay_inbound",
+        "closed_without_replay_outbound",
         "oldest_processing_age_seconds",
         "consecutive_poll_failures",
         "last_poll_ok_at",

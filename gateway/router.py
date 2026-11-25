@@ -448,6 +448,7 @@ class Router:
         kimi_environment: Mapping[str, str] | None = None,
         plugin_kernel: PluginKernel | None = None,
         durable_event_sink: Callable[[str, object], object] | None = None,
+        enable_enterprise_rag: bool | None = None,
     ):
         self._catalog = models_config if models_config is not None else load_models_config()
         self.store = store
@@ -459,8 +460,12 @@ class Router:
         self._kimi_environment = dict(
             os.environ if kimi_environment is None else kimi_environment
         )
+        self._enable_enterprise_rag = enable_enterprise_rag
         self._plugin_kernel = (
-            build_builtin_provider_kernel(durable_event_sink=durable_event_sink)
+            build_builtin_provider_kernel(
+                durable_event_sink=durable_event_sink,
+                enable_enterprise_rag=enable_enterprise_rag,
+            )
             if plugin_kernel is None
             else plugin_kernel
         )

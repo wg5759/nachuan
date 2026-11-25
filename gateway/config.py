@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -47,6 +48,13 @@ class Settings(BaseSettings):
     gateway_host: str = "127.0.0.1"  # 安全默认=仅本机。局域网访问需显式 GATEWAY_HOST=0.0.0.0 且必须设真 key（见 app.py:main 护栏）
     gateway_port: int = 8080
     usage_db_path: str = "./data/usage.db"
+    # Optional single source of truth for the DPAPI-encrypted model vault.
+    # Runtime databases remain under usage_db_path; only connections.json may
+    # be bound explicitly by the trusted supervisor.
+    connections_path: str = Field(
+        default="",
+        validation_alias=AliasChoices("connections_path", "NACHUAN_CONNECTIONS_PATH"),
+    )
 
     @field_validator("usage_db_path", mode="before")
     @classmethod
@@ -59,6 +67,21 @@ class Settings(BaseSettings):
         candidate = Path(raw).expanduser()
         if not candidate.is_absolute():
             candidate = PROJECT_ROOT / candidate
+        return str(candidate.resolve(strict=False))
+
+    @field_validator("connections_path", mode="before")
+    @classmethod
+    def validate_connections_path(cls, value: Any) -> str:
+        """Accept only an explicit absolute ``connections.json`` authority."""
+
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            raise ValueError("CONNECTIONS_PATH must be absolute")
+        if candidate.name.lower() != "connections.json":
+            raise ValueError("CONNECTIONS_PATH must name connections.json")
         return str(candidate.resolve(strict=False))
     # 明确昂贵的 POST 请求在进入 handler 前经过稳定性闸。并发/分钟上限不允许
     # 用 0 绕过；只有持久化的每日上限可显式设为 0 关闭。
@@ -125,6 +148,57 @@ class Settings(BaseSettings):
     agent_daily_call_cap: int = 0  # 每非机主用户每日调用上限（0=不限），防群里烧额度
     content_denylist: str = ""  # 正则黑名单（逗号分隔），命中即拒；默认空=不拦
 
+    # 隐私与同源隔离策略（P0-2 / P2-2）：
+    # 后台记忆抽取 / 滚动摘要默认严格同源（仅用当前对话同一模型/供应商），禁止静默跨供应商偷传。
+    background_memory_extract_enabled: bool = True
+    background_summary_enabled: bool = True
+    allow_cross_vendor_background_model: bool = False
+    offline_mode: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "NACHUAN_OFFLINE_MODE",
+            "offline_mode",
+        ),
+    )
+
+    # 重型子系统 Feature Flags 与统一数据库模式（P1-1 / P1-2）
+    enable_paid_media_vault: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "NACHUAN_ENABLE_PAID_MEDIA_VAULT",
+            "enable_paid_media_vault",
+        ),
+    )
+    enable_enterprise_rag: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "NACHUAN_ENABLE_ENTERPRISE_RAG",
+            "enable_enterprise_rag",
+        ),
+    )
+    enable_media_studio: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "NACHUAN_ENABLE_MEDIA_STUDIO",
+            "enable_media_studio",
+        ),
+    )
+    db_mode: str = Field(
+        default="unified",
+        validation_alias=AliasChoices(
+            "NACHUAN_DB_MODE",
+            "db_mode",
+        ),
+    )
+
+    @field_validator("db_mode", mode="before")
+    @classmethod
+    def validate_db_mode(cls, value: Any) -> str:
+        raw = str(value or "unified").strip().lower()
+        if raw not in {"unified", "legacy"}:
+            raise ValueError("NACHUAN_DB_MODE must be 'unified' or 'legacy'")
+        return raw
+
     # 提示词装配（C2）：稳定人设前缀（也是 Output-Style 入口；空=不加）
     agent_persona: str = (
         "你是聚合大模型超级助手。你能生成图片和视频、能翻译、能联网与执行任务——"
@@ -144,6 +218,14 @@ class Settings(BaseSettings):
         return {k.strip() for k in self.gateway_api_keys.split(",") if k.strip()}
 
     @property
+    def connection_store_path(self) -> Path:
+        """Return the sole model-connection vault used by this process."""
+
+        if self.connections_path:
+            return Path(self.connections_path)
+        return Path(self.usage_db_path).parent / "connections.json"
+
+    @property
     def feishu_allowed_set(self) -> set[str]:
         """飞书白名单 open_id 集合；空集由 Channel 按 fail-closed 处理。"""
         return {k.strip() for k in self.feishu_allowed_users.split(",") if k.strip()}
@@ -161,7 +243,9 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    # Explicitly isolated source previews must not consume the project's .env.
+    # This only removes an ambient configuration source; it grants no authority.
+    return Settings(_env_file=None) if os.environ.get('NACHUAN_CONFIG_ENV_ONLY') == '1' else Settings()
 
 
 @lru_cache

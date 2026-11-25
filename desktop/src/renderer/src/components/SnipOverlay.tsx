@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '../i18n'
 import { visionImage } from '../api'
 
 // 自制「微信式」截图浮层：冻结当前屏 → 拖拽框选 → 选区下方弹出工具条

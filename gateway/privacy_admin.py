@@ -48,8 +48,10 @@ router = APIRouter(
 def initialize_privacy_rights(data_dir: str | Path) -> PrivacyRightsLedger | None:
     """Open the dedicated ledger without making ordinary chat startup brittle."""
 
+    from storage.unified_db import resolve_db_path
+
     try:
-        return PrivacyRightsLedger(Path(data_dir) / "privacy_rights.db")
+        return PrivacyRightsLedger(resolve_db_path("privacy_rights", data_dir=data_dir))
     except PrivacyRightsUnavailable:
         return None
 

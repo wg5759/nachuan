@@ -160,6 +160,11 @@ class ChatCompletionRequest(BaseModel):
     best_of: Optional[int] = Field(default=None, ge=1, le=4)
     stream: bool = False
     stop: Optional[Union[str, list[str]]] = None
+    # 网关隐私与联网门禁字段（默认严格关闭联网、默认非无痕；不向上游透传）。
+    web_search: bool = False
+    incognito: bool = False
+    privacy_mode: bool = False
+    inject_memory: Optional[bool] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -206,6 +211,8 @@ class ChatCompletionRequest(BaseModel):
     def to_upstream_payload(self, upstream_model: str, *, stream: bool) -> dict[str, Any]:
         """生成发往上游的 payload：替换 model 名、设定 stream，并在流式时请求 usage。"""
         data = self.model_dump(exclude_none=True)
+        for internal_key in ("web_search", "incognito", "privacy_mode", "inject_memory"):
+            data.pop(internal_key, None)
         data["model"] = upstream_model
         data["stream"] = stream
         if stream:

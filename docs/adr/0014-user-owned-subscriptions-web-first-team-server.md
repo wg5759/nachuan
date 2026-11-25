@@ -95,6 +95,28 @@ Gateway 不得直接在持有供应商 Key、渠道 token 和账本密钥的进�
 
 CLI 登录 worker 可以是服务器端每用户隔离 profile，也可以是用户设备上的受信 companion；两者必须实现同一个 worker 协议。未完成隔离和厂商允许范围核验前，不把本地单 owner Gateway 直接绑定到公网。
 
+### 5. 跨设备会话采用“统一会话权威 + 远程控制”，原生手机 App 延后
+
+2026-08-28 已核验 Anthropic 官方现行能力：Claude Code Remote Control 可以从手机 App 或任意浏览器继续控制本机正在运行的会话；本地机器继续持有工作目录、工具和执行进程，机器离线后本地会话不能继续。Claude Desktop/Web/Mobile 的 Cloud session 则在远端运行，可以在关闭电脑后继续。部分终端专属命令仍只能本地执行，因此这不是“手机和电脑全盘数据完全复制”，而是一个会话由多个界面共同观察、追加指令和处理审批。
+
+官方核验来源（访问日 2026-08-28）：
+
+- [Continue local sessions from any device with Remote Control](https://docs.anthropic.com/en/docs/claude-code/remote-control)
+- [Claude Code desktop application](https://docs.anthropic.com/en/docs/claude-code/desktop)
+- [Claude Code overview — Work from anywhere](https://docs.anthropic.com/en/docs/claude-code/overview)
+
+纳川采用同类能力，但坚持 Web-first，不把原生手机 App 设为第一阶段依赖：
+
+1. **统一会话权威**：中央服务保存版本化会话事件、任务状态、审批、工具回执、附件指针和审计链；禁止在设备间复制 SQLite/CLI 登录目录或整套本机数据文件。
+2. **本机 Runner Companion**：安装态 Supervisor 通过仅出站的受保护长连接登记设备和运行会话；本机文件、CLI 登录和工具继续留在本机。每条远程指令绑定 tenant/user/device/session/turn/sequence/capability/expiry/idempotency，结果未知不重发。
+3. **单写者租约**：手机、Web、桌面可以同时查看，但同一 turn 只有一个活动执行租约；另一端的新指令按明确队列或“中断后另起turn”处理，禁止两个界面同时驱动同一工具调用。
+4. **审批不随界面降权**：手机可处理经过策略允许的精确审批；付款、发布、删除、生产写入等继续按原风险级别确认。终端专属或无法安全远程呈现的操作返回 `local_only`，不静默代执行。
+5. **离线语义分离**：本机 Runner 离线时显示 `device_offline`，不把命令假装排队成功；只有用户明确选择 Cloud Runner 的任务才允许电脑离线继续，且云端使用独立工作区、凭据域、网络策略和审计。
+6. **第一阶段客户端**：手机浏览器/PWA、企业微信/飞书内嵌页和现有共享 Web renderer 提供会话列表、实时进度、继续指令、停止、审批和结果查看。这样无需先开发 iOS/Android 原生 App 就能关闭核心业务链。
+7. **原生 App 的触发条件**：当客户规模或真实验收证明 PWA 在可靠推送、后台保活、生物识别、可信设备、相机/文件、系统分享入口方面不足时，再用同一个 `NachuanClientPort` 和会话协议封装原生 App；不得另造会话逻辑或另存一份业务真源。
+
+实施编号追加为：`XD-001` 统一会话事件/执行租约协议，`XD-002` 本机Runner出站连接与设备信任，`XD-003` 手机Web/PWA共同控制，`XD-004` 可选Cloud Runner，`XD-005` 原生App条件化立项。当前只有响应式共享renderer和本地安装态Supervisor基础，不具备跨设备生产能力。
+
 ## 首批验收纵切
 
 按依赖顺序逐条 RED -> GREEN：
@@ -105,6 +127,7 @@ CLI 登录 worker 可以是服务器端每用户隔离 profile，也可以是用
 4. Agnes 一次连接后同时注册 chat/image/video；真实媒体调用仍需 consent、幂等和账本。
 5. capability manifest 在 Web 与 Electron 构建中逐项相同。
 6. 团队 API 第一纵切：两个组织的同名会话、连接和审计互不可见，越权请求在读取业务正文前拒绝。
+7. 跨设备第一纵切：同一会话在桌面与手机Web同时可见；手机追加一次指令后只产生一个turn/一个执行租约/一个工具因果链，断网或结果未知不重复执行，Stop在本机Supervisor重启后仍有效。
 
 ## 明确非目标
 
